@@ -209,7 +209,10 @@ export default function CategoriesView({ user }: { user: User }) {
 
                 {/* Subcategories - always visible */}
                 {hasSubs && (
-                  <div className="border-t border-dark-700/50 bg-dark-800/50">
+                  <div className="border-t border-dark-700/50">
+                    <div className="px-3.5 pt-2 pb-1">
+                      <span className="text-[10px] uppercase tracking-wider text-dark-500 font-semibold">Subcategorías</span>
+                    </div>
                     {cat.subcategories!.map((sub, idx) => {
                       const subS = spending[sub.id] || 0;
                       const subPct = sub.budget_amount > 0 ? (subS / Number(sub.budget_amount)) * 100 : 0;
@@ -217,12 +220,10 @@ export default function CategoriesView({ user }: { user: User }) {
                       return (
                         <div
                           key={sub.id}
-                          className={`flex items-center justify-between pl-6 pr-3.5 py-2.5 ${!isLast ? 'border-b border-dark-700/30' : ''}`}
+                          className={`flex items-center justify-between pl-5 pr-3.5 py-2.5 ${!isLast ? 'border-b border-dark-700/20' : ''}`}
                         >
                           <div className="flex items-center gap-2.5 flex-1 min-w-0">
-                            <div className="flex items-center gap-2 text-dark-500">
-                              <div className="w-4 border-t border-l border-dark-500/40 h-4 rounded-bl-lg -mt-3" />
-                            </div>
+                            <div className="text-dark-500 text-xs">└</div>
                             <div
                               className="w-7 h-7 rounded-md flex items-center justify-center text-sm flex-shrink-0"
                               style={{ backgroundColor: (sub.color || cat.color) + '15' }}
