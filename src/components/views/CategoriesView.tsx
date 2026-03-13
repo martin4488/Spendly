@@ -5,14 +5,13 @@ import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, getMonthRange, CATEGORY_ICONS, CATEGORY_COLORS } from '@/lib/utils';
 import { Category } from '@/types';
-import { Plus, Edit3, Trash2, X, ChevronDown, ChevronRight, FolderPlus } from 'lucide-react';
+import { Plus, Edit3, Trash2, X, FolderPlus } from 'lucide-react';
 
 export default function CategoriesView({ user }: { user: User }) {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [parentId, setParentId] = useState<string | null>(null);
   const [spending, setSpending] = useState<Record<string, number>>({});
 
@@ -119,15 +118,6 @@ export default function CategoriesView({ user }: { user: User }) {
     }
   }
 
-  function toggleExpand(id: string) {
-    setExpandedIds(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
   return (
     <div className="px-4 pt-6 pb-4 max-w-lg mx-auto page-transition">
       <div className="flex items-center justify-between mb-5">
@@ -157,24 +147,20 @@ export default function CategoriesView({ user }: { user: User }) {
           </button>
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-3">
           {categories.map((cat) => {
-            const isExpanded = expandedIds.has(cat.id);
             const catSpent = spending[cat.id] || 0;
             const subSpent = (cat.subcategories || []).reduce((s, sc) => s + (spending[sc.id] || 0), 0);
             const totalSpent = catSpent + subSpent;
             const pct = cat.budget_amount > 0 ? (totalSpent / cat.budget_amount) * 100 : 0;
+            const hasSubs = (cat.subcategories?.length || 0) > 0;
 
             return (
-              <div key={cat.id}>
-                <div className="bg-dark-800 rounded-xl p-3.5">
+              <div key={cat.id} className="bg-dark-800 rounded-xl overflow-hidden">
+                {/* Parent category */}
+                <div className="p-3.5">
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3 flex-1 min-w-0" onClick={() => toggleExpand(cat.id)}>
-                      {(cat.subcategories?.length || 0) > 0 && (
-                        <button className="text-dark-400">
-                          {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                        </button>
-                      )}
+                    <div className="flex items-center gap-3 flex-1 min-w-0">
                       <div
                         className="w-9 h-9 rounded-lg flex items-center justify-center text-lg flex-shrink-0"
                         style={{ backgroundColor: cat.color + '20' }}
@@ -221,24 +207,37 @@ export default function CategoriesView({ user }: { user: User }) {
                   )}
                 </div>
 
-                {/* Subcategories */}
-                {isExpanded && cat.subcategories && cat.subcategories.length > 0 && (
-                  <div className="ml-6 mt-1 space-y-1">
-                    {cat.subcategories.map((sub) => {
+                {/* Subcategories - always visible */}
+                {hasSubs && (
+                  <div className="border-t border-dark-700/50 bg-dark-800/50">
+                    {cat.subcategories!.map((sub, idx) => {
                       const subS = spending[sub.id] || 0;
+                      const subPct = sub.budget_amount > 0 ? (subS / Number(sub.budget_amount)) * 100 : 0;
+                      const isLast = idx === cat.subcategories!.length - 1;
                       return (
-                        <div key={sub.id} className="bg-dark-800/60 rounded-xl p-3 flex items-center justify-between">
-                          <div className="flex items-center gap-2.5">
-                            <span className="text-base">{sub.icon}</span>
-                            <div>
-                              <p className="text-sm font-medium">{sub.name}</p>
+                        <div
+                          key={sub.id}
+                          className={`flex items-center justify-between pl-6 pr-3.5 py-2.5 ${!isLast ? 'border-b border-dark-700/30' : ''}`}
+                        >
+                          <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                            <div className="flex items-center gap-2 text-dark-500">
+                              <div className="w-4 border-t border-l border-dark-500/40 h-4 rounded-bl-lg -mt-3" />
+                            </div>
+                            <div
+                              className="w-7 h-7 rounded-md flex items-center justify-center text-sm flex-shrink-0"
+                              style={{ backgroundColor: (sub.color || cat.color) + '15' }}
+                            >
+                              {sub.icon}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-medium text-dark-200">{sub.name}</p>
                               <p className="text-xs text-dark-400">
                                 {formatCurrency(subS)}
-                                {sub.budget_amount > 0 && ` / ${formatCurrency(sub.budget_amount)}`}
+                                {sub.budget_amount > 0 && ` / ${formatCurrency(Number(sub.budget_amount))} ${sub.budget_period === 'monthly' ? 'mes' : 'año'}`}
                               </p>
                             </div>
                           </div>
-                          <div className="flex items-center gap-1">
+                          <div className="flex items-center gap-1 flex-shrink-0">
                             <button onClick={() => openForm(sub)} className="p-1.5 text-dark-400 hover:text-dark-200">
                               <Edit3 size={13} />
                             </button>
