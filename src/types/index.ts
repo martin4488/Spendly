@@ -58,4 +58,21 @@ export interface Budget {
 
 export interface BudgetCategory {
   id: string;
-  budget
+  budget_id: string;
+  category_id: string;
+}
+
+export interface MonthlyTotal {
+  month: string;
+  total: number;
+}
+
+export interface CategorySpending {
+  category_id: string;
+  category_name: string;
+  category_icon: string;
+  category_color: string;
+  spent: number;
+  budget: number;
+  percentage: number;
+}
