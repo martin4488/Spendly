@@ -205,7 +205,8 @@ export default function BudgetDetailView({ user, budget, onBack, onRefresh }: Pr
     .sort((a, b) => b.date.localeCompare(a.date));
 
   const parentCatsForPicker = allCategories.filter(c => !c.parent_id);
-  const recurrenceLabels: Record<string, string> = { weekly: 'Semanal', monthly: 'Mensual', yearly: 'Anual' };
+  const getSubcatsForPicker = (pid: string) => allCategories.filter(c => c.parent_id === pid);
+  const recurrenceLabels: Record<string, string> = { monthly: 'Mensual', yearly: 'Anual' };
 
   if (loading) {
     return (
@@ -523,7 +524,7 @@ export default function BudgetDetailView({ user, budget, onBack, onRefresh }: Pr
             <div>
               <label className="text-xs text-dark-400 font-medium mb-1.5 block uppercase tracking-wider">Recurrencia</label>
               <div className="flex bg-dark-800 rounded-xl p-1 border border-dark-700">
-                {(['weekly', 'monthly', 'yearly'] as const).map((r) => (
+                {(['monthly', 'yearly'] as const).map((r) => (
                   <button
                     key={r}
                     onClick={() => setEditRecurrence(r)}
@@ -589,43 +590,74 @@ export default function BudgetDetailView({ user, budget, onBack, onRefresh }: Pr
               <h3 className="text-base font-bold">Categorías del presupuesto</h3>
               <button
                 onClick={() => {
-                  if (editCatIds.length === parentCatsForPicker.length) {
+                  const allIds = allCategories.map(c => c.id);
+                  if (editCatIds.length === allIds.length) {
                     setEditCatIds([]);
                   } else {
-                    setEditCatIds(parentCatsForPicker.map(c => c.id));
+                    setEditCatIds(allIds);
                   }
                 }}
                 className="text-xs text-brand-400 font-medium"
               >
-                {editCatIds.length === parentCatsForPicker.length ? 'Ninguna' : 'Todas'}
+                {editCatIds.length === allCategories.length ? 'Ninguna' : 'Todas'}
               </button>
             </div>
 
             {parentCatsForPicker.map((cat) => {
               const isSelected = editCatIds.includes(cat.id);
+              const subs = getSubcatsForPicker(cat.id);
               return (
-                <button
-                  key={cat.id}
-                  onClick={() => toggleCat(cat.id)}
-                  className="w-full flex items-center gap-3 px-4 py-4 border-b border-dark-700/30 active:bg-dark-700/50"
-                >
-                  <div
-                    className="w-10 h-10 rounded-full flex items-center justify-center text-lg"
-                    style={{ backgroundColor: cat.color + '25' }}
+                <div key={cat.id}>
+                  <button
+                    onClick={() => toggleCat(cat.id)}
+                    className="w-full flex items-center gap-3 px-4 py-4 border-b border-dark-700/30 active:bg-dark-700/50"
                   >
-                    {cat.icon}
-                  </div>
-                  <span className="text-sm font-medium flex-1 text-left">{cat.name}</span>
-                  <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${
-                    isSelected ? 'bg-brand-500 border-brand-500' : 'border-dark-600'
-                  }`}>
-                    {isSelected && (
-                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                        <path d="M2.5 6L5 8.5L9.5 3.5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                      </svg>
-                    )}
-                  </div>
-                </button>
+                    <div
+                      className="w-10 h-10 rounded-full flex items-center justify-center text-lg"
+                      style={{ backgroundColor: cat.color + '25' }}
+                    >
+                      {cat.icon}
+                    </div>
+                    <span className="text-sm font-medium flex-1 text-left">{cat.name}</span>
+                    <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${
+                      isSelected ? 'bg-brand-500 border-brand-500' : 'border-dark-600'
+                    }`}>
+                      {isSelected && (
+                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                          <path d="M2.5 6L5 8.5L9.5 3.5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
+                      )}
+                    </div>
+                  </button>
+                  {subs.map((sub) => {
+                    const subSelected = editCatIds.includes(sub.id);
+                    return (
+                      <button
+                        key={sub.id}
+                        onClick={() => toggleCat(sub.id)}
+                        className="w-full flex items-center gap-3 pl-10 pr-4 py-3 border-b border-dark-700/20 active:bg-dark-700/50"
+                      >
+                        <span className="text-dark-500 text-xs">└</span>
+                        <div
+                          className="w-8 h-8 rounded-full flex items-center justify-center text-sm"
+                          style={{ backgroundColor: (sub.color || cat.color) + '25' }}
+                        >
+                          {sub.icon}
+                        </div>
+                        <span className="text-sm text-dark-200 flex-1 text-left">{sub.name}</span>
+                        <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${
+                          subSelected ? 'bg-brand-500 border-brand-500' : 'border-dark-600'
+                        }`}>
+                          {subSelected && (
+                            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                              <path d="M2.5 6L5 8.5L9.5 3.5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                            </svg>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
               );
             })}
             <div className="h-8" />
