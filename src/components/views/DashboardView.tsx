@@ -67,6 +67,12 @@ export default function DashboardView({ user, onNavigate }: { user: User; onNavi
         .eq('user_id', user.id)
         .is('parent_id', null);
 
+      const { data: subcategories } = await supabase
+        .from('categories')
+        .select('*')
+        .eq('user_id', user.id)
+        .not('parent_id', 'is', null);
+
       const { data: allExpenses } = await supabase
         .from('expenses')
         .select('amount, category_id')
@@ -76,8 +82,14 @@ export default function DashboardView({ user, onNavigate }: { user: User; onNavi
 
       if (categories && allExpenses) {
         const spending: CategorySpending[] = categories.map((cat) => {
+          // Get IDs of this category + its subcategories
+          const subIds = (subcategories || [])
+            .filter(sc => sc.parent_id === cat.id)
+            .map(sc => sc.id);
+          const allIds = [cat.id, ...subIds];
+
           const spent = allExpenses
-            .filter(e => e.category_id === cat.id)
+            .filter(e => e.category_id && allIds.includes(e.category_id))
             .reduce((sum, e) => sum + Number(e.amount), 0);
           return {
             category_id: cat.id,
