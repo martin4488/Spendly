@@ -251,7 +251,7 @@ export default function CategoriesView({ user }: { user: User }) {
 
       {/* Form Modal - Wallet style */}
       {showForm && (
-        <div className="fixed inset-0 bg-dark-900 z-50 flex flex-col slide-up">
+        <div className="fixed inset-0 bg-dark-900 z-[60] flex flex-col slide-up">
           {/* Header */}
           <div className="flex items-center justify-between px-4 pt-5 pb-3">
             <button onClick={() => setShowForm(false)} className="p-1 text-dark-400 hover:text-white">
@@ -359,8 +359,8 @@ export default function CategoriesView({ user }: { user: User }) {
             </div>
           </div>
 
-          {/* Fixed button at bottom - above nav bar */}
-          <div className="fixed bottom-0 left-0 right-0 z-[51] p-4 pb-8 bg-dark-900 border-t border-dark-800" style={{ paddingBottom: 'calc(1.5rem + env(safe-area-inset-bottom, 0px))' }}>
+          {/* Create button - part of the flex column, not fixed/sticky */}
+          <div className="px-4 py-4 bg-dark-900 border-t border-dark-800">
             <button
               onClick={handleSave}
               disabled={saving || !name}
