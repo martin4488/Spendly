@@ -27,20 +27,13 @@ export default function CategoriesView({ user }: { user: User }) {
 
   async function loadData() {
     setLoading(true);
-    const { data: cats } = await supabase
-      .from('categories')
-      .select('*')
-      .eq('user_id', user.id)
-      .order('name');
-
-    // Get this month's spending per category
     const monthRange = getMonthRange();
-    const { data: expenses } = await supabase
-      .from('expenses')
-      .select('amount, category_id')
-      .eq('user_id', user.id)
-      .gte('date', monthRange.start)
-      .lte('date', monthRange.end);
+
+    const [{ data: cats }, { data: expenses }] = await Promise.all([
+      supabase.from('categories').select('*').eq('user_id', user.id).order('name'),
+      supabase.from('expenses').select('amount, category_id').eq('user_id', user.id)
+        .gte('date', monthRange.start).lte('date', monthRange.end),
+    ]);
 
     const spendMap: Record<string, number> = {};
     expenses?.forEach(e => {
@@ -50,7 +43,6 @@ export default function CategoriesView({ user }: { user: User }) {
     });
     setSpending(spendMap);
 
-    // Build tree
     if (cats) {
       const parentCats = cats.filter(c => !c.parent_id).map(c => ({
         ...c,
@@ -271,7 +263,7 @@ export default function CategoriesView({ user }: { user: User }) {
             <div className="w-8" />
           </div>
 
-          <div className="flex-1 overflow-y-auto px-5 pb-24">
+          <div className="flex-1 overflow-y-auto px-5 pb-28">
             {/* Preview: icon circle + name */}
             <div className="flex items-center gap-4 py-5">
               <div
@@ -285,8 +277,11 @@ export default function CategoriesView({ user }: { user: User }) {
                 placeholder="Nombre de categoría"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
+                autoComplete="off"
+                autoCorrect="off"
+                spellCheck={false}
+                data-form-type="other"
                 className="flex-1 bg-transparent text-lg font-semibold placeholder:text-dark-500 focus:outline-none border-b border-dark-700 pb-2"
-                autoFocus
               />
             </div>
 
@@ -364,8 +359,8 @@ export default function CategoriesView({ user }: { user: User }) {
             </div>
           </div>
 
-          {/* Sticky button at bottom */}
-          <div className="sticky bottom-0 left-0 right-0 p-4 pb-6 bg-dark-900 border-t border-dark-800">
+          {/* Fixed button at bottom - above nav bar */}
+          <div className="fixed bottom-0 left-0 right-0 z-[51] p-4 pb-8 bg-dark-900 border-t border-dark-800" style={{ paddingBottom: 'calc(1.5rem + env(safe-area-inset-bottom, 0px))' }}>
             <button
               onClick={handleSave}
               disabled={saving || !name}
