@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, getMonthRange, getYearRange, getMonthName } from '@/lib/utils';
+import { format } from 'date-fns';
 import { Category, Expense, CategorySpending } from '@/types';
 import { TrendingDown, TrendingUp, Wallet, ChevronRight, Plus } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
@@ -24,105 +25,76 @@ export default function DashboardView({ user, onNavigate }: { user: User; onNavi
     try {
       const now = new Date();
       const monthRange = getMonthRange(now);
-      const yearRange = getYearRange(now);
-      
       const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
       const lastMonthRange = getMonthRange(lastMonth);
+      const yearRange = getYearRange(now);
 
-      // Current month expenses
-      const { data: monthExpenses } = await supabase
-        .from('expenses')
-        .select('amount')
-        .eq('user_id', user.id)
-        .gte('date', monthRange.start)
-        .lte('date', monthRange.end);
+      // Calculate the start date for 6 months ago (for chart)
+      const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+      const chartStart = format(sixMonthsAgo, 'yyyy-MM-dd');
 
-      const mTotal = monthExpenses?.reduce((sum, e) => sum + Number(e.amount), 0) || 0;
+      // Only 2 parallel queries instead of 8+ sequential ones
+      const [{ data: allExpenses }, { data: allCategories }] = await Promise.all([
+        supabase
+          .from('expenses')
+          .select('amount, category_id, date')
+          .eq('user_id', user.id)
+          .gte('date', chartStart)
+          .lte('date', monthRange.end)
+          .order('date', { ascending: false }),
+        supabase
+          .from('categories')
+          .select('*')
+          .eq('user_id', user.id),
+      ]);
+
+      const expenses = allExpenses || [];
+      const categories = (allCategories || []).filter(c => !c.parent_id);
+      const subcategories = (allCategories || []).filter(c => c.parent_id);
+
+      // Current month
+      const monthExp = expenses.filter(e => e.date >= monthRange.start && e.date <= monthRange.end);
+      const mTotal = monthExp.reduce((sum, e) => sum + Number(e.amount), 0);
       setMonthlyTotal(mTotal);
 
-      // Last month total
-      const { data: lastMonthExpenses } = await supabase
-        .from('expenses')
-        .select('amount')
-        .eq('user_id', user.id)
-        .gte('date', lastMonthRange.start)
-        .lte('date', lastMonthRange.end);
-
-      setLastMonthTotal(lastMonthExpenses?.reduce((sum, e) => sum + Number(e.amount), 0) || 0);
+      // Last month
+      const lastMonthExp = expenses.filter(e => e.date >= lastMonthRange.start && e.date <= lastMonthRange.end);
+      setLastMonthTotal(lastMonthExp.reduce((sum, e) => sum + Number(e.amount), 0));
 
       // Year total
-      const { data: yearExpenses } = await supabase
-        .from('expenses')
-        .select('amount')
-        .eq('user_id', user.id)
-        .gte('date', yearRange.start)
-        .lte('date', yearRange.end);
+      const yearExp = expenses.filter(e => e.date >= yearRange.start && e.date <= yearRange.end);
+      setYearlyTotal(yearExp.reduce((sum, e) => sum + Number(e.amount), 0));
 
-      setYearlyTotal(yearExpenses?.reduce((sum, e) => sum + Number(e.amount), 0) || 0);
+      // Category spending (with subcategories summed into parent)
+      const spending: CategorySpending[] = categories.map((cat) => {
+        const subIds = subcategories.filter(sc => sc.parent_id === cat.id).map(sc => sc.id);
+        const allIds = [cat.id, ...subIds];
+        const spent = monthExp
+          .filter(e => e.category_id && allIds.includes(e.category_id))
+          .reduce((sum, e) => sum + Number(e.amount), 0);
+        return {
+          category_id: cat.id,
+          category_name: cat.name,
+          category_icon: cat.icon,
+          category_color: cat.color,
+          spent,
+          budget: Number(cat.budget_amount),
+          percentage: cat.budget_amount > 0 ? (spent / Number(cat.budget_amount)) * 100 : 0,
+        };
+      }).filter(c => c.spent > 0 || c.budget > 0)
+        .sort((a, b) => b.spent - a.spent);
+      setCategorySpending(spending);
 
-      // Category spending this month
-      const { data: categories } = await supabase
-        .from('categories')
-        .select('*')
-        .eq('user_id', user.id)
-        .is('parent_id', null);
-
-      const { data: subcategories } = await supabase
-        .from('categories')
-        .select('*')
-        .eq('user_id', user.id)
-        .not('parent_id', 'is', null);
-
-      const { data: allExpenses } = await supabase
-        .from('expenses')
-        .select('amount, category_id')
-        .eq('user_id', user.id)
-        .gte('date', monthRange.start)
-        .lte('date', monthRange.end);
-
-      if (categories && allExpenses) {
-        const spending: CategorySpending[] = categories.map((cat) => {
-          // Get IDs of this category + its subcategories
-          const subIds = (subcategories || [])
-            .filter(sc => sc.parent_id === cat.id)
-            .map(sc => sc.id);
-          const allIds = [cat.id, ...subIds];
-
-          const spent = allExpenses
-            .filter(e => e.category_id && allIds.includes(e.category_id))
-            .reduce((sum, e) => sum + Number(e.amount), 0);
-          return {
-            category_id: cat.id,
-            category_name: cat.name,
-            category_icon: cat.icon,
-            category_color: cat.color,
-            spent,
-            budget: Number(cat.budget_amount),
-            percentage: cat.budget_amount > 0 ? (spent / Number(cat.budget_amount)) * 100 : 0,
-          };
-        }).filter(c => c.spent > 0 || c.budget > 0)
-          .sort((a, b) => b.spent - a.spent);
-
-        setCategorySpending(spending);
-      }
-
-      // Monthly chart (last 6 months)
+      // Monthly chart - calculate from the same data, no extra queries
+      const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
       const chartData: { name: string; total: number }[] = [];
       for (let i = 5; i >= 0; i--) {
         const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
         const range = getMonthRange(d);
-        const { data: mExp } = await supabase
-          .from('expenses')
-          .select('amount')
-          .eq('user_id', user.id)
-          .gte('date', range.start)
-          .lte('date', range.end);
-
-        const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-        chartData.push({
-          name: months[d.getMonth()],
-          total: mExp?.reduce((sum, e) => sum + Number(e.amount), 0) || 0,
-        });
+        const total = expenses
+          .filter(e => e.date >= range.start && e.date <= range.end)
+          .reduce((sum, e) => sum + Number(e.amount), 0);
+        chartData.push({ name: months[d.getMonth()], total });
       }
       setMonthlyChart(chartData);
     } catch (err) {
