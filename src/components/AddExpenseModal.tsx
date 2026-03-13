@@ -4,7 +4,9 @@ import { useState, useEffect } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { Category } from '@/types';
-import { X, DollarSign, FileText, Calendar } from 'lucide-react';
+import { X, Calendar, Delete } from 'lucide-react';
+import { format, parseISO } from 'date-fns';
+import { es } from 'date-fns/locale';
 
 interface Props {
   user: User;
@@ -21,10 +23,12 @@ interface Props {
 
 export default function AddExpenseModal({ user, onClose, onSaved, editingExpense }: Props) {
   const [categories, setCategories] = useState<Category[]>([]);
-  const [amount, setAmount] = useState(editingExpense ? String(editingExpense.amount) : '');
+  const [amountStr, setAmountStr] = useState(editingExpense ? String(editingExpense.amount) : '');
   const [description, setDescription] = useState(editingExpense?.description || '');
   const [categoryId, setCategoryId] = useState(editingExpense?.category_id || '');
   const [date, setDate] = useState(editingExpense?.date || new Date().toISOString().split('T')[0]);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -36,14 +40,44 @@ export default function AddExpenseModal({ user, onClose, onSaved, editingExpense
       .then(({ data }) => setCategories(data || []));
   }, [user.id]);
 
+  const selectedCat = categories.find(c => c.id === categoryId);
+  const parentCats = categories.filter(c => !c.parent_id);
+  const getSubcats = (pid: string) => categories.filter(c => c.parent_id === pid);
+
+  const headerColor = selectedCat?.color || '#475569';
+  const headerIcon = selectedCat?.icon || '💵';
+  const headerName = selectedCat?.name || 'Sin categoría';
+  const displayAmount = amountStr || '0';
+
+  const today = new Date().toISOString().split('T')[0];
+  const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+  const dateLabel = date === today ? 'Hoy' : date === yesterday ? 'Ayer' : format(parseISO(date), "d 'de' MMM yyyy", { locale: es });
+
+  function handleNumpad(key: string) {
+    if (key === 'backspace') {
+      setAmountStr(prev => prev.slice(0, -1));
+    } else if (key === '.') {
+      if (!amountStr.includes('.')) {
+        setAmountStr(prev => (prev || '0') + '.');
+      }
+    } else {
+      if (amountStr.includes('.')) {
+        const decimals = amountStr.split('.')[1];
+        if (decimals && decimals.length >= 2) return;
+      }
+      setAmountStr(prev => prev + key);
+    }
+  }
+
   async function handleSave() {
-    if (!amount) return;
+    const amt = parseFloat(amountStr);
+    if (!amt || amt <= 0) return;
     setSaving(true);
 
     const data = {
       user_id: user.id,
-      amount: parseFloat(amount),
-      description: description || 'Gasto',
+      amount: amt,
+      description: description || headerName,
       notes: null,
       category_id: categoryId || null,
       date,
@@ -64,102 +98,168 @@ export default function AddExpenseModal({ user, onClose, onSaved, editingExpense
     }
   }
 
-  // Group categories: parents first, then their children indented
-  const parentCats = categories.filter(c => !c.parent_id);
-  const getSubcats = (parentId: string) => categories.filter(c => c.parent_id === parentId);
-
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-end">
-      <div className="bg-dark-800 w-full rounded-t-3xl p-5 slide-up max-w-lg mx-auto max-h-[85vh] overflow-y-auto pb-8">
-        <div className="flex items-center justify-between mb-5">
-          <h2 className="text-lg font-bold">{editingExpense ? 'Editar gasto' : 'Nuevo gasto'}</h2>
-          <button onClick={onClose} className="text-dark-400 p-1">
-            <X size={22} />
+    <div className="fixed inset-0 z-50 flex flex-col">
+      {/* ===== HEADER with category color ===== */}
+      <div className="pt-12 pb-5 px-5 relative" style={{ backgroundColor: headerColor }}>
+        <button onClick={onClose} className="absolute top-4 left-4 p-1 text-white/80 hover:text-white">
+          <X size={24} />
+        </button>
+
+        <p className="text-center text-white/90 text-sm font-semibold mb-4">
+          {editingExpense ? 'Editar gasto' : `Agregar ${headerName}`}
+        </p>
+
+        <div className="flex items-center justify-between">
+          <button
+            onClick={() => setShowCategoryPicker(true)}
+            className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center text-2xl"
+          >
+            {headerIcon}
           </button>
-        </div>
 
-        <div className="space-y-4">
-          {/* Amount */}
-          <div>
-            <label className="text-xs text-dark-400 font-medium mb-1.5 block">Monto *</label>
-            <div className="relative">
-              <DollarSign size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-dark-400" />
-              <input
-                type="number"
-                step="0.01"
-                placeholder="0.00"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                className="w-full bg-dark-700 border border-dark-600 rounded-xl py-3 pl-9 pr-4 text-lg font-semibold placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors"
-                autoFocus
-              />
-            </div>
-          </div>
-
-          {/* Description (optional) */}
-          <div>
-            <label className="text-xs text-dark-400 font-medium mb-1.5 block">Descripción (opcional)</label>
-            <div className="relative">
-              <FileText size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-dark-400" />
-              <input
-                type="text"
-                placeholder="Ej: Supermercado, Uber, Netflix..."
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                className="w-full bg-dark-700 border border-dark-600 rounded-xl py-3 pl-9 pr-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors"
-              />
-            </div>
-          </div>
-
-          {/* Category with subcategories */}
-          <div>
-            <label className="text-xs text-dark-400 font-medium mb-1.5 block">Categoría</label>
-            <select
-              value={categoryId}
-              onChange={(e) => setCategoryId(e.target.value)}
-              className="w-full bg-dark-700 border border-dark-600 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors appearance-none"
-            >
-              <option value="">Sin categoría</option>
-              {parentCats.map((cat) => {
-                const subs = getSubcats(cat.id);
-                return (
-                  <optgroup key={cat.id} label={`${cat.icon} ${cat.name}`}>
-                    <option value={cat.id}>{cat.icon} {cat.name} (general)</option>
-                    {subs.map((sub) => (
-                      <option key={sub.id} value={sub.id}>↳ {sub.icon} {sub.name}</option>
-                    ))}
-                  </optgroup>
-                );
-              })}
-            </select>
-          </div>
-
-          {/* Date */}
-          <div>
-            <label className="text-xs text-dark-400 font-medium mb-1.5 block">Fecha</label>
-            <div className="relative">
-              <Calendar size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-dark-400" />
-              <input
-                type="date"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                className="w-full bg-dark-700 border border-dark-600 rounded-xl py-3 pl-9 pr-4 text-sm focus:outline-none focus:border-brand-500 transition-colors"
-              />
-            </div>
-          </div>
-
-          {/* Submit - with extra bottom margin to avoid being hidden */}
-          <div className="pt-2 pb-4">
-            <button
-              onClick={handleSave}
-              disabled={saving || !amount}
-              className="w-full bg-brand-600 hover:bg-brand-500 disabled:bg-dark-600 text-white font-semibold py-3.5 rounded-xl transition-all text-sm"
-            >
-              {saving ? 'Guardando...' : editingExpense ? 'Guardar cambios' : 'Agregar gasto'}
-            </button>
+          <div className="text-right">
+            <span className="text-3xl font-extrabold text-white">-{displayAmount}</span>
+            <p className="text-white/60 text-xs mt-0.5">USD</p>
           </div>
         </div>
       </div>
+
+      {/* ===== FORM FIELDS ===== */}
+      <div className="bg-dark-900 flex-1 flex flex-col overflow-hidden">
+        {/* Date */}
+        <button
+          onClick={() => setShowDatePicker(!showDatePicker)}
+          className="flex items-center gap-3 px-5 py-4 border-b border-dark-800"
+        >
+          <Calendar size={18} className="text-dark-400" />
+          <span className="text-sm font-medium flex-1 text-left capitalize">{dateLabel}</span>
+          {date === today && (
+            <span
+              onClick={(e) => { e.stopPropagation(); setDate(yesterday); }}
+              className="text-xs text-dark-500 border border-dashed border-dark-600 rounded-full px-3 py-1"
+            >
+              Ayer?
+            </span>
+          )}
+        </button>
+
+        {showDatePicker && (
+          <div className="px-5 py-3 border-b border-dark-800 bg-dark-800/50">
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => { setDate(e.target.value); setShowDatePicker(false); }}
+              className="w-full bg-dark-700 border border-dark-600 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors"
+            />
+          </div>
+        )}
+
+        {/* Description */}
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-dark-800">
+          <span className="text-dark-400 text-lg">✏️</span>
+          <input
+            type="text"
+            placeholder="Descripción"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            className="flex-1 bg-transparent text-sm placeholder:text-dark-500 focus:outline-none"
+          />
+        </div>
+
+        {/* Spacer pushes button + numpad to bottom */}
+        <div className="flex-1 min-h-0" />
+
+        {/* Add button */}
+        <div className="px-5 py-3">
+          <button
+            onClick={handleSave}
+            disabled={saving || !amountStr || parseFloat(amountStr) <= 0}
+            className="w-full py-4 rounded-2xl font-bold text-base transition-all disabled:opacity-40"
+            style={{ backgroundColor: headerColor, color: 'white' }}
+          >
+            {saving ? 'Guardando...' : editingExpense ? 'Guardar cambios' : 'Agregar gasto'}
+          </button>
+        </div>
+
+        {/* ===== CUSTOM NUMPAD ===== */}
+        <div className="border-t border-dark-700">
+          <div className="grid grid-cols-4">
+            {['1','2','3','÷','4','5','6','×','7','8','9','-','.','0','backspace','+'].map((key) => {
+              const isOp = ['÷','×','-','+'].includes(key);
+              const isDel = key === 'backspace';
+              return (
+                <button
+                  key={key}
+                  onClick={() => {
+                    if (isOp) return;
+                    if (isDel) handleNumpad('backspace');
+                    else handleNumpad(key);
+                  }}
+                  className={`py-[14px] text-center text-xl font-medium border-b border-r border-dark-800 active:bg-dark-700 transition-colors ${
+                    isOp ? 'bg-dark-800/80 text-brand-400' : 'bg-dark-900 text-white'
+                  }`}
+                >
+                  {isDel ? <span className="flex items-center justify-center"><Delete size={22} /></span> : key}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* ===== CATEGORY PICKER OVERLAY ===== */}
+      {showCategoryPicker && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-end">
+          <div className="bg-dark-800 w-full rounded-t-3xl max-h-[70vh] overflow-y-auto slide-up">
+            <div className="flex items-center justify-between p-4 border-b border-dark-700 sticky top-0 bg-dark-800 z-10">
+              <h3 className="text-base font-bold">Elegí categoría</h3>
+              <button onClick={() => setShowCategoryPicker(false)} className="p-1 text-dark-400">
+                <X size={20} />
+              </button>
+            </div>
+
+            <button
+              onClick={() => { setCategoryId(''); setShowCategoryPicker(false); }}
+              className={`w-full flex items-center gap-3 px-4 py-3.5 border-b border-dark-700/30 active:bg-dark-700/50 ${!categoryId ? 'bg-dark-700/30' : ''}`}
+            >
+              <div className="w-10 h-10 rounded-full bg-dark-600 flex items-center justify-center text-lg">💵</div>
+              <span className="text-sm font-medium">Sin categoría</span>
+            </button>
+
+            {parentCats.map((cat) => {
+              const subs = getSubcats(cat.id);
+              return (
+                <div key={cat.id}>
+                  <button
+                    onClick={() => { setCategoryId(cat.id); setShowCategoryPicker(false); }}
+                    className={`w-full flex items-center gap-3 px-4 py-3.5 border-b border-dark-700/30 active:bg-dark-700/50 ${categoryId === cat.id ? 'bg-dark-700/30' : ''}`}
+                  >
+                    <div className="w-10 h-10 rounded-full flex items-center justify-center text-lg" style={{ backgroundColor: cat.color + '30' }}>
+                      {cat.icon}
+                    </div>
+                    <span className="text-sm font-medium">{cat.name}</span>
+                  </button>
+                  {subs.map((sub) => (
+                    <button
+                      key={sub.id}
+                      onClick={() => { setCategoryId(sub.id); setShowCategoryPicker(false); }}
+                      className={`w-full flex items-center gap-3 pl-10 pr-4 py-3 border-b border-dark-700/20 active:bg-dark-700/50 ${categoryId === sub.id ? 'bg-dark-700/30' : ''}`}
+                    >
+                      <span className="text-dark-500 text-xs">└</span>
+                      <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm" style={{ backgroundColor: (sub.color || cat.color) + '25' }}>
+                        {sub.icon}
+                      </div>
+                      <span className="text-sm text-dark-200">{sub.name}</span>
+                    </button>
+                  ))}
+                </div>
+              );
+            })}
+            <div className="h-8" />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
