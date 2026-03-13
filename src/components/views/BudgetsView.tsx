@@ -24,7 +24,7 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
   // Form state
   const [name, setName] = useState('');
   const [amount, setAmount] = useState('');
-  const [recurrence, setRecurrence] = useState<'weekly' | 'monthly' | 'yearly'>('monthly');
+  const [recurrence, setRecurrence] = useState<'monthly' | 'yearly'>('monthly');
   const [startDate, setStartDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [selectedCatIds, setSelectedCatIds] = useState<string[]>([]);
   const [showCatPicker, setShowCatPicker] = useState(false);
@@ -162,7 +162,8 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
   }
 
   const parentCats = categories.filter(c => !c.parent_id);
-  const recurrenceLabels: Record<string, string> = { weekly: 'Semanal', monthly: 'Mensual', yearly: 'Anual' };
+  const getSubcats = (pid: string) => categories.filter(c => c.parent_id === pid);
+  const recurrenceLabels: Record<string, string> = { monthly: 'Mensual', yearly: 'Anual' };
 
   return (
     <div className="px-4 pt-6 pb-4 max-w-lg mx-auto page-transition">
@@ -229,7 +230,6 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
                       backgroundColor: pct >= 100 ? '#ef4444' : pct >= 80 ? '#f59e0b' : '#22c55e',
                     }}
                   />
-                  {/* Percentage label inside */}
                 </div>
 
                 <div className="flex items-center justify-between">
@@ -283,7 +283,6 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3.5 pl-11 pr-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors"
-                  autoFocus
                 />
               </div>
             </div>
@@ -308,7 +307,7 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
             <div>
               <label className="text-xs text-dark-400 font-medium mb-1.5 block uppercase tracking-wider">Recurrencia</label>
               <div className="flex bg-dark-800 rounded-xl p-1 border border-dark-700">
-                {(['weekly', 'monthly', 'yearly'] as const).map((r) => (
+                {(['monthly', 'yearly'] as const).map((r) => (
                   <button
                     key={r}
                     onClick={() => setRecurrence(r)}
@@ -377,43 +376,74 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
               <h3 className="text-base font-bold">Categorías del presupuesto</h3>
               <button
                 onClick={() => {
-                  if (selectedCatIds.length === parentCats.length) {
+                  const allIds = categories.map(c => c.id);
+                  if (selectedCatIds.length === allIds.length) {
                     setSelectedCatIds([]);
                   } else {
-                    setSelectedCatIds(parentCats.map(c => c.id));
+                    setSelectedCatIds(allIds);
                   }
                 }}
                 className="text-xs text-brand-400 font-medium"
               >
-                {selectedCatIds.length === parentCats.length ? 'Ninguna' : 'Todas'}
+                {selectedCatIds.length === categories.length ? 'Ninguna' : 'Todas'}
               </button>
             </div>
 
             {parentCats.map((cat) => {
               const isSelected = selectedCatIds.includes(cat.id);
+              const subs = getSubcats(cat.id);
               return (
-                <button
-                  key={cat.id}
-                  onClick={() => toggleCat(cat.id)}
-                  className={`w-full flex items-center gap-3 px-4 py-4 border-b border-dark-700/30 active:bg-dark-700/50 transition-colors`}
-                >
-                  <div
-                    className="w-10 h-10 rounded-full flex items-center justify-center text-lg"
-                    style={{ backgroundColor: cat.color + '25' }}
+                <div key={cat.id}>
+                  <button
+                    onClick={() => toggleCat(cat.id)}
+                    className="w-full flex items-center gap-3 px-4 py-4 border-b border-dark-700/30 active:bg-dark-700/50 transition-colors"
                   >
-                    {cat.icon}
-                  </div>
-                  <span className="text-sm font-medium flex-1 text-left">{cat.name}</span>
-                  <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${
-                    isSelected ? 'bg-brand-500 border-brand-500' : 'border-dark-600'
-                  }`}>
-                    {isSelected && (
-                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                        <path d="M2.5 6L5 8.5L9.5 3.5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                      </svg>
-                    )}
-                  </div>
-                </button>
+                    <div
+                      className="w-10 h-10 rounded-full flex items-center justify-center text-lg"
+                      style={{ backgroundColor: cat.color + '25' }}
+                    >
+                      {cat.icon}
+                    </div>
+                    <span className="text-sm font-medium flex-1 text-left">{cat.name}</span>
+                    <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${
+                      isSelected ? 'bg-brand-500 border-brand-500' : 'border-dark-600'
+                    }`}>
+                      {isSelected && (
+                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                          <path d="M2.5 6L5 8.5L9.5 3.5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
+                      )}
+                    </div>
+                  </button>
+                  {subs.map((sub) => {
+                    const subSelected = selectedCatIds.includes(sub.id);
+                    return (
+                      <button
+                        key={sub.id}
+                        onClick={() => toggleCat(sub.id)}
+                        className="w-full flex items-center gap-3 pl-10 pr-4 py-3 border-b border-dark-700/20 active:bg-dark-700/50 transition-colors"
+                      >
+                        <span className="text-dark-500 text-xs">└</span>
+                        <div
+                          className="w-8 h-8 rounded-full flex items-center justify-center text-sm"
+                          style={{ backgroundColor: (sub.color || cat.color) + '25' }}
+                        >
+                          {sub.icon}
+                        </div>
+                        <span className="text-sm text-dark-200 flex-1 text-left">{sub.name}</span>
+                        <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${
+                          subSelected ? 'bg-brand-500 border-brand-500' : 'border-dark-600'
+                        }`}>
+                          {subSelected && (
+                            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                              <path d="M2.5 6L5 8.5L9.5 3.5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                            </svg>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
               );
             })}
             <div className="h-8" />
