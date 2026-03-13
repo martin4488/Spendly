@@ -26,7 +26,7 @@ export default function Home() {
   // Generate recurring expenses on login
   useEffect(() => {
     if (user) {
-      supabase.rpc('generate_recurring_expenses', { p_user_id: user.id }).catch(console.error);
+      supabase.rpc('generate_recurring_expenses', { p_user_id: user.id }).then().catch(console.error);
     }
   }, [user]);
 
