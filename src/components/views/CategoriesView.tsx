@@ -19,8 +19,6 @@ export default function CategoriesView({ user }: { user: User }) {
   const [name, setName] = useState('');
   const [icon, setIcon] = useState('📦');
   const [color, setColor] = useState('#22c55e');
-  const [budgetAmount, setBudgetAmount] = useState('');
-  const [budgetPeriod, setBudgetPeriod] = useState<'monthly' | 'yearly'>('monthly');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => { loadData(); }, []);
@@ -59,16 +57,12 @@ export default function CategoriesView({ user }: { user: User }) {
       setName(category.name);
       setIcon(category.icon);
       setColor(category.color);
-      setBudgetAmount(category.budget_amount > 0 ? String(category.budget_amount) : '');
-      setBudgetPeriod(category.budget_period);
       setParentId(category.parent_id);
     } else {
       setEditingId(null);
       setName('');
       setIcon('📦');
       setColor(CATEGORY_COLORS[Math.floor(Math.random() * CATEGORY_COLORS.length)]);
-      setBudgetAmount('');
-      setBudgetPeriod('monthly');
       setParentId(asSubcategoryOf || null);
     }
     setShowForm(true);
@@ -83,8 +77,6 @@ export default function CategoriesView({ user }: { user: User }) {
       name,
       icon,
       color,
-      budget_amount: budgetAmount ? parseFloat(budgetAmount) : 0,
-      budget_period: budgetPeriod,
       parent_id: parentId,
     };
 
@@ -144,7 +136,6 @@ export default function CategoriesView({ user }: { user: User }) {
             const catSpent = spending[cat.id] || 0;
             const subSpent = (cat.subcategories || []).reduce((s, sc) => s + (spending[sc.id] || 0), 0);
             const totalSpent = catSpent + subSpent;
-            const pct = cat.budget_amount > 0 ? (totalSpent / cat.budget_amount) * 100 : 0;
             const hasSubs = (cat.subcategories?.length || 0) > 0;
 
             return (
@@ -161,12 +152,7 @@ export default function CategoriesView({ user }: { user: User }) {
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium">{cat.name}</p>
-                        <div className="flex items-center gap-2 text-xs text-dark-400">
-                          <span>{formatCurrency(totalSpent)}</span>
-                          {cat.budget_amount > 0 && (
-                            <span>/ {formatCurrency(cat.budget_amount)} {cat.budget_period === 'monthly' ? 'mes' : 'año'}</span>
-                          )}
-                        </div>
+                        <p className="text-xs text-dark-400">{formatCurrency(totalSpent)} este mes</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-1 flex-shrink-0">
@@ -185,21 +171,9 @@ export default function CategoriesView({ user }: { user: User }) {
                       </button>
                     </div>
                   </div>
-
-                  {cat.budget_amount > 0 && (
-                    <div className="mt-2 w-full bg-dark-700 rounded-full h-1.5">
-                      <div
-                        className="h-1.5 rounded-full transition-all duration-500"
-                        style={{
-                          width: `${Math.min(pct, 100)}%`,
-                          backgroundColor: pct >= 100 ? '#ef4444' : pct >= 80 ? '#f59e0b' : cat.color,
-                        }}
-                      />
-                    </div>
-                  )}
                 </div>
 
-                {/* Subcategories - always visible */}
+                {/* Subcategories */}
                 {hasSubs && (
                   <div className="border-t border-dark-700/50">
                     <div className="px-3.5 pt-2 pb-1">
@@ -207,7 +181,6 @@ export default function CategoriesView({ user }: { user: User }) {
                     </div>
                     {cat.subcategories!.map((sub, idx) => {
                       const subS = spending[sub.id] || 0;
-                      const subPct = sub.budget_amount > 0 ? (subS / Number(sub.budget_amount)) * 100 : 0;
                       const isLast = idx === cat.subcategories!.length - 1;
                       return (
                         <div
@@ -224,10 +197,7 @@ export default function CategoriesView({ user }: { user: User }) {
                             </div>
                             <div className="min-w-0 flex-1">
                               <p className="text-sm font-medium text-dark-200">{sub.name}</p>
-                              <p className="text-xs text-dark-400">
-                                {formatCurrency(subS)}
-                                {sub.budget_amount > 0 && ` / ${formatCurrency(Number(sub.budget_amount))} ${sub.budget_period === 'monthly' ? 'mes' : 'año'}`}
-                              </p>
+                              <p className="text-xs text-dark-400">{formatCurrency(subS)}</p>
                             </div>
                           </div>
                           <div className="flex items-center gap-1 flex-shrink-0">
@@ -249,10 +219,9 @@ export default function CategoriesView({ user }: { user: User }) {
         </div>
       )}
 
-      {/* Form Modal - Wallet style */}
+      {/* Form Modal */}
       {showForm && (
         <div className="fixed inset-0 bg-dark-900 z-[60] flex flex-col slide-up">
-          {/* Header */}
           <div className="flex items-center justify-between px-4 pt-5 pb-3">
             <button onClick={() => setShowForm(false)} className="p-1 text-dark-400 hover:text-white">
               <X size={24} />
@@ -264,7 +233,7 @@ export default function CategoriesView({ user }: { user: User }) {
           </div>
 
           <div className="flex-1 overflow-y-auto px-5 pb-28">
-            {/* Preview: icon circle + name */}
+            {/* Preview */}
             <div className="flex items-center gap-4 py-5">
               <div
                 className="w-16 h-16 rounded-full flex items-center justify-center text-3xl flex-shrink-0 transition-colors"
@@ -285,43 +254,7 @@ export default function CategoriesView({ user }: { user: User }) {
               </div>
             </div>
 
-            {/* Budget */}
-            <div className="mb-5">
-              <p className="text-xs text-dark-400 font-medium mb-2 uppercase tracking-wider">Presupuesto</p>
-              <div className="flex items-center gap-3">
-                <div className="relative flex-1">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-dark-400 text-sm">$</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    placeholder="0.00"
-                    value={budgetAmount}
-                    onChange={(e) => setBudgetAmount(e.target.value)}
-                    className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 pl-8 pr-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors"
-                  />
-                </div>
-                <div className="flex bg-dark-800 rounded-xl p-0.5 border border-dark-700">
-                  <button
-                    onClick={() => setBudgetPeriod('monthly')}
-                    className={`px-3 py-2.5 rounded-lg text-xs font-medium transition-all ${
-                      budgetPeriod === 'monthly' ? 'bg-dark-600 text-white' : 'text-dark-400'
-                    }`}
-                  >
-                    Mes
-                  </button>
-                  <button
-                    onClick={() => setBudgetPeriod('yearly')}
-                    className={`px-3 py-2.5 rounded-lg text-xs font-medium transition-all ${
-                      budgetPeriod === 'yearly' ? 'bg-dark-600 text-white' : 'text-dark-400'
-                    }`}
-                  >
-                    Año
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Color picker - small, scrollable */}
+            {/* Color picker */}
             <div className="mb-5">
               <p className="text-xs text-dark-400 font-medium mb-2.5 uppercase tracking-wider">Color</p>
               <div className="flex gap-2 overflow-x-auto pb-2 -mx-5 px-5" style={{ scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' }}>
@@ -338,7 +271,7 @@ export default function CategoriesView({ user }: { user: User }) {
               </div>
             </div>
 
-            {/* Icon picker - 6 col grid */}
+            {/* Icon picker */}
             <div>
               <p className="text-xs text-dark-400 font-medium mb-2.5 uppercase tracking-wider">Ícono</p>
               <div className="grid grid-cols-6 gap-2">
@@ -359,7 +292,6 @@ export default function CategoriesView({ user }: { user: User }) {
             </div>
           </div>
 
-          {/* Create button - part of the flex column, not fixed/sticky */}
           <div className="px-4 py-4 bg-dark-900 border-t border-dark-800">
             <button
               onClick={handleSave}
