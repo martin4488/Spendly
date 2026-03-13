@@ -4,25 +4,17 @@ import { useState, useEffect } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, formatDate, getMonthRange, exportToCSV } from '@/lib/utils';
-import { Category, Expense } from '@/types';
-import { Plus, Search, Download, ChevronLeft, ChevronRight, Trash2, Edit3, X, Calendar, DollarSign, FileText } from 'lucide-react';
+import { Expense } from '@/types';
+import { Plus, Search, Download, ChevronLeft, ChevronRight, Trash2, Edit3 } from 'lucide-react';
+import AddExpenseModal from '@/components/AddExpenseModal';
 
 export default function ExpensesView({ user }: { user: User }) {
   const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingExpense, setEditingExpense] = useState<any>(null);
   const [search, setSearch] = useState('');
   const [monthOffset, setMonthOffset] = useState(0);
-
-  // Form state
-  const [amount, setAmount] = useState('');
-  const [description, setDescription] = useState('');
-  const [notes, setNotes] = useState('');
-  const [categoryId, setCategoryId] = useState('');
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-  const [saving, setSaving] = useState(false);
 
   const currentMonth = new Date(new Date().getFullYear(), new Date().getMonth() + monthOffset, 1);
   const monthRange = getMonthRange(currentMonth);
@@ -34,70 +26,31 @@ export default function ExpensesView({ user }: { user: User }) {
 
   async function loadData() {
     setLoading(true);
-    const [{ data: exp }, { data: cats }] = await Promise.all([
-      supabase
-        .from('expenses')
-        .select('*, category:categories(*)')
-        .eq('user_id', user.id)
-        .gte('date', monthRange.start)
-        .lte('date', monthRange.end)
-        .order('date', { ascending: false }),
-      supabase
-        .from('categories')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('name'),
-    ]);
+    const { data: exp } = await supabase
+      .from('expenses')
+      .select('*, category:categories(*)')
+      .eq('user_id', user.id)
+      .gte('date', monthRange.start)
+      .lte('date', monthRange.end)
+      .order('date', { ascending: false });
     setExpenses(exp || []);
-    setCategories(cats || []);
     setLoading(false);
   }
 
-  function openForm(expense?: Expense) {
-    if (expense) {
-      setEditingId(expense.id);
-      setAmount(String(expense.amount));
-      setDescription(expense.description);
-      setNotes(expense.notes || '');
-      setCategoryId(expense.category_id || '');
-      setDate(expense.date);
-    } else {
-      setEditingId(null);
-      setAmount('');
-      setDescription('');
-      setNotes('');
-      setCategoryId('');
-      setDate(new Date().toISOString().split('T')[0]);
-    }
+  function openEdit(expense: Expense) {
+    setEditingExpense({
+      id: expense.id,
+      amount: Number(expense.amount),
+      description: expense.description,
+      category_id: expense.category_id,
+      date: expense.date,
+    });
     setShowForm(true);
   }
 
-  async function handleSave() {
-    if (!amount || !description) return;
-    setSaving(true);
-
-    const data = {
-      user_id: user.id,
-      amount: parseFloat(amount),
-      description,
-      notes: notes || null,
-      category_id: categoryId || null,
-      date,
-    };
-
-    try {
-      if (editingId) {
-        await supabase.from('expenses').update(data).eq('id', editingId);
-      } else {
-        await supabase.from('expenses').insert(data);
-      }
-      setShowForm(false);
-      loadData();
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setSaving(false);
-    }
+  function openNew() {
+    setEditingExpense(null);
+    setShowForm(true);
   }
 
   async function handleDelete(id: string) {
@@ -113,7 +66,6 @@ export default function ExpensesView({ user }: { user: User }) {
       Descripción: e.description,
       Categoría: (e as any).category?.name || 'Sin categoría',
       Monto: e.amount,
-      Notas: e.notes || '',
     }));
     exportToCSV(data, `spendly-${monthRange.start}`);
   }
@@ -138,7 +90,7 @@ export default function ExpensesView({ user }: { user: User }) {
             <Download size={18} />
           </button>
           <button
-            onClick={() => openForm()}
+            onClick={openNew}
             className="bg-brand-600 hover:bg-brand-500 text-white p-2.5 rounded-xl transition-colors shadow-lg shadow-brand-600/20"
           >
             <Plus size={18} />
@@ -209,7 +161,7 @@ export default function ExpensesView({ user }: { user: User }) {
               <div className="flex items-center gap-2 flex-shrink-0">
                 <span className="text-sm font-bold text-red-400">-{formatCurrency(Number(expense.amount))}</span>
                 <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button onClick={() => openForm(expense)} className="p-1.5 text-dark-400 hover:text-dark-200">
+                  <button onClick={() => openEdit(expense)} className="p-1.5 text-dark-400 hover:text-dark-200">
                     <Edit3 size={14} />
                   </button>
                   <button onClick={() => handleDelete(expense.id)} className="p-1.5 text-dark-400 hover:text-red-400">
@@ -224,100 +176,12 @@ export default function ExpensesView({ user }: { user: User }) {
 
       {/* Add/Edit Modal */}
       {showForm && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-end">
-          <div className="bg-dark-800 w-full rounded-t-3xl p-5 slide-up max-w-lg mx-auto max-h-[85vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-5">
-              <h2 className="text-lg font-bold">{editingId ? 'Editar gasto' : 'Nuevo gasto'}</h2>
-              <button onClick={() => setShowForm(false)} className="text-dark-400 p-1">
-                <X size={22} />
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              {/* Amount */}
-              <div>
-                <label className="text-xs text-dark-400 font-medium mb-1.5 block">Monto *</label>
-                <div className="relative">
-                  <DollarSign size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-dark-400" />
-                  <input
-                    type="number"
-                    step="0.01"
-                    placeholder="0.00"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    className="w-full bg-dark-700 border border-dark-600 rounded-xl py-3 pl-9 pr-4 text-lg font-semibold placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors"
-                    autoFocus
-                  />
-                </div>
-              </div>
-
-              {/* Description */}
-              <div>
-                <label className="text-xs text-dark-400 font-medium mb-1.5 block">Descripción *</label>
-                <div className="relative">
-                  <FileText size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-dark-400" />
-                  <input
-                    type="text"
-                    placeholder="Ej: Supermercado, Uber, Netflix..."
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    className="w-full bg-dark-700 border border-dark-600 rounded-xl py-3 pl-9 pr-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors"
-                  />
-                </div>
-              </div>
-
-              {/* Category */}
-              <div>
-                <label className="text-xs text-dark-400 font-medium mb-1.5 block">Categoría</label>
-                <select
-                  value={categoryId}
-                  onChange={(e) => setCategoryId(e.target.value)}
-                  className="w-full bg-dark-700 border border-dark-600 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors appearance-none"
-                >
-                  <option value="">Sin categoría</option>
-                  {categories.map((cat) => (
-                    <option key={cat.id} value={cat.id}>{cat.icon} {cat.name}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Date */}
-              <div>
-                <label className="text-xs text-dark-400 font-medium mb-1.5 block">Fecha</label>
-                <div className="relative">
-                  <Calendar size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-dark-400" />
-                  <input
-                    type="date"
-                    value={date}
-                    onChange={(e) => setDate(e.target.value)}
-                    className="w-full bg-dark-700 border border-dark-600 rounded-xl py-3 pl-9 pr-4 text-sm focus:outline-none focus:border-brand-500 transition-colors"
-                  />
-                </div>
-              </div>
-
-              {/* Notes */}
-              <div>
-                <label className="text-xs text-dark-400 font-medium mb-1.5 block">Notas (opcional)</label>
-                <textarea
-                  placeholder="Algún detalle extra..."
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  rows={2}
-                  className="w-full bg-dark-700 border border-dark-600 rounded-xl py-3 px-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors resize-none"
-                />
-              </div>
-
-              {/* Submit */}
-              <button
-                onClick={handleSave}
-                disabled={saving || !amount || !description}
-                className="w-full bg-brand-600 hover:bg-brand-500 disabled:bg-dark-600 text-white font-semibold py-3.5 rounded-xl transition-all text-sm"
-              >
-                {saving ? 'Guardando...' : editingId ? 'Guardar cambios' : 'Agregar gasto'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <AddExpenseModal
+          user={user}
+          onClose={() => { setShowForm(false); setEditingExpense(null); }}
+          onSaved={() => loadData()}
+          editingExpense={editingExpense}
+        />
       )}
     </div>
   );
