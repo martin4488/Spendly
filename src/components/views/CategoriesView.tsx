@@ -257,100 +257,123 @@ export default function CategoriesView({ user }: { user: User }) {
         </div>
       )}
 
-      {/* Form Modal */}
+      {/* Form Modal - Wallet style */}
       {showForm && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-end">
-          <div className="bg-dark-800 w-full rounded-t-3xl p-5 slide-up max-w-lg mx-auto max-h-[85vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-5">
-              <h2 className="text-lg font-bold">
-                {editingId ? 'Editar categoría' : parentId ? 'Nueva subcategoría' : 'Nueva categoría'}
-              </h2>
-              <button onClick={() => setShowForm(false)} className="text-dark-400 p-1"><X size={22} /></button>
+        <div className="fixed inset-0 bg-dark-900 z-50 flex flex-col slide-up">
+          {/* Header */}
+          <div className="flex items-center justify-between px-4 pt-5 pb-3">
+            <button onClick={() => setShowForm(false)} className="p-1 text-dark-400 hover:text-white">
+              <X size={24} />
+            </button>
+            <h2 className="text-base font-bold">
+              {editingId ? 'Editar categoría' : parentId ? 'Nueva subcategoría' : 'Crear categoría'}
+            </h2>
+            <div className="w-8" />
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-5 pb-32">
+            {/* Preview: icon circle + name */}
+            <div className="flex items-center gap-4 py-5">
+              <div
+                className="w-16 h-16 rounded-full flex items-center justify-center text-3xl flex-shrink-0 transition-colors"
+                style={{ backgroundColor: color }}
+              >
+                {icon}
+              </div>
+              <input
+                type="text"
+                placeholder="Nombre de categoría"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="flex-1 bg-transparent text-lg font-semibold placeholder:text-dark-500 focus:outline-none border-b border-dark-700 pb-2"
+                autoFocus
+              />
             </div>
 
-            <div className="space-y-4">
-              {/* Name */}
-              <div>
-                <label className="text-xs text-dark-400 font-medium mb-1.5 block">Nombre *</label>
-                <input
-                  type="text"
-                  placeholder="Ej: Comida, Transporte, Entretenimiento..."
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="w-full bg-dark-700 border border-dark-600 rounded-xl py-3 px-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors"
-                  autoFocus
-                />
-              </div>
-
-              {/* Icon picker */}
-              <div>
-                <label className="text-xs text-dark-400 font-medium mb-1.5 block">Ícono</label>
-                <div className="grid grid-cols-10 gap-1">
-                  {CATEGORY_ICONS.map((ic) => (
-                    <button
-                      key={ic}
-                      onClick={() => setIcon(ic)}
-                      className={`text-xl p-1.5 rounded-lg transition-all ${
-                        icon === ic ? 'bg-dark-600 scale-110' : 'hover:bg-dark-700'
-                      }`}
-                    >
-                      {ic}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Color picker */}
-              <div>
-                <label className="text-xs text-dark-400 font-medium mb-1.5 block">Color</label>
-                <div className="grid grid-cols-10 gap-1.5">
-                  {CATEGORY_COLORS.map((c) => (
-                    <button
-                      key={c}
-                      onClick={() => setColor(c)}
-                      className={`w-7 h-7 rounded-full transition-all ${
-                        color === c ? 'ring-2 ring-white ring-offset-2 ring-offset-dark-800 scale-110' : ''
-                      }`}
-                      style={{ backgroundColor: c }}
-                    />
-                  ))}
-                </div>
-              </div>
-
-              {/* Budget */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs text-dark-400 font-medium mb-1.5 block">Presupuesto</label>
+            {/* Budget (optional) */}
+            <div className="mb-6">
+              <p className="text-xs text-dark-400 font-medium mb-2 uppercase tracking-wider">Presupuesto (opcional)</p>
+              <div className="flex items-center gap-3">
+                <div className="relative flex-1">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-dark-400 text-sm">$</span>
                   <input
                     type="number"
                     step="0.01"
                     placeholder="0.00"
                     value={budgetAmount}
                     onChange={(e) => setBudgetAmount(e.target.value)}
-                    className="w-full bg-dark-700 border border-dark-600 rounded-xl py-3 px-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors"
+                    className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 pl-8 pr-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors"
                   />
                 </div>
-                <div>
-                  <label className="text-xs text-dark-400 font-medium mb-1.5 block">Período</label>
-                  <select
-                    value={budgetPeriod}
-                    onChange={(e) => setBudgetPeriod(e.target.value as any)}
-                    className="w-full bg-dark-700 border border-dark-600 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors appearance-none"
+                <div className="flex bg-dark-800 rounded-xl p-0.5 border border-dark-700">
+                  <button
+                    onClick={() => setBudgetPeriod('monthly')}
+                    className={`px-3 py-2.5 rounded-lg text-xs font-medium transition-all ${
+                      budgetPeriod === 'monthly' ? 'bg-dark-600 text-white' : 'text-dark-400'
+                    }`}
                   >
-                    <option value="monthly">Mensual</option>
-                    <option value="yearly">Anual</option>
-                  </select>
+                    Mensual
+                  </button>
+                  <button
+                    onClick={() => setBudgetPeriod('yearly')}
+                    className={`px-3 py-2.5 rounded-lg text-xs font-medium transition-all ${
+                      budgetPeriod === 'yearly' ? 'bg-dark-600 text-white' : 'text-dark-400'
+                    }`}
+                  >
+                    Anual
+                  </button>
                 </div>
               </div>
-
-              <button
-                onClick={handleSave}
-                disabled={saving || !name}
-                className="w-full bg-brand-600 hover:bg-brand-500 disabled:bg-dark-600 text-white font-semibold py-3.5 rounded-xl transition-all text-sm"
-              >
-                {saving ? 'Guardando...' : editingId ? 'Guardar cambios' : 'Crear categoría'}
-              </button>
             </div>
+
+            {/* Color picker - horizontal scroll */}
+            <div className="mb-6">
+              <p className="text-xs text-dark-400 font-medium mb-3 uppercase tracking-wider">Color</p>
+              <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1">
+                {CATEGORY_COLORS.map((c) => (
+                  <button
+                    key={c}
+                    onClick={() => setColor(c)}
+                    className={`w-10 h-10 rounded-full flex-shrink-0 transition-all ${
+                      color === c ? 'ring-2 ring-white ring-offset-2 ring-offset-dark-900 scale-110' : 'opacity-70 hover:opacity-100'
+                    }`}
+                    style={{ backgroundColor: c }}
+                  />
+                ))}
+              </div>
+            </div>
+
+            {/* Icon picker - large grid */}
+            <div>
+              <p className="text-xs text-dark-400 font-medium mb-3 uppercase tracking-wider">Ícono</p>
+              <div className="grid grid-cols-5 gap-2">
+                {CATEGORY_ICONS.map((ic) => (
+                  <button
+                    key={ic}
+                    onClick={() => setIcon(ic)}
+                    className={`aspect-square rounded-2xl flex items-center justify-center text-2xl transition-all ${
+                      icon === ic
+                        ? 'bg-dark-700 ring-2 ring-brand-500 scale-105'
+                        : 'bg-dark-800 hover:bg-dark-700'
+                    }`}
+                  >
+                    {ic}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Sticky create button at bottom */}
+          <div className="absolute bottom-0 left-0 right-0 p-5 bg-gradient-to-t from-dark-900 via-dark-900 to-transparent pt-10">
+            <button
+              onClick={handleSave}
+              disabled={saving || !name}
+              className="w-full py-4 rounded-2xl font-bold text-base transition-all disabled:opacity-30"
+              style={{ backgroundColor: color, color: 'white' }}
+            >
+              {saving ? 'Guardando...' : editingId ? 'Guardar cambios' : 'Crear categoría'}
+            </button>
           </div>
         </div>
       )}
