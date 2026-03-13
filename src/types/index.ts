@@ -4,8 +4,6 @@ export interface Category {
   name: string;
   icon: string;
   color: string;
-  budget_amount: number;
-  budget_period: 'monthly' | 'yearly';
   parent_id: string | null;
   created_at: string;
   updated_at: string;
@@ -41,6 +39,27 @@ export interface RecurringExpense {
   created_at: string;
   updated_at: string;
   category?: Category;
+}
+
+export interface Budget {
+  id: string;
+  user_id: string;
+  name: string;
+  amount: number;
+  currency: string;
+  recurrence: 'weekly' | 'monthly' | 'yearly';
+  start_date: string;
+  created_at: string;
+  updated_at: string;
+  category_ids?: string[];
+  categories?: Category[];
+  spent?: number;
+}
+
+export interface BudgetCategory {
+  id: string;
+  budget_id: string;
+  category_id: string;
 }
 
 export interface MonthlyTotal {
