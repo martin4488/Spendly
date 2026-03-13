@@ -1,4 +1,4 @@
-import { format, startOfMonth, endOfMonth, startOfYear, endOfYear, parseISO } from 'date-fns';
+import { format, startOfMonth, endOfMonth, startOfYear, endOfYear, startOfWeek, endOfWeek, addMonths, addWeeks, addYears, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 
 export function formatCurrency(amount: number): string {
@@ -83,3 +83,37 @@ export const CATEGORY_COLORS = [
   '#78716c', '#57534e', '#44403c',
   '#64748b', '#475569', '#334155',
 ];
+
+export function getBudgetPeriodRange(startDateStr: string, recurrence: 'weekly' | 'monthly' | 'yearly') {
+  const startDate = parseISO(startDateStr);
+  const today = new Date();
+
+  // Find current period that contains today
+  let periodStart = startDate;
+  let periodEnd: Date;
+
+  if (recurrence === 'weekly') {
+    while (addWeeks(periodStart, 1) <= today) {
+      periodStart = addWeeks(periodStart, 1);
+    }
+    periodEnd = addWeeks(periodStart, 1);
+    periodEnd = new Date(periodEnd.getTime() - 86400000); // -1 day
+  } else if (recurrence === 'monthly') {
+    while (addMonths(periodStart, 1) <= today) {
+      periodStart = addMonths(periodStart, 1);
+    }
+    periodEnd = addMonths(periodStart, 1);
+    periodEnd = new Date(periodEnd.getTime() - 86400000);
+  } else {
+    while (addYears(periodStart, 1) <= today) {
+      periodStart = addYears(periodStart, 1);
+    }
+    periodEnd = addYears(periodStart, 1);
+    periodEnd = new Date(periodEnd.getTime() - 86400000);
+  }
+
+  return {
+    start: format(periodStart, 'yyyy-MM-dd'),
+    end: format(periodEnd, 'yyyy-MM-dd'),
+  };
+}
