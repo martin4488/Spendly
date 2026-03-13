@@ -3,44 +3,39 @@
 import { useState, useEffect } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
-import { formatCurrency, getMonthRange, getYearRange, getMonthName } from '@/lib/utils';
-import { format } from 'date-fns';
-import { Category, Expense, CategorySpending } from '@/types';
-import { TrendingDown, TrendingUp, Wallet, ChevronRight, Plus } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
+import { formatCurrency, getMonthRange, getYearRange } from '@/lib/utils';
+import { format, parseISO, startOfMonth, subMonths } from 'date-fns';
+import { es } from 'date-fns/locale';
+import { Expense, Category } from '@/types';
+import { Plus, ChevronLeft, ChevronRight, Trash2, Edit3 } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import AddExpenseModal from '@/components/AddExpenseModal';
+
+type ViewMode = 'months' | 'years';
 
 export default function DashboardView({ user, onNavigate }: { user: User; onNavigate: (tab: any) => void }) {
-  const [monthlyTotal, setMonthlyTotal] = useState(0);
-  const [yearlyTotal, setYearlyTotal] = useState(0);
-  const [lastMonthTotal, setLastMonthTotal] = useState(0);
-  const [categorySpending, setCategorySpending] = useState<CategorySpending[]>([]);
-  const [monthlyChart, setMonthlyChart] = useState<{ name: string; total: number }[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [allCategories, setAllCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
+  const [viewMode, setViewMode] = useState<ViewMode>('months');
+  const [showAddExpense, setShowAddExpense] = useState(false);
+  const [editingExpense, setEditingExpense] = useState<any>(null);
 
   useEffect(() => {
-    loadDashboard();
+    loadData();
   }, []);
 
-  async function loadDashboard() {
+  async function loadData() {
     try {
-      const now = new Date();
-      const monthRange = getMonthRange(now);
-      const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-      const lastMonthRange = getMonthRange(lastMonth);
-      const yearRange = getYearRange(now);
+      // Fetch last 12 months of data in 2 parallel queries
+      const startDate = format(subMonths(new Date(), 11), 'yyyy-MM-dd');
 
-      // Calculate the start date for 6 months ago (for chart)
-      const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
-      const chartStart = format(sixMonthsAgo, 'yyyy-MM-dd');
-
-      // Only 2 parallel queries instead of 8+ sequential ones
-      const [{ data: allExpenses }, { data: allCategories }] = await Promise.all([
+      const [{ data: exp }, { data: cats }] = await Promise.all([
         supabase
           .from('expenses')
-          .select('amount, category_id, date')
+          .select('*, category:categories(*)')
           .eq('user_id', user.id)
-          .gte('date', chartStart)
-          .lte('date', monthRange.end)
+          .gte('date', startDate)
           .order('date', { ascending: false }),
         supabase
           .from('categories')
@@ -48,55 +43,8 @@ export default function DashboardView({ user, onNavigate }: { user: User; onNavi
           .eq('user_id', user.id),
       ]);
 
-      const expenses = allExpenses || [];
-      const categories = (allCategories || []).filter(c => !c.parent_id);
-      const subcategories = (allCategories || []).filter(c => c.parent_id);
-
-      // Current month
-      const monthExp = expenses.filter(e => e.date >= monthRange.start && e.date <= monthRange.end);
-      const mTotal = monthExp.reduce((sum, e) => sum + Number(e.amount), 0);
-      setMonthlyTotal(mTotal);
-
-      // Last month
-      const lastMonthExp = expenses.filter(e => e.date >= lastMonthRange.start && e.date <= lastMonthRange.end);
-      setLastMonthTotal(lastMonthExp.reduce((sum, e) => sum + Number(e.amount), 0));
-
-      // Year total
-      const yearExp = expenses.filter(e => e.date >= yearRange.start && e.date <= yearRange.end);
-      setYearlyTotal(yearExp.reduce((sum, e) => sum + Number(e.amount), 0));
-
-      // Category spending (with subcategories summed into parent)
-      const spending: CategorySpending[] = categories.map((cat) => {
-        const subIds = subcategories.filter(sc => sc.parent_id === cat.id).map(sc => sc.id);
-        const allIds = [cat.id, ...subIds];
-        const spent = monthExp
-          .filter(e => e.category_id && allIds.includes(e.category_id))
-          .reduce((sum, e) => sum + Number(e.amount), 0);
-        return {
-          category_id: cat.id,
-          category_name: cat.name,
-          category_icon: cat.icon,
-          category_color: cat.color,
-          spent,
-          budget: Number(cat.budget_amount),
-          percentage: cat.budget_amount > 0 ? (spent / Number(cat.budget_amount)) * 100 : 0,
-        };
-      }).filter(c => c.spent > 0 || c.budget > 0)
-        .sort((a, b) => b.spent - a.spent);
-      setCategorySpending(spending);
-
-      // Monthly chart - calculate from the same data, no extra queries
-      const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-      const chartData: { name: string; total: number }[] = [];
-      for (let i = 5; i >= 0; i--) {
-        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-        const range = getMonthRange(d);
-        const total = expenses
-          .filter(e => e.date >= range.start && e.date <= range.end)
-          .reduce((sum, e) => sum + Number(e.amount), 0);
-        chartData.push({ name: months[d.getMonth()], total });
-      }
-      setMonthlyChart(chartData);
+      setExpenses(exp || []);
+      setAllCategories(cats || []);
     } catch (err) {
       console.error(err);
     } finally {
@@ -104,9 +52,108 @@ export default function DashboardView({ user, onNavigate }: { user: User; onNavi
     }
   }
 
-  const monthDiff = lastMonthTotal > 0
-    ? ((monthlyTotal - lastMonthTotal) / lastMonthTotal) * 100
-    : 0;
+  // Current month expenses
+  const now = new Date();
+  const monthRange = getMonthRange(now);
+  const yearRange = getYearRange(now);
+
+  const currentMonthExpenses = expenses.filter(
+    e => e.date >= monthRange.start && e.date <= monthRange.end
+  );
+  const currentYearExpenses = expenses.filter(
+    e => e.date >= yearRange.start && e.date <= yearRange.end
+  );
+
+  const accumulatedTotal = viewMode === 'months'
+    ? currentMonthExpenses.reduce((sum, e) => sum + Number(e.amount), 0)
+    : currentYearExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
+
+  // Chart data
+  const chartData = viewMode === 'months'
+    ? (() => {
+        const data: { name: string; total: number; isCurrent: boolean }[] = [];
+        for (let i = 5; i >= 0; i--) {
+          const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+          const range = getMonthRange(d);
+          const total = expenses
+            .filter(e => e.date >= range.start && e.date <= range.end)
+            .reduce((sum, e) => sum + Number(e.amount), 0);
+          const label = format(d, "MMM\nyyyy", { locale: es });
+          data.push({ name: label, total, isCurrent: i === 0 });
+        }
+        return data;
+      })()
+    : (() => {
+        const data: { name: string; total: number; isCurrent: boolean }[] = [];
+        const currentYear = now.getFullYear();
+        // Show months of current year
+        for (let m = 0; m < 12; m++) {
+          const d = new Date(currentYear, m, 1);
+          if (d > now) break;
+          const range = getMonthRange(d);
+          const total = expenses
+            .filter(e => e.date >= range.start && e.date <= range.end)
+            .reduce((sum, e) => sum + Number(e.amount), 0);
+          data.push({
+            name: format(d, 'MMM', { locale: es }),
+            total,
+            isCurrent: m === now.getMonth(),
+          });
+        }
+        return data;
+      })();
+
+  // Group expenses by day (for current month view)
+  const displayExpenses = viewMode === 'months' ? currentMonthExpenses : currentYearExpenses;
+  const groupedByDay: { date: string; label: string; total: number; expenses: Expense[] }[] = [];
+  const dayMap = new Map<string, Expense[]>();
+
+  displayExpenses.forEach(exp => {
+    const key = exp.date;
+    if (!dayMap.has(key)) dayMap.set(key, []);
+    dayMap.get(key)!.push(exp);
+  });
+
+  const today = format(now, 'yyyy-MM-dd');
+  const yesterday = format(new Date(now.getTime() - 86400000), 'yyyy-MM-dd');
+
+  dayMap.forEach((exps, dateStr) => {
+    let label: string;
+    if (dateStr === today) {
+      label = 'Hoy';
+    } else if (dateStr === yesterday) {
+      label = 'Ayer';
+    } else {
+      label = format(parseISO(dateStr), "d 'de' MMMM", { locale: es });
+    }
+    const total = exps.reduce((sum, e) => sum + Number(e.amount), 0);
+    groupedByDay.push({ date: dateStr, label, total, expenses: exps });
+  });
+
+  groupedByDay.sort((a, b) => b.date.localeCompare(a.date));
+
+  // Handlers
+  function openEdit(expense: Expense) {
+    setEditingExpense({
+      id: expense.id,
+      amount: Number(expense.amount),
+      description: expense.description,
+      category_id: expense.category_id,
+      date: expense.date,
+    });
+    setShowAddExpense(true);
+  }
+
+  async function handleDelete(id: string) {
+    if (confirm('¿Eliminar este gasto?')) {
+      await supabase.from('expenses').delete().eq('id', id);
+      loadData();
+    }
+  }
+
+  const periodLabel = viewMode === 'months'
+    ? format(now, "MMMM yyyy", { locale: es })
+    : now.getFullYear().toString();
 
   if (loading) {
     return (
@@ -117,131 +164,165 @@ export default function DashboardView({ user, onNavigate }: { user: User; onNavi
   }
 
   return (
-    <div className="px-4 pt-6 pb-4 max-w-lg mx-auto page-transition">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <p className="text-dark-400 text-sm">Hola 👋</p>
-          <h1 className="text-xl font-bold capitalize">{getMonthName()}</h1>
+    <div className="max-w-lg mx-auto page-transition">
+      {/* Top section - Accumulated total */}
+      <div className="px-4 pt-8 pb-4 text-center">
+        <p className="text-3xl font-extrabold text-white">
+          -{formatCurrency(accumulatedTotal)}
+        </p>
+        <p className="text-dark-400 text-sm mt-1 capitalize">{periodLabel}</p>
+      </div>
+
+      {/* View mode toggle */}
+      <div className="flex justify-center mb-4 px-4">
+        <div className="flex bg-dark-800 rounded-xl p-1 gap-1">
+          <button
+            onClick={() => setViewMode('months')}
+            className={`px-4 py-1.5 rounded-lg text-xs font-medium transition-all ${
+              viewMode === 'months' ? 'bg-dark-600 text-white' : 'text-dark-400'
+            }`}
+          >
+            Por meses
+          </button>
+          <button
+            onClick={() => setViewMode('years')}
+            className={`px-4 py-1.5 rounded-lg text-xs font-medium transition-all ${
+              viewMode === 'years' ? 'bg-dark-600 text-white' : 'text-dark-400'
+            }`}
+          >
+            Por año
+          </button>
         </div>
+      </div>
+
+      {/* Bar Chart */}
+      {chartData.some(d => d.total > 0) && (
+        <div className="px-4 mb-2">
+          <div className="bg-dark-800 rounded-xl p-4">
+            <ResponsiveContainer width="100%" height={140}>
+              <BarChart data={chartData} barCategoryGap={viewMode === 'years' ? '15%' : '20%'}>
+                <XAxis
+                  dataKey="name"
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fill: '#94a3b8', fontSize: 10 }}
+                  interval={0}
+                />
+                <YAxis hide />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: '#1e293b',
+                    border: '1px solid #334155',
+                    borderRadius: '12px',
+                    color: '#f1f5f9',
+                    fontSize: '13px',
+                  }}
+                  formatter={(value: number) => [formatCurrency(value), 'Total']}
+                />
+                <Bar dataKey="total" radius={[4, 4, 0, 0]}>
+                  {chartData.map((entry, i) => (
+                    <Cell
+                      key={i}
+                      fill={entry.isCurrent ? '#ef4444' : '#ef444440'}
+                    />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+
+      {/* Spending Overview link */}
+      <div className="px-4 py-3">
         <button
-          onClick={() => onNavigate('expenses')}
-          className="bg-brand-600 hover:bg-brand-500 text-white p-3 rounded-xl transition-colors shadow-lg shadow-brand-600/20"
+          onClick={() => onNavigate('categories')}
+          className="w-full flex items-center justify-center gap-2 text-dark-300 text-sm font-medium py-2"
         >
-          <Plus size={20} />
+          <span>📊</span> Presupuestos <ChevronRight size={14} />
         </button>
       </div>
 
-      {/* Main Card */}
-      <div className="bg-gradient-to-br from-brand-600 to-brand-800 rounded-2xl p-5 mb-5 shadow-xl shadow-brand-900/30">
-        <p className="text-brand-200 text-sm font-medium">Gastaste este mes</p>
-        <p className="text-3xl font-extrabold text-white mt-1">{formatCurrency(monthlyTotal)}</p>
-        {lastMonthTotal > 0 && (
-          <div className={`flex items-center gap-1 mt-2 text-sm ${monthDiff > 0 ? 'text-red-200' : 'text-green-200'}`}>
-            {monthDiff > 0 ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
-            <span>{Math.abs(monthDiff).toFixed(0)}% vs mes anterior</span>
+      {/* Expenses grouped by day */}
+      <div>
+        {groupedByDay.length === 0 ? (
+          <div className="text-center py-10 px-4">
+            <div className="text-5xl mb-4">🎯</div>
+            <p className="text-dark-300 font-medium">No hay gastos en este período</p>
+            <p className="text-dark-500 text-sm mt-1">Tocá el botón + para agregar tu primer gasto</p>
           </div>
+        ) : (
+          groupedByDay.map((group) => (
+            <div key={group.date}>
+              {/* Day header */}
+              <div className="flex items-center justify-between px-4 py-2.5 bg-dark-900/50">
+                <span className="text-sm font-semibold text-dark-300 capitalize">{group.label}</span>
+                <span className="text-sm font-semibold text-red-400">-{formatCurrency(group.total)}</span>
+              </div>
+
+              {/* Day expenses */}
+              {group.expenses.map((expense) => {
+                const cat = (expense as any).category;
+                return (
+                  <div
+                    key={expense.id}
+                    className="flex items-center gap-3 px-4 py-3 border-b border-dark-800/50 active:bg-dark-800/30 transition-colors"
+                  >
+                    {/* Category icon */}
+                    <div
+                      className="w-10 h-10 rounded-full flex items-center justify-center text-lg flex-shrink-0"
+                      style={{ backgroundColor: cat?.color ? cat.color + '25' : '#33415530' }}
+                    >
+                      {cat?.icon || '💵'}
+                    </div>
+
+                    {/* Info */}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{expense.description}</p>
+                      <p className="text-xs text-dark-400">
+                        {cat?.name || 'Sin categoría'}
+                        {expense.is_recurring && ' · 🔄'}
+                      </p>
+                    </div>
+
+                    {/* Amount */}
+                    <span className="text-sm font-bold text-red-400 flex-shrink-0">
+                      -{formatCurrency(Number(expense.amount))}
+                    </span>
+
+                    {/* Actions (visible on hover/tap) */}
+                    <div className="flex gap-0.5 flex-shrink-0">
+                      <button onClick={() => openEdit(expense)} className="p-1.5 text-dark-500 hover:text-dark-200">
+                        <Edit3 size={13} />
+                      </button>
+                      <button onClick={() => handleDelete(expense.id)} className="p-1.5 text-dark-500 hover:text-red-400">
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ))
         )}
       </div>
 
-      {/* Year total */}
-      <div className="bg-dark-800 rounded-xl p-4 mb-5 flex items-center gap-3">
-        <div className="bg-dark-700 p-2.5 rounded-lg">
-          <Wallet size={18} className="text-dark-300" />
-        </div>
-        <div>
-          <p className="text-dark-400 text-xs">Total anual</p>
-          <p className="font-bold">{formatCurrency(yearlyTotal)}</p>
-        </div>
-      </div>
+      {/* FAB - Add expense */}
+      <button
+        onClick={() => { setEditingExpense(null); setShowAddExpense(true); }}
+        className="fixed bottom-24 right-5 bg-brand-600 hover:bg-brand-500 text-white w-14 h-14 rounded-full shadow-xl shadow-brand-900/40 flex items-center justify-center transition-colors z-40"
+      >
+        <Plus size={26} />
+      </button>
 
-      {/* Monthly Bar Chart */}
-      {monthlyChart.some(d => d.total > 0) && (
-        <div className="bg-dark-800 rounded-xl p-4 mb-5">
-          <h3 className="text-sm font-semibold mb-4 text-dark-200">Últimos 6 meses</h3>
-          <ResponsiveContainer width="100%" height={160}>
-            <BarChart data={monthlyChart} barCategoryGap="20%">
-              <XAxis
-                dataKey="name"
-                axisLine={false}
-                tickLine={false}
-                tick={{ fill: '#94a3b8', fontSize: 11 }}
-              />
-              <YAxis hide />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: '#1e293b',
-                  border: '1px solid #334155',
-                  borderRadius: '12px',
-                  color: '#f1f5f9',
-                  fontSize: '13px',
-                }}
-                formatter={(value: number) => [formatCurrency(value), 'Total']}
-              />
-              <Bar dataKey="total" radius={[6, 6, 0, 0]}>
-                {monthlyChart.map((entry, i) => (
-                  <Cell
-                    key={i}
-                    fill={i === monthlyChart.length - 1 ? '#22c55e' : '#334155'}
-                  />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      )}
-
-      {/* Category Spending */}
-      {categorySpending.length > 0 && (
-        <div className="bg-dark-800 rounded-xl p-4">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-semibold text-dark-200">Por categoría</h3>
-            <button
-              onClick={() => onNavigate('categories')}
-              className="text-dark-400 text-xs flex items-center gap-1"
-            >
-              Ver todas <ChevronRight size={12} />
-            </button>
-          </div>
-
-          <div className="space-y-3">
-            {categorySpending.slice(0, 5).map((cat) => (
-              <div key={cat.category_id}>
-                <div className="flex items-center justify-between mb-1.5">
-                  <div className="flex items-center gap-2">
-                    <span className="text-base">{cat.category_icon}</span>
-                    <span className="text-sm font-medium">{cat.category_name}</span>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-sm font-semibold">{formatCurrency(cat.spent)}</span>
-                    {cat.budget > 0 && (
-                      <span className="text-dark-400 text-xs ml-1">/ {formatCurrency(cat.budget)}</span>
-                    )}
-                  </div>
-                </div>
-                {cat.budget > 0 && (
-                  <div className="w-full bg-dark-700 rounded-full h-1.5">
-                    <div
-                      className="h-1.5 rounded-full transition-all duration-500"
-                      style={{
-                        width: `${Math.min(cat.percentage, 100)}%`,
-                        backgroundColor: cat.percentage >= 100 ? '#ef4444' : cat.percentage >= 80 ? '#f59e0b' : cat.category_color,
-                      }}
-                    />
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {categorySpending.length === 0 && monthlyTotal === 0 && (
-        <div className="text-center py-10">
-          <div className="text-5xl mb-4">🎯</div>
-          <p className="text-dark-300 font-medium">Todavía no tenés gastos este mes</p>
-          <p className="text-dark-500 text-sm mt-1">Tocá el botón + para agregar tu primer gasto</p>
-        </div>
+      {/* Add/Edit Expense Modal */}
+      {showAddExpense && (
+        <AddExpenseModal
+          user={user}
+          onClose={() => { setShowAddExpense(false); setEditingExpense(null); }}
+          onSaved={() => loadData()}
+          editingExpense={editingExpense}
+        />
       )}
     </div>
   );
