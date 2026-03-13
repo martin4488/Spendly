@@ -1,0 +1,293 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+import { User } from '@supabase/supabase-js';
+import { supabase } from '@/lib/supabase';
+import { formatCurrency } from '@/lib/utils';
+import { Category, RecurringExpense } from '@/types';
+import { Plus, Edit3, Trash2, X, Pause, Play, DollarSign, FileText } from 'lucide-react';
+
+export default function RecurringView({ user }: { user: User }) {
+  const [items, setItems] = useState<RecurringExpense[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  // Form
+  const [amount, setAmount] = useState('');
+  const [description, setDescription] = useState('');
+  const [notes, setNotes] = useState('');
+  const [categoryId, setCategoryId] = useState('');
+  const [frequency, setFrequency] = useState<'weekly' | 'monthly' | 'yearly'>('monthly');
+  const [dayOfMonth, setDayOfMonth] = useState('1');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => { loadData(); }, []);
+
+  async function loadData() {
+    setLoading(true);
+    const [{ data: rec }, { data: cats }] = await Promise.all([
+      supabase
+        .from('recurring_expenses')
+        .select('*, category:categories(*)')
+        .eq('user_id', user.id)
+        .order('description'),
+      supabase.from('categories').select('*').eq('user_id', user.id).order('name'),
+    ]);
+    setItems(rec || []);
+    setCategories(cats || []);
+    setLoading(false);
+  }
+
+  function openForm(item?: RecurringExpense) {
+    if (item) {
+      setEditingId(item.id);
+      setAmount(String(item.amount));
+      setDescription(item.description);
+      setNotes(item.notes || '');
+      setCategoryId(item.category_id || '');
+      setFrequency(item.frequency);
+      setDayOfMonth(String(item.day_of_month));
+    } else {
+      setEditingId(null);
+      setAmount('');
+      setDescription('');
+      setNotes('');
+      setCategoryId('');
+      setFrequency('monthly');
+      setDayOfMonth('1');
+    }
+    setShowForm(true);
+  }
+
+  async function handleSave() {
+    if (!amount || !description) return;
+    setSaving(true);
+
+    const data = {
+      user_id: user.id,
+      amount: parseFloat(amount),
+      description,
+      notes: notes || null,
+      category_id: categoryId || null,
+      frequency,
+      day_of_month: parseInt(dayOfMonth),
+      is_active: true,
+    };
+
+    try {
+      if (editingId) {
+        await supabase.from('recurring_expenses').update(data).eq('id', editingId);
+      } else {
+        await supabase.from('recurring_expenses').insert(data);
+      }
+      setShowForm(false);
+      loadData();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function toggleActive(id: string, current: boolean) {
+    await supabase.from('recurring_expenses').update({ is_active: !current }).eq('id', id);
+    loadData();
+  }
+
+  async function handleDelete(id: string) {
+    if (confirm('¿Eliminar este gasto recurrente?')) {
+      await supabase.from('recurring_expenses').delete().eq('id', id);
+      loadData();
+    }
+  }
+
+  const totalMonthly = items
+    .filter(i => i.is_active)
+    .reduce((sum, i) => {
+      if (i.frequency === 'monthly') return sum + Number(i.amount);
+      if (i.frequency === 'weekly') return sum + Number(i.amount) * 4.33;
+      if (i.frequency === 'yearly') return sum + Number(i.amount) / 12;
+      return sum;
+    }, 0);
+
+  const freqLabels: Record<string, string> = { weekly: 'Semanal', monthly: 'Mensual', yearly: 'Anual' };
+
+  return (
+    <div className="px-4 pt-6 pb-4 max-w-lg mx-auto page-transition">
+      <div className="flex items-center justify-between mb-5">
+        <h1 className="text-xl font-bold">Gastos fijos</h1>
+        <button
+          onClick={() => openForm()}
+          className="bg-brand-600 hover:bg-brand-500 text-white p-2.5 rounded-xl transition-colors shadow-lg shadow-brand-600/20"
+        >
+          <Plus size={18} />
+        </button>
+      </div>
+
+      {/* Summary */}
+      <div className="bg-dark-800 rounded-xl p-4 mb-5">
+        <p className="text-dark-400 text-xs">Total mensual estimado</p>
+        <p className="text-2xl font-bold mt-1">{formatCurrency(totalMonthly)}</p>
+        <p className="text-dark-500 text-xs mt-1">{items.filter(i => i.is_active).length} gastos activos</p>
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-10">
+          <div className="w-7 h-7 border-2 border-brand-500/30 border-t-brand-500 rounded-full animate-spin" />
+        </div>
+      ) : items.length === 0 ? (
+        <div className="text-center py-10">
+          <div className="text-5xl mb-4">🔄</div>
+          <p className="text-dark-300 font-medium">No tenés gastos fijos</p>
+          <p className="text-dark-500 text-sm mt-1">Agregá cosas como alquiler, Netflix, gym...</p>
+          <button
+            onClick={() => openForm()}
+            className="mt-4 bg-brand-600 text-white text-sm font-medium px-5 py-2.5 rounded-xl"
+          >
+            Agregar gasto fijo
+          </button>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {items.map((item) => (
+            <div
+              key={item.id}
+              className={`bg-dark-800 rounded-xl p-3.5 flex items-center justify-between ${!item.is_active ? 'opacity-50' : ''}`}
+            >
+              <div className="flex items-center gap-3 flex-1 min-w-0">
+                <span className="text-xl">{(item as any).category?.icon || '🔄'}</span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium truncate">{item.description}</p>
+                  <p className="text-xs text-dark-400">
+                    {freqLabels[item.frequency]}
+                    {(item as any).category && ` · ${(item as any).category.name}`}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <span className="text-sm font-bold">{formatCurrency(Number(item.amount))}</span>
+                <button
+                  onClick={() => toggleActive(item.id, item.is_active)}
+                  className={`p-1.5 rounded-lg ${item.is_active ? 'text-brand-400' : 'text-dark-500'}`}
+                >
+                  {item.is_active ? <Pause size={14} /> : <Play size={14} />}
+                </button>
+                <button onClick={() => openForm(item)} className="p-1.5 text-dark-400 hover:text-dark-200">
+                  <Edit3 size={14} />
+                </button>
+                <button onClick={() => handleDelete(item.id)} className="p-1.5 text-dark-400 hover:text-red-400">
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Form Modal */}
+      {showForm && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-end">
+          <div className="bg-dark-800 w-full rounded-t-3xl p-5 slide-up max-w-lg mx-auto max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-lg font-bold">{editingId ? 'Editar gasto fijo' : 'Nuevo gasto fijo'}</h2>
+              <button onClick={() => setShowForm(false)} className="text-dark-400 p-1"><X size={22} /></button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs text-dark-400 font-medium mb-1.5 block">Monto *</label>
+                <div className="relative">
+                  <DollarSign size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-dark-400" />
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder="0.00"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    className="w-full bg-dark-700 border border-dark-600 rounded-xl py-3 pl-9 pr-4 text-lg font-semibold placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors"
+                    autoFocus
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs text-dark-400 font-medium mb-1.5 block">Descripción *</label>
+                <div className="relative">
+                  <FileText size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-dark-400" />
+                  <input
+                    type="text"
+                    placeholder="Ej: Alquiler, Netflix, Gym..."
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    className="w-full bg-dark-700 border border-dark-600 rounded-xl py-3 pl-9 pr-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs text-dark-400 font-medium mb-1.5 block">Categoría</label>
+                <select
+                  value={categoryId}
+                  onChange={(e) => setCategoryId(e.target.value)}
+                  className="w-full bg-dark-700 border border-dark-600 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors appearance-none"
+                >
+                  <option value="">Sin categoría</option>
+                  {categories.map((cat) => (
+                    <option key={cat.id} value={cat.id}>{cat.icon} {cat.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-dark-400 font-medium mb-1.5 block">Frecuencia</label>
+                  <select
+                    value={frequency}
+                    onChange={(e) => setFrequency(e.target.value as any)}
+                    className="w-full bg-dark-700 border border-dark-600 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors appearance-none"
+                  >
+                    <option value="weekly">Semanal</option>
+                    <option value="monthly">Mensual</option>
+                    <option value="yearly">Anual</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-dark-400 font-medium mb-1.5 block">Día del mes</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="28"
+                    value={dayOfMonth}
+                    onChange={(e) => setDayOfMonth(e.target.value)}
+                    className="w-full bg-dark-700 border border-dark-600 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs text-dark-400 font-medium mb-1.5 block">Notas (opcional)</label>
+                <textarea
+                  placeholder="Algún detalle extra..."
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  rows={2}
+                  className="w-full bg-dark-700 border border-dark-600 rounded-xl py-3 px-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors resize-none"
+                />
+              </div>
+
+              <button
+                onClick={handleSave}
+                disabled={saving || !amount || !description}
+                className="w-full bg-brand-600 hover:bg-brand-500 disabled:bg-dark-600 text-white font-semibold py-3.5 rounded-xl transition-all text-sm"
+              >
+                {saving ? 'Guardando...' : editingId ? 'Guardar cambios' : 'Agregar gasto fijo'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
