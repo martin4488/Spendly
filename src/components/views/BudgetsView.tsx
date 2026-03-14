@@ -6,7 +6,7 @@ import { supabase } from '@/lib/supabase';
 import { formatCurrency, getBudgetPeriodRange } from '@/lib/utils';
 import { Budget, Category } from '@/types';
 import { Plus, X, DollarSign, ChevronRight } from 'lucide-react';
-import { format, differenceInDays } from 'date-fns';
+import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 
 interface Props {
