@@ -5,7 +5,8 @@ import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { Category } from '@/types';
 import { CURRENCIES, convertCurrency, formatWithCurrency, CurrencyCode } from '@/lib/currency';
-import { X, Calendar, Delete, ChevronDown } from 'lucide-react';
+import { CATEGORY_ICONS, CATEGORY_COLORS } from '@/lib/utils';
+import { X, Calendar, Delete, ChevronDown, Settings, Check, ArrowLeft } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 
@@ -43,6 +44,13 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
   const [showCurrencyPicker, setShowCurrencyPicker] = useState(false);
   const [saving, setSaving] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
+
+  // Create category inline
+  const [showCreateCategory, setShowCreateCategory] = useState(false);
+  const [newCatName, setNewCatName] = useState('');
+  const [newCatIcon, setNewCatIcon] = useState('📦');
+  const [newCatColor, setNewCatColor] = useState(CATEGORY_COLORS[Math.floor(Math.random() * CATEGORY_COLORS.length)]);
+  const [savingCat, setSavingCat] = useState(false);
 
   useEffect(() => {
     supabase
@@ -86,6 +94,38 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
         if (decimals && decimals.length >= 2) return;
       }
       setAmountStr(prev => prev + key);
+    }
+  }
+
+  async function handleCreateCategory() {
+    if (!newCatName) return;
+    setSavingCat(true);
+    try {
+      const { data } = await supabase.from('categories').insert({
+        user_id: user.id,
+        name: newCatName,
+        icon: newCatIcon,
+        color: newCatColor,
+      }).select().single();
+
+      if (data) {
+        // Refresh categories and select the new one
+        const { data: cats } = await supabase
+          .from('categories')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('name');
+        setCategories(cats || []);
+        setCategoryId(data.id);
+      }
+      setShowCreateCategory(false);
+      setNewCatName('');
+      setNewCatIcon('📦');
+      setNewCatColor(CATEGORY_COLORS[Math.floor(Math.random() * CATEGORY_COLORS.length)]);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSavingCat(false);
     }
   }
 
@@ -303,55 +343,176 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
         </div>
       )}
 
-      {/* ===== CATEGORY PICKER OVERLAY ===== */}
-      {showCategoryPicker && (
+      {/* ===== CATEGORY PICKER OVERLAY - Grid style ===== */}
+      {showCategoryPicker && !showCreateCategory && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-end">
-          <div className="bg-dark-800 w-full rounded-t-3xl max-h-[70vh] overflow-y-auto slide-up">
+          <div className="bg-dark-800 w-full rounded-t-3xl max-h-[75vh] overflow-y-auto slide-up">
             <div className="flex items-center justify-between p-4 border-b border-dark-700 sticky top-0 bg-dark-800 z-10">
-              <h3 className="text-base font-bold">Elegí categoría</h3>
-              <button onClick={() => setShowCategoryPicker(false)} className="p-1 text-dark-400">
-                <X size={20} />
-              </button>
+              <h3 className="text-base font-bold">Categoría</h3>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowCreateCategory(true)}
+                  className="w-8 h-8 rounded-full bg-dark-700 flex items-center justify-center text-dark-400 hover:text-white transition-colors"
+                >
+                  <Settings size={16} />
+                </button>
+                <button
+                  onClick={() => setShowCategoryPicker(false)}
+                  className="w-8 h-8 rounded-full bg-dark-700 flex items-center justify-center text-dark-400 hover:text-white transition-colors"
+                >
+                  <Check size={16} />
+                </button>
+              </div>
             </div>
 
-            <button
-              onClick={() => { setCategoryId(''); setShowCategoryPicker(false); }}
-              className={`w-full flex items-center gap-3 px-4 py-3.5 border-b border-dark-700/30 active:bg-dark-700/50 ${!categoryId ? 'bg-dark-700/30' : ''}`}
-            >
-              <div className="w-10 h-10 rounded-full bg-dark-600 flex items-center justify-center text-lg">💵</div>
-              <span className="text-sm font-medium">Sin categoría</span>
-            </button>
+            <div className="p-4 grid grid-cols-4 gap-3">
+              {/* Sin categoría */}
+              <button
+                onClick={() => { setCategoryId(''); setShowCategoryPicker(false); }}
+                className="flex flex-col items-center gap-1.5"
+              >
+                <div className={`w-14 h-14 rounded-full flex items-center justify-center text-xl transition-all ${
+                  !categoryId ? 'ring-2 ring-brand-500 ring-offset-2 ring-offset-dark-800' : ''
+                } bg-dark-600`}>
+                  💵
+                </div>
+                <span className="text-[10px] text-dark-300 text-center leading-tight">Sin cat.</span>
+              </button>
 
-            {parentCats.map((cat) => {
-              const subs = getSubcats(cat.id);
-              return (
-                <div key={cat.id}>
+              {parentCats.map((cat) => {
+                const isActive = categoryId === cat.id;
+                return (
                   <button
+                    key={cat.id}
                     onClick={() => { setCategoryId(cat.id); setShowCategoryPicker(false); }}
-                    className={`w-full flex items-center gap-3 px-4 py-3.5 border-b border-dark-700/30 active:bg-dark-700/50 ${categoryId === cat.id ? 'bg-dark-700/30' : ''}`}
+                    className="flex flex-col items-center gap-1.5"
                   >
-                    <div className="w-10 h-10 rounded-full flex items-center justify-center text-lg" style={{ backgroundColor: cat.color + '30' }}>
+                    <div
+                      className={`w-14 h-14 rounded-full flex items-center justify-center text-xl transition-all ${
+                        isActive ? 'ring-2 ring-brand-500 ring-offset-2 ring-offset-dark-800' : ''
+                      }`}
+                      style={{ backgroundColor: cat.color + '25' }}
+                    >
                       {cat.icon}
                     </div>
-                    <span className="text-sm font-medium">{cat.name}</span>
+                    <span className="text-[10px] text-dark-300 text-center leading-tight truncate w-full">{cat.name}</span>
                   </button>
-                  {subs.map((sub) => (
-                    <button
-                      key={sub.id}
-                      onClick={() => { setCategoryId(sub.id); setShowCategoryPicker(false); }}
-                      className={`w-full flex items-center gap-3 pl-10 pr-4 py-3 border-b border-dark-700/20 active:bg-dark-700/50 ${categoryId === sub.id ? 'bg-dark-700/30' : ''}`}
-                    >
-                      <span className="text-dark-500 text-xs">└</span>
-                      <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm" style={{ backgroundColor: (sub.color || cat.color) + '25' }}>
-                        {sub.icon}
-                      </div>
-                      <span className="text-sm text-dark-200">{sub.name}</span>
-                    </button>
-                  ))}
+                );
+              })}
+            </div>
+
+            {/* Subcategories section */}
+            {parentCats.some(c => getSubcats(c.id).length > 0) && (
+              <div className="px-4 pb-4">
+                <p className="text-[10px] text-dark-500 uppercase tracking-wider font-semibold mb-2">Subcategorías</p>
+                <div className="grid grid-cols-4 gap-3">
+                  {parentCats.flatMap((cat) =>
+                    getSubcats(cat.id).map((sub) => {
+                      const isActive = categoryId === sub.id;
+                      return (
+                        <button
+                          key={sub.id}
+                          onClick={() => { setCategoryId(sub.id); setShowCategoryPicker(false); }}
+                          className="flex flex-col items-center gap-1.5"
+                        >
+                          <div
+                            className={`w-12 h-12 rounded-full flex items-center justify-center text-lg transition-all ${
+                              isActive ? 'ring-2 ring-brand-500 ring-offset-2 ring-offset-dark-800' : ''
+                            }`}
+                            style={{ backgroundColor: (sub.color || cat.color) + '25' }}
+                          >
+                            {sub.icon}
+                          </div>
+                          <span className="text-[10px] text-dark-400 text-center leading-tight truncate w-full">{sub.name}</span>
+                        </button>
+                      );
+                    })
+                  )}
                 </div>
-              );
-            })}
-            <div className="h-8" />
+              </div>
+            )}
+            <div className="h-4" />
+          </div>
+        </div>
+      )}
+
+      {/* ===== INLINE CREATE CATEGORY ===== */}
+      {showCreateCategory && (
+        <div className="fixed inset-0 bg-dark-900 z-[70] flex flex-col slide-up">
+          <div className="flex items-center justify-between px-4 pt-5 pb-3 flex-shrink-0">
+            <button onClick={() => setShowCreateCategory(false)} className="p-1 text-dark-400 hover:text-white">
+              <ArrowLeft size={24} />
+            </button>
+            <h2 className="text-base font-bold">Nueva categoría</h2>
+            <div className="w-8" />
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-5 pb-8">
+            {/* Preview */}
+            <div className="flex items-center gap-4 py-5">
+              <div
+                className="w-16 h-16 rounded-full flex items-center justify-center text-3xl flex-shrink-0"
+                style={{ backgroundColor: newCatColor }}
+              >
+                {newCatIcon}
+              </div>
+              <input
+                type="text"
+                placeholder="Nombre de categoría"
+                value={newCatName}
+                onChange={(e) => setNewCatName(e.target.value)}
+                className="flex-1 text-lg font-semibold bg-transparent focus:outline-none border-b border-dark-700 pb-2 placeholder:text-dark-500"
+              />
+            </div>
+
+            {/* Color picker */}
+            <div className="mb-5">
+              <p className="text-xs text-dark-400 font-medium mb-2.5 uppercase tracking-wider">Color</p>
+              <div className="flex gap-2 overflow-x-auto pb-2" style={{ scrollbarWidth: 'none' }}>
+                {CATEGORY_COLORS.map((c) => (
+                  <button
+                    key={c}
+                    onClick={() => setNewCatColor(c)}
+                    className={`w-8 h-8 rounded-full flex-shrink-0 transition-all ${
+                      newCatColor === c ? 'ring-2 ring-white ring-offset-2 ring-offset-dark-900 scale-110' : ''
+                    }`}
+                    style={{ backgroundColor: c }}
+                  />
+                ))}
+              </div>
+            </div>
+
+            {/* Icon picker */}
+            <div>
+              <p className="text-xs text-dark-400 font-medium mb-2.5 uppercase tracking-wider">Ícono</p>
+              <div className="grid grid-cols-6 gap-2">
+                {CATEGORY_ICONS.map((ic) => (
+                  <button
+                    key={ic}
+                    onClick={() => setNewCatIcon(ic)}
+                    className={`aspect-square rounded-xl flex items-center justify-center text-xl transition-all ${
+                      newCatIcon === ic
+                        ? 'bg-dark-600 ring-2 ring-brand-500'
+                        : 'bg-dark-800 hover:bg-dark-700'
+                    }`}
+                  >
+                    {ic}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Create button */}
+          <div className="px-4 py-4 bg-dark-900 border-t border-dark-800 flex-shrink-0">
+            <button
+              onClick={handleCreateCategory}
+              disabled={!newCatName || savingCat}
+              className="w-full py-4 rounded-2xl font-bold text-base transition-all disabled:opacity-30"
+              style={{ backgroundColor: newCatColor, color: 'white' }}
+            >
+              {savingCat ? 'Creando...' : 'Crear categoría'}
+            </button>
           </div>
         </div>
       )}
