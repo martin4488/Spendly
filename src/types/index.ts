@@ -20,6 +20,8 @@ export interface Expense {
   date: string;
   is_recurring: boolean;
   recurring_id: string | null;
+  original_currency: string | null;
+  original_amount: number | null;
   created_at: string;
   updated_at: string;
   category?: Category;
@@ -61,6 +63,12 @@ export interface BudgetCategory {
   id: string;
   budget_id: string;
   category_id: string;
+}
+
+export interface UserSettings {
+  id: string;
+  user_id: string;
+  default_currency: 'EUR' | 'USD' | 'ARS';
 }
 
 export interface MonthlyTotal {
