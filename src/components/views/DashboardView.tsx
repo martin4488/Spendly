@@ -10,6 +10,7 @@ import { Expense, Category } from '@/types';
 import { Plus, Trash2, Edit3, ChevronRight, PieChart, Search, X } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, LabelList, ReferenceLine, CartesianGrid } from 'recharts';
 import AddExpenseModal from '@/components/AddExpenseModal';
+import type { CurrencyCode } from '@/lib/currency';
 
 type ViewMode = 'months' | 'years';
 
@@ -18,7 +19,7 @@ function formatCompact(value: number): string {
   return String(Math.round(value));
 }
 
-export default function DashboardView({ user, onNavigate }: { user: User; onNavigate: (tab: any) => void }) {
+export default function DashboardView({ user, onNavigate, defaultCurrency }: { user: User; onNavigate: (tab: any) => void; defaultCurrency: CurrencyCode }) {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>('months');
@@ -373,6 +374,7 @@ export default function DashboardView({ user, onNavigate }: { user: User; onNavi
       {showAddExpense && (
         <AddExpenseModal
           user={user}
+          defaultCurrency={defaultCurrency}
           onClose={() => { setShowAddExpense(false); setEditingExpense(null); }}
           onSaved={() => loadData()}
           editingExpense={editingExpense}
