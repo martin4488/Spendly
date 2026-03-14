@@ -179,7 +179,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
       </div>
 
       {/* ===== FORM FIELDS ===== */}
-      <div className="bg-dark-900 flex-1 flex flex-col overflow-hidden">
+      <div className="bg-dark-900 flex-1 flex flex-col overflow-auto">
         {/* Date */}
         <button
           onClick={() => setShowDatePicker(!showDatePicker)}
@@ -236,7 +236,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
         </div>
 
         {/* ===== CUSTOM NUMPAD ===== */}
-        <div className="border-t border-dark-700">
+        <div className="border-t border-dark-700 pb-[env(safe-area-inset-bottom)]">
           <div className="grid grid-cols-3">
             {['1','2','3','4','5','6','7','8','9','.','0','backspace'].map((key) => {
               const isDel = key === 'backspace';
