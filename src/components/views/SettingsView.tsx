@@ -4,10 +4,33 @@ import { useState } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { exportToCSV } from '@/lib/utils';
-import { LogOut, Download, Mail, Shield, ExternalLink } from 'lucide-react';
+import { CURRENCIES, CurrencyCode } from '@/lib/currency';
+import { LogOut, Download, Mail, Shield, Coins } from 'lucide-react';
 
-export default function SettingsView({ user }: { user: User }) {
+interface Props {
+  user: User;
+  defaultCurrency: CurrencyCode;
+  onCurrencyChange: (currency: CurrencyCode) => void;
+}
+
+export default function SettingsView({ user, defaultCurrency, onCurrencyChange }: Props) {
   const [exporting, setExporting] = useState(false);
+  const [savingCurrency, setSavingCurrency] = useState(false);
+
+  async function handleCurrencyChange(currency: CurrencyCode) {
+    setSavingCurrency(true);
+    try {
+      await supabase
+        .from('user_settings')
+        .update({ default_currency: currency })
+        .eq('user_id', user.id);
+      onCurrencyChange(currency);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSavingCurrency(false);
+    }
+  }
 
   async function handleExportAll() {
     setExporting(true);
@@ -24,6 +47,8 @@ export default function SettingsView({ user }: { user: User }) {
           Descripción: e.description,
           Categoría: (e as any).category?.name || 'Sin categoría',
           Monto: e.amount,
+          Moneda_Original: e.original_currency || defaultCurrency,
+          Monto_Original: e.original_amount || e.amount,
           Notas: e.notes || '',
           Recurrente: e.is_recurring ? 'Sí' : 'No',
         }));
@@ -42,8 +67,10 @@ export default function SettingsView({ user }: { user: User }) {
     }
   }
 
+  const currencyInfo = CURRENCIES[defaultCurrency];
+
   return (
-    <div className="px-4 pt-6 pb-4 max-w-lg mx-auto page-transition">
+    <div className="px-4 pt-6 pb-24 max-w-lg mx-auto page-transition">
       <h1 className="text-xl font-bold mb-5">Configuración</h1>
 
       {/* Account */}
@@ -57,6 +84,40 @@ export default function SettingsView({ user }: { user: User }) {
             <p className="text-sm font-medium">{user.email}</p>
             <p className="text-xs text-dark-400">Cuenta verificada</p>
           </div>
+        </div>
+      </div>
+
+      {/* Currency */}
+      <div className="bg-dark-800 rounded-xl overflow-hidden mb-4">
+        <div className="flex items-center gap-3 px-4 pt-4 pb-2">
+          <Coins size={16} className="text-dark-400" />
+          <h3 className="text-sm font-semibold text-dark-300">Moneda principal</h3>
+        </div>
+        <p className="text-xs text-dark-500 px-4 pb-3">
+          Todos los gastos se convierten a esta moneda
+        </p>
+        <div className="px-3 pb-3 flex gap-2">
+          {(Object.keys(CURRENCIES) as CurrencyCode[]).map((code) => {
+            const c = CURRENCIES[code];
+            const isActive = defaultCurrency === code;
+            return (
+              <button
+                key={code}
+                onClick={() => handleCurrencyChange(code)}
+                disabled={savingCurrency}
+                className={`flex-1 flex flex-col items-center gap-1.5 py-3 rounded-xl transition-all ${
+                  isActive
+                    ? 'bg-brand-600/15 border-2 border-brand-500'
+                    : 'bg-dark-700 border-2 border-transparent hover:border-dark-600'
+                }`}
+              >
+                <span className="text-xl">{c.flag}</span>
+                <span className={`text-xs font-semibold ${isActive ? 'text-brand-400' : 'text-dark-300'}`}>
+                  {c.code}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -93,7 +154,7 @@ export default function SettingsView({ user }: { user: User }) {
         <div className="flex items-center gap-3 px-4 py-3.5">
           <div className="text-lg">💸</div>
           <div className="text-left flex-1">
-            <p className="text-sm font-medium">Spendly v1.0</p>
+            <p className="text-sm font-medium">Spendly v1.1</p>
             <p className="text-xs text-dark-400">Hecho con ❤️</p>
           </div>
         </div>
