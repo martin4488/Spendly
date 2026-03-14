@@ -1,4 +1,4 @@
-import { format, startOfMonth, endOfMonth, startOfYear, endOfYear, startOfWeek, endOfWeek, addMonths, addWeeks, addYears, parseISO } from 'date-fns';
+import { format, startOfMonth, endOfMonth, startOfYear, endOfYear, addMonths, addYears, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 
 export function formatCurrency(amount: number): string {
