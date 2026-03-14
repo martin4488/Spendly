@@ -5,7 +5,7 @@ import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { prefetchRates } from '@/lib/currency';
 import { LayoutDashboard, FolderTree, Wallet, RefreshCcw, Settings } from 'lucide-react';
-import { Budget, UserSettings } from '@/types';
+import { Budget } from '@/types';
 import DashboardView from '@/components/views/DashboardView';
 import CategoriesView from '@/components/views/CategoriesView';
 import BudgetsView from '@/components/views/BudgetsView';
