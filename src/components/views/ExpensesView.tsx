@@ -7,8 +7,9 @@ import { formatCurrency, formatDate, getMonthRange, exportToCSV } from '@/lib/ut
 import { Expense } from '@/types';
 import { Plus, Search, Download, ChevronLeft, ChevronRight, Trash2, Edit3 } from 'lucide-react';
 import AddExpenseModal from '@/components/AddExpenseModal';
+import type { CurrencyCode } from '@/lib/currency';
 
-export default function ExpensesView({ user }: { user: User }) {
+export default function ExpensesView({ user, defaultCurrency = 'EUR' as CurrencyCode }: { user: User; defaultCurrency?: CurrencyCode }) {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -178,6 +179,7 @@ export default function ExpensesView({ user }: { user: User }) {
       {showForm && (
         <AddExpenseModal
           user={user}
+          defaultCurrency={defaultCurrency}
           onClose={() => { setShowForm(false); setEditingExpense(null); }}
           onSaved={() => loadData()}
           editingExpense={editingExpense}
