@@ -4,12 +4,14 @@ import { useState, useEffect } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { Category } from '@/types';
-import { X, Calendar, Delete } from 'lucide-react';
+import { CURRENCIES, convertCurrency, formatWithCurrency, CurrencyCode } from '@/lib/currency';
+import { X, Calendar, Delete, ChevronDown } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 
 interface Props {
   user: User;
+  defaultCurrency: CurrencyCode;
   onClose: () => void;
   onSaved: () => void;
   editingExpense?: {
@@ -18,17 +20,27 @@ interface Props {
     description: string;
     category_id: string | null;
     date: string;
+    original_currency?: string | null;
+    original_amount?: number | null;
   } | null;
 }
 
-export default function AddExpenseModal({ user, onClose, onSaved, editingExpense }: Props) {
+export default function AddExpenseModal({ user, defaultCurrency, onClose, onSaved, editingExpense }: Props) {
   const [categories, setCategories] = useState<Category[]>([]);
-  const [amountStr, setAmountStr] = useState(editingExpense ? String(editingExpense.amount) : '');
+  const [amountStr, setAmountStr] = useState(
+    editingExpense
+      ? String(editingExpense.original_amount || editingExpense.amount)
+      : ''
+  );
   const [description, setDescription] = useState(editingExpense?.description || '');
   const [categoryId, setCategoryId] = useState(editingExpense?.category_id || '');
   const [date, setDate] = useState(editingExpense?.date || new Date().toISOString().split('T')[0]);
+  const [currency, setCurrency] = useState<CurrencyCode>(
+    (editingExpense?.original_currency as CurrencyCode) || defaultCurrency
+  );
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
+  const [showCurrencyPicker, setShowCurrencyPicker] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -53,6 +65,13 @@ export default function AddExpenseModal({ user, onClose, onSaved, editingExpense
   const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
   const dateLabel = date === today ? 'Hoy' : date === yesterday ? 'Ayer' : format(parseISO(date), "d 'de' MMM yyyy", { locale: es });
 
+  // Converted amount preview
+  const amt = parseFloat(amountStr) || 0;
+  const isOtherCurrency = currency !== defaultCurrency;
+  const convertedAmount = isOtherCurrency ? convertCurrency(amt, currency, defaultCurrency) : null;
+
+  const currencyInfo = CURRENCIES[currency];
+
   function handleNumpad(key: string) {
     if (key === 'backspace') {
       setAmountStr(prev => prev.slice(0, -1));
@@ -74,13 +93,29 @@ export default function AddExpenseModal({ user, onClose, onSaved, editingExpense
     if (!amt || amt <= 0) return;
     setSaving(true);
 
+    // Calculate final amount in default currency
+    let finalAmount = amt;
+    let originalCurrency: string | null = null;
+    let originalAmount: number | null = null;
+
+    if (isOtherCurrency) {
+      const converted = convertCurrency(amt, currency, defaultCurrency);
+      if (converted !== null) {
+        finalAmount = converted;
+        originalCurrency = currency;
+        originalAmount = amt;
+      }
+    }
+
     const data = {
       user_id: user.id,
-      amount: amt,
+      amount: finalAmount,
       description: description || headerName,
       notes: null,
       category_id: categoryId || null,
       date,
+      original_currency: originalCurrency,
+      original_amount: originalAmount,
     };
 
     try {
@@ -119,8 +154,26 @@ export default function AddExpenseModal({ user, onClose, onSaved, editingExpense
           </button>
 
           <div className="text-right">
-            <span className="text-3xl font-extrabold text-white">-{displayAmount}</span>
-            <p className="text-white/60 text-xs mt-0.5">USD</p>
+            <div className="flex items-center justify-end gap-2">
+              <span className="text-3xl font-extrabold text-white">-{displayAmount}</span>
+              {/* Currency selector button */}
+              <button
+                onClick={() => setShowCurrencyPicker(true)}
+                className="flex items-center gap-0.5 bg-white/20 rounded-full px-2 py-1 text-white/90"
+              >
+                <span className="text-xs font-semibold">{currencyInfo.symbol}</span>
+                <ChevronDown size={12} />
+              </button>
+            </div>
+            {/* Show conversion preview */}
+            {isOtherCurrency && convertedAmount !== null && amt > 0 && (
+              <p className="text-white/50 text-xs mt-0.5">
+                ≈ {formatWithCurrency(convertedAmount, defaultCurrency)}
+              </p>
+            )}
+            {!isOtherCurrency && (
+              <p className="text-white/60 text-xs mt-0.5">{currency}</p>
+            )}
           </div>
         </div>
       </div>
@@ -207,6 +260,45 @@ export default function AddExpenseModal({ user, onClose, onSaved, editingExpense
           </div>
         </div>
       </div>
+
+      {/* ===== CURRENCY PICKER ===== */}
+      {showCurrencyPicker && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-end">
+          <div className="bg-dark-800 w-full rounded-t-3xl slide-up">
+            <div className="flex items-center justify-between p-4 border-b border-dark-700">
+              <h3 className="text-base font-bold">Moneda</h3>
+              <button onClick={() => setShowCurrencyPicker(false)} className="p-1 text-dark-400">
+                <X size={20} />
+              </button>
+            </div>
+            {(Object.keys(CURRENCIES) as CurrencyCode[]).map((code) => {
+              const c = CURRENCIES[code];
+              const isActive = currency === code;
+              return (
+                <button
+                  key={code}
+                  onClick={() => { setCurrency(code); setShowCurrencyPicker(false); }}
+                  className={`w-full flex items-center gap-3 px-4 py-4 border-b border-dark-700/30 active:bg-dark-700/50 transition-colors ${isActive ? 'bg-dark-700/30' : ''}`}
+                >
+                  <span className="text-2xl">{c.flag}</span>
+                  <div className="flex-1 text-left">
+                    <p className="text-sm font-medium">{c.name}</p>
+                    <p className="text-xs text-dark-400">{c.code} · {c.symbol}</p>
+                  </div>
+                  {isActive && (
+                    <div className="w-6 h-6 rounded-full bg-brand-500 flex items-center justify-center">
+                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                        <path d="M2.5 6L5 8.5L9.5 3.5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+            <div className="h-8" />
+          </div>
+        </div>
+      )}
 
       {/* ===== CATEGORY PICKER OVERLAY ===== */}
       {showCategoryPicker && (
