@@ -8,7 +8,7 @@ import { format, parseISO, subMonths } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { Expense, Category } from '@/types';
 import { Plus, Trash2, Edit3, ChevronRight, PieChart, Search, X } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, LabelList, ReferenceLine, CartesianGrid } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, CartesianGrid } from 'recharts';
 import AddExpenseModal from '@/components/AddExpenseModal';
 import type { CurrencyCode } from '@/lib/currency';
 
