@@ -1,9 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { User } from '@supabase/supabase-js';
+import { supabase } from '@/lib/supabase';
+import { prefetchRates } from '@/lib/currency';
 import { LayoutDashboard, FolderTree, Wallet, RefreshCcw, Settings } from 'lucide-react';
-import { Budget } from '@/types';
+import { Budget, UserSettings } from '@/types';
 import DashboardView from '@/components/views/DashboardView';
 import CategoriesView from '@/components/views/CategoriesView';
 import BudgetsView from '@/components/views/BudgetsView';
@@ -11,6 +13,7 @@ import BudgetDetailView from '@/components/views/BudgetDetailView';
 import RecurringView from '@/components/views/RecurringView';
 import SettingsView from '@/components/views/SettingsView';
 import SpendingOverview from '@/components/views/SpendingOverview';
+import type { CurrencyCode } from '@/lib/currency';
 
 type Tab = 'dashboard' | 'categories' | 'budgets' | 'recurring' | 'settings' | 'overview' | 'budget-detail';
 
@@ -25,6 +28,31 @@ const tabs: { id: Tab; label: string; icon: typeof LayoutDashboard }[] = [
 export default function AppShell({ user }: { user: User }) {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [selectedBudget, setSelectedBudget] = useState<Budget | null>(null);
+  const [defaultCurrency, setDefaultCurrency] = useState<CurrencyCode>('EUR');
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+
+  // Load user settings + prefetch exchange rates on mount
+  useEffect(() => {
+    async function init() {
+      // Prefetch rates in parallel with settings load
+      const [_, { data }] = await Promise.all([
+        prefetchRates(),
+        supabase.from('user_settings').select('*').eq('user_id', user.id).single(),
+      ]);
+
+      if (data) {
+        setDefaultCurrency(data.default_currency as CurrencyCode);
+      } else {
+        // Create default settings
+        await supabase.from('user_settings').insert({
+          user_id: user.id,
+          default_currency: 'EUR',
+        });
+      }
+      setSettingsLoaded(true);
+    }
+    init();
+  }, [user.id]);
 
   function openBudget(budget: Budget) {
     setSelectedBudget(budget);
@@ -36,12 +64,27 @@ export default function AppShell({ user }: { user: User }) {
     setActiveTab('budgets');
   }
 
+  function handleCurrencyChange(currency: CurrencyCode) {
+    setDefaultCurrency(currency);
+  }
+
   const hideNav = activeTab === 'overview' || activeTab === 'budget-detail';
+
+  if (!settingsLoaded) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="text-4xl mb-3">💸</div>
+          <div className="text-lg font-semibold text-brand-400">Spendly</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen pb-20">
       <main className="page-transition">
-        {activeTab === 'dashboard' && <DashboardView user={user} onNavigate={setActiveTab} />}
+        {activeTab === 'dashboard' && <DashboardView user={user} onNavigate={setActiveTab} defaultCurrency={defaultCurrency} />}
         {activeTab === 'categories' && <CategoriesView user={user} />}
         {activeTab === 'budgets' && <BudgetsView user={user} onOpenBudget={openBudget} />}
         {activeTab === 'budget-detail' && selectedBudget && (
@@ -50,16 +93,19 @@ export default function AppShell({ user }: { user: User }) {
             budget={selectedBudget}
             onBack={backFromBudgetDetail}
             onRefresh={() => {
-              // Re-open same budget with refreshed data
               setActiveTab('budgets');
-              setTimeout(() => {
-                setActiveTab('budget-detail');
-              }, 50);
+              setTimeout(() => setActiveTab('budget-detail'), 50);
             }}
           />
         )}
         {activeTab === 'recurring' && <RecurringView user={user} />}
-        {activeTab === 'settings' && <SettingsView user={user} />}
+        {activeTab === 'settings' && (
+          <SettingsView
+            user={user}
+            defaultCurrency={defaultCurrency}
+            onCurrencyChange={handleCurrencyChange}
+          />
+        )}
         {activeTab === 'overview' && <SpendingOverview user={user} onBack={() => setActiveTab('dashboard')} />}
       </main>
 
