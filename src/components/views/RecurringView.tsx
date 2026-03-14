@@ -5,7 +5,9 @@ import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/utils';
 import { Category, RecurringExpense } from '@/types';
-import { Plus, Edit3, Trash2, X, Pause, Play, DollarSign, FileText } from 'lucide-react';
+import { Plus, Edit3, Trash2, X, Pause, Play, DollarSign, FileText, CalendarOff } from 'lucide-react';
+import { format, parseISO } from 'date-fns';
+import { es } from 'date-fns/locale';
 
 export default function RecurringView({ user }: { user: User }) {
   const [items, setItems] = useState<RecurringExpense[]>([]);
@@ -21,6 +23,7 @@ export default function RecurringView({ user }: { user: User }) {
   const [categoryId, setCategoryId] = useState('');
   const [frequency, setFrequency] = useState<'weekly' | 'monthly' | 'yearly'>('monthly');
   const [dayOfMonth, setDayOfMonth] = useState('1');
+  const [endDate, setEndDate] = useState('');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => { loadData(); }, []);
@@ -49,6 +52,7 @@ export default function RecurringView({ user }: { user: User }) {
       setCategoryId(item.category_id || '');
       setFrequency(item.frequency);
       setDayOfMonth(String(item.day_of_month));
+      setEndDate(item.end_date || '');
     } else {
       setEditingId(null);
       setAmount('');
@@ -57,6 +61,7 @@ export default function RecurringView({ user }: { user: User }) {
       setCategoryId('');
       setFrequency('monthly');
       setDayOfMonth('1');
+      setEndDate('');
     }
     setShowForm(true);
   }
@@ -73,6 +78,7 @@ export default function RecurringView({ user }: { user: User }) {
       category_id: categoryId || null,
       frequency,
       day_of_month: parseInt(dayOfMonth),
+      end_date: endDate || null,
       is_active: true,
     };
 
@@ -115,7 +121,7 @@ export default function RecurringView({ user }: { user: User }) {
   const freqLabels: Record<string, string> = { weekly: 'Semanal', monthly: 'Mensual', yearly: 'Anual' };
 
   return (
-    <div className="px-4 pt-6 pb-4 max-w-lg mx-auto page-transition">
+    <div className="px-4 pt-6 pb-24 max-w-lg mx-auto page-transition">
       <div className="flex items-center justify-between mb-5">
         <h1 className="text-xl font-bold">Gastos fijos</h1>
         <button
@@ -162,8 +168,14 @@ export default function RecurringView({ user }: { user: User }) {
                   <p className="text-sm font-medium truncate">{item.description}</p>
                   <p className="text-xs text-dark-400">
                     {freqLabels[item.frequency]}
+                    {item.frequency !== 'weekly' && ` · Día ${item.day_of_month}`}
                     {(item as any).category && ` · ${(item as any).category.name}`}
                   </p>
+                  {item.end_date && (
+                    <p className="text-[10px] text-dark-500 mt-0.5">
+                      Hasta {format(parseISO(item.end_date), "d MMM yyyy", { locale: es })}
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
@@ -207,7 +219,6 @@ export default function RecurringView({ user }: { user: User }) {
                     value={amount}
                     onChange={(e) => setAmount(e.target.value)}
                     className="w-full bg-dark-700 border border-dark-600 rounded-xl py-3 pl-9 pr-4 text-lg font-semibold placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors"
-                    autoFocus
                   />
                 </div>
               </div>
@@ -264,6 +275,33 @@ export default function RecurringView({ user }: { user: User }) {
                     className="w-full bg-dark-700 border border-dark-600 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors"
                   />
                 </div>
+              </div>
+
+              {/* End date (optional) */}
+              <div>
+                <label className="text-xs text-dark-400 font-medium mb-1.5 flex items-center gap-1.5">
+                  <CalendarOff size={12} />
+                  Fecha de finalización (opcional)
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="flex-1 bg-dark-700 border border-dark-600 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors"
+                  />
+                  {endDate && (
+                    <button
+                      onClick={() => setEndDate('')}
+                      className="p-2.5 bg-dark-700 border border-dark-600 rounded-xl text-dark-400 hover:text-red-400 transition-colors"
+                    >
+                      <X size={16} />
+                    </button>
+                  )}
+                </div>
+                {!endDate && (
+                  <p className="text-[10px] text-dark-500 mt-1">Sin fecha = se repite indefinidamente</p>
+                )}
               </div>
 
               <div>
