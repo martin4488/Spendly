@@ -35,6 +35,7 @@ export interface RecurringExpense {
   frequency: 'weekly' | 'monthly' | 'yearly';
   day_of_month: number;
   is_active: boolean;
+  end_date: string | null;
   last_generated: string | null;
   created_at: string;
   updated_at: string;
