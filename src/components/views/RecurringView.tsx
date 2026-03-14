@@ -198,131 +198,135 @@ export default function RecurringView({ user }: { user: User }) {
         </div>
       )}
 
-      {/* Form Modal */}
+      {/* Form Modal - Fullscreen */}
       {showForm && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-end">
-          <div className="bg-dark-800 w-full rounded-t-3xl p-5 slide-up max-w-lg mx-auto max-h-[85vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-5">
-              <h2 className="text-lg font-bold">{editingId ? 'Editar gasto fijo' : 'Nuevo gasto fijo'}</h2>
-              <button onClick={() => setShowForm(false)} className="text-dark-400 p-1"><X size={22} /></button>
-            </div>
+        <div className="fixed inset-0 bg-dark-900 z-[60] flex flex-col slide-up">
+          <div className="flex items-center justify-between px-4 pt-5 pb-3">
+            <button onClick={() => setShowForm(false)} className="p-1 text-dark-400 hover:text-white">
+              <X size={24} />
+            </button>
+            <h2 className="text-base font-bold">{editingId ? 'Editar gasto fijo' : 'Nuevo gasto fijo'}</h2>
+            <div className="w-8" />
+          </div>
 
-            <div className="space-y-4">
-              <div>
-                <label className="text-xs text-dark-400 font-medium mb-1.5 block">Monto *</label>
-                <div className="relative">
-                  <DollarSign size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-dark-400" />
-                  <input
-                    type="number"
-                    step="0.01"
-                    placeholder="0.00"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    className="w-full bg-dark-700 border border-dark-600 rounded-xl py-3 pl-9 pr-4 text-lg font-semibold placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="text-xs text-dark-400 font-medium mb-1.5 block">Descripción *</label>
-                <div className="relative">
-                  <FileText size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-dark-400" />
-                  <input
-                    type="text"
-                    placeholder="Ej: Alquiler, Netflix, Gym..."
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    className="w-full bg-dark-700 border border-dark-600 rounded-xl py-3 pl-9 pr-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="text-xs text-dark-400 font-medium mb-1.5 block">Categoría</label>
-                <select
-                  value={categoryId}
-                  onChange={(e) => setCategoryId(e.target.value)}
-                  className="w-full bg-dark-700 border border-dark-600 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors appearance-none"
-                >
-                  <option value="">Sin categoría</option>
-                  {categories.map((cat) => (
-                    <option key={cat.id} value={cat.id}>{cat.icon} {cat.name}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs text-dark-400 font-medium mb-1.5 block">Frecuencia</label>
-                  <select
-                    value={frequency}
-                    onChange={(e) => setFrequency(e.target.value as any)}
-                    className="w-full bg-dark-700 border border-dark-600 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors appearance-none"
-                  >
-                    <option value="weekly">Semanal</option>
-                    <option value="monthly">Mensual</option>
-                    <option value="yearly">Anual</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs text-dark-400 font-medium mb-1.5 block">Día del mes</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="28"
-                    value={dayOfMonth}
-                    onChange={(e) => setDayOfMonth(e.target.value)}
-                    className="w-full bg-dark-700 border border-dark-600 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors"
-                  />
-                </div>
-              </div>
-
-              {/* End date (optional) */}
-              <div>
-                <label className="text-xs text-dark-400 font-medium mb-1.5 flex items-center gap-1.5">
-                  <CalendarOff size={12} />
-                  Fecha de finalización (opcional)
-                </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="date"
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                    className="flex-1 bg-dark-700 border border-dark-600 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors"
-                  />
-                  {endDate && (
-                    <button
-                      onClick={() => setEndDate('')}
-                      className="p-2.5 bg-dark-700 border border-dark-600 rounded-xl text-dark-400 hover:text-red-400 transition-colors"
-                    >
-                      <X size={16} />
-                    </button>
-                  )}
-                </div>
-                {!endDate && (
-                  <p className="text-[10px] text-dark-500 mt-1">Sin fecha = se repite indefinidamente</p>
-                )}
-              </div>
-
-              <div>
-                <label className="text-xs text-dark-400 font-medium mb-1.5 block">Notas (opcional)</label>
-                <textarea
-                  placeholder="Algún detalle extra..."
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  rows={2}
-                  className="w-full bg-dark-700 border border-dark-600 rounded-xl py-3 px-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors resize-none"
+          <div className="flex-1 overflow-y-auto px-5 pb-28 space-y-4">
+            <div>
+              <label className="text-xs text-dark-400 font-medium mb-1.5 block">Monto *</label>
+              <div className="relative">
+                <DollarSign size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-dark-400" />
+                <input
+                  type="number"
+                  step="0.01"
+                  placeholder="0.00"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 pl-9 pr-4 text-lg font-semibold placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors"
                 />
               </div>
-
-              <button
-                onClick={handleSave}
-                disabled={saving || !amount || !description}
-                className="w-full bg-brand-600 hover:bg-brand-500 disabled:bg-dark-600 text-white font-semibold py-3.5 rounded-xl transition-all text-sm"
-              >
-                {saving ? 'Guardando...' : editingId ? 'Guardar cambios' : 'Agregar gasto fijo'}
-              </button>
             </div>
+
+            <div>
+              <label className="text-xs text-dark-400 font-medium mb-1.5 block">Descripción *</label>
+              <div className="relative">
+                <FileText size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-dark-400" />
+                <input
+                  type="text"
+                  placeholder="Ej: Alquiler, Netflix, Gym..."
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 pl-9 pr-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs text-dark-400 font-medium mb-1.5 block">Categoría</label>
+              <select
+                value={categoryId}
+                onChange={(e) => setCategoryId(e.target.value)}
+                className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors appearance-none"
+              >
+                <option value="">Sin categoría</option>
+                {categories.map((cat) => (
+                  <option key={cat.id} value={cat.id}>{cat.icon} {cat.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-dark-400 font-medium mb-1.5 block">Frecuencia</label>
+                <select
+                  value={frequency}
+                  onChange={(e) => setFrequency(e.target.value as any)}
+                  className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors appearance-none"
+                >
+                  <option value="weekly">Semanal</option>
+                  <option value="monthly">Mensual</option>
+                  <option value="yearly">Anual</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-dark-400 font-medium mb-1.5 block">Día del mes</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="28"
+                  value={dayOfMonth}
+                  onChange={(e) => setDayOfMonth(e.target.value)}
+                  className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors"
+                />
+              </div>
+            </div>
+
+            {/* End date (optional) */}
+            <div>
+              <label className="text-xs text-dark-400 font-medium mb-1.5 flex items-center gap-1.5">
+                <CalendarOff size={12} />
+                Fecha de finalización (opcional)
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className="flex-1 bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors"
+                />
+                {endDate && (
+                  <button
+                    onClick={() => setEndDate('')}
+                    className="p-2.5 bg-dark-800 border border-dark-700 rounded-xl text-dark-400 hover:text-red-400 transition-colors"
+                  >
+                    <X size={16} />
+                  </button>
+                )}
+              </div>
+              {!endDate && (
+                <p className="text-[10px] text-dark-500 mt-1">Sin fecha = se repite indefinidamente</p>
+              )}
+            </div>
+
+            <div>
+              <label className="text-xs text-dark-400 font-medium mb-1.5 block">Notas (opcional)</label>
+              <textarea
+                placeholder="Algún detalle extra..."
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                rows={2}
+                className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors resize-none"
+              />
+            </div>
+          </div>
+
+          {/* Fixed bottom button - always visible */}
+          <div className="px-4 py-4 bg-dark-900 border-t border-dark-800">
+            <button
+              onClick={handleSave}
+              disabled={saving || !amount || !description}
+              className="w-full bg-brand-600 hover:bg-brand-500 disabled:opacity-30 text-white font-bold py-4 rounded-2xl transition-all text-base"
+            >
+              {saving ? 'Guardando...' : editingId ? 'Guardar cambios' : 'Agregar gasto fijo'}
+            </button>
           </div>
         </div>
       )}
