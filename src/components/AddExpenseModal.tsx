@@ -134,9 +134,9 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col">
+    <div className="fixed inset-0 z-[60] flex flex-col bg-dark-900">
       {/* ===== HEADER with category color ===== */}
-      <div className="pt-12 pb-5 px-5 relative" style={{ backgroundColor: headerColor }}>
+      <div className="pt-12 pb-5 px-5 relative flex-shrink-0" style={{ backgroundColor: headerColor }}>
         <button onClick={onClose} className="absolute top-4 left-4 p-1 text-white/80 hover:text-white">
           <X size={24} />
         </button>
@@ -178,12 +178,12 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
         </div>
       </div>
 
-      {/* ===== FORM FIELDS ===== */}
-      <div className="bg-dark-900 flex-1 flex flex-col overflow-auto">
+      {/* ===== FORM FIELDS (scrollable middle) ===== */}
+      <div className="flex-1 overflow-y-auto">
         {/* Date */}
         <button
           onClick={() => setShowDatePicker(!showDatePicker)}
-          className="flex items-center gap-3 px-5 py-4 border-b border-dark-800"
+          className="flex items-center gap-3 px-5 py-4 border-b border-dark-800 w-full"
         >
           <Calendar size={18} className="text-dark-400" />
           <span className="text-sm font-medium flex-1 text-left capitalize">{dateLabel}</span>
@@ -219,10 +219,10 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
             className="flex-1 bg-transparent text-sm placeholder:text-dark-500 focus:outline-none"
           />
         </div>
+      </div>
 
-        {/* Spacer pushes button + numpad to bottom */}
-        <div className="flex-1 min-h-0" />
-
+      {/* ===== BOTTOM SECTION (fixed, never hidden) ===== */}
+      <div className="flex-shrink-0">
         {/* Add button */}
         <div className="px-5 py-3">
           <button
@@ -236,7 +236,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
         </div>
 
         {/* ===== CUSTOM NUMPAD ===== */}
-        <div className="border-t border-dark-700 pb-[env(safe-area-inset-bottom)]">
+        <div className="border-t border-dark-700">
           <div className="grid grid-cols-3">
             {['1','2','3','4','5','6','7','8','9','.','0','backspace'].map((key) => {
               const isDel = key === 'backspace';
@@ -247,13 +247,14 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
                     if (isDel) handleNumpad('backspace');
                     else handleNumpad(key);
                   }}
-                  className="py-[16px] text-center text-xl font-medium border-b border-r border-dark-800 active:bg-dark-700 transition-colors bg-dark-900 text-white"
+                  className="py-[14px] text-center text-xl font-medium border-b border-r border-dark-800 active:bg-dark-700 transition-colors bg-dark-900 text-white"
                 >
                   {isDel ? <span className="flex items-center justify-center"><Delete size={22} /></span> : key}
                 </button>
               );
             })}
           </div>
+          <div className="h-[env(safe-area-inset-bottom)]" />
         </div>
       </div>
 
