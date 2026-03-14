@@ -8,10 +8,15 @@ import { format, parseISO, subMonths } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { Expense, Category } from '@/types';
 import { Plus, Trash2, Edit3, ChevronRight, PieChart, Search, X } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, LabelList, ReferenceLine, CartesianGrid } from 'recharts';
 import AddExpenseModal from '@/components/AddExpenseModal';
 
 type ViewMode = 'months' | 'years';
+
+function formatCompact(value: number): string {
+  if (value >= 1000) return `${(value / 1000).toFixed(1)}k`;
+  return String(Math.round(value));
+}
 
 export default function DashboardView({ user, onNavigate }: { user: User; onNavigate: (tab: any) => void }) {
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -70,7 +75,7 @@ export default function DashboardView({ user, onNavigate }: { user: User; onNavi
             .filter(e => e.date >= range.start && e.date <= range.end)
             .reduce((sum, e) => sum + Number(e.amount), 0);
           data.push({
-            name: format(d, 'MMM yyyy', { locale: es }),
+            name: format(d, 'MMM\nyyyy', { locale: es }),
             total,
             isCurrent: i === 0,
           });
@@ -94,6 +99,10 @@ export default function DashboardView({ user, onNavigate }: { user: User; onNavi
         }
         return data;
       })();
+
+  // Calculate nice reference lines
+  const maxVal = Math.max(...chartData.map(d => d.total), 1);
+  const midVal = maxVal / 2;
 
   // Filter + group by day
   const displayExpenses = viewMode === 'months' ? currentMonthExp : currentYearExp;
@@ -219,8 +228,14 @@ export default function DashboardView({ user, onNavigate }: { user: User; onNavi
       {/* Bar chart */}
       {!showSearch && (
         <div className="px-4 mb-1">
-          <ResponsiveContainer width="100%" height={120}>
+          <ResponsiveContainer width="100%" height={150}>
             <BarChart data={chartData} barCategoryGap={viewMode === 'years' ? '12%' : '18%'}>
+              <CartesianGrid
+                horizontal={true}
+                vertical={false}
+                strokeDasharray="4 4"
+                stroke="#334155"
+              />
               <XAxis
                 dataKey="name"
                 axisLine={false}
@@ -228,7 +243,14 @@ export default function DashboardView({ user, onNavigate }: { user: User; onNavi
                 tick={{ fill: '#64748b', fontSize: 9 }}
                 interval={0}
               />
-              <YAxis hide />
+              <YAxis
+                axisLine={false}
+                tickLine={false}
+                tick={{ fill: '#475569', fontSize: 9 }}
+                tickFormatter={formatCompact}
+                width={35}
+                tickCount={3}
+              />
               <Tooltip
                 contentStyle={{
                   backgroundColor: '#1e293b',
@@ -245,7 +267,7 @@ export default function DashboardView({ user, onNavigate }: { user: User; onNavi
                 {chartData.map((entry, i) => (
                   <Cell
                     key={i}
-                    fill={entry.isCurrent ? '#ef4444' : 'rgba(239,68,68,0.2)'}
+                    fill={entry.isCurrent ? '#ef4444' : 'rgba(239,68,68,0.15)'}
                   />
                 ))}
               </Bar>
@@ -272,7 +294,7 @@ export default function DashboardView({ user, onNavigate }: { user: User; onNavi
       {searchQuery && (
         <div className="px-4 py-2">
           <p className="text-xs text-dark-400">
-            {filteredExpenses.length} resultado{filteredExpenses.length !== 1 && 's'} para "{searchQuery}"
+            {filteredExpenses.length} resultado{filteredExpenses.length !== 1 && 's'} para &quot;{searchQuery}&quot;
           </p>
         </div>
       )}
