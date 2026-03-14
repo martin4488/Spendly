@@ -44,6 +44,22 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
   const [showCurrencyPicker, setShowCurrencyPicker] = useState(false);
   const [saving, setSaving] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  // Track keyboard height via visualViewport
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+
+    function onResize() {
+      if (!vv) return;
+      const diff = window.innerHeight - vv.height;
+      setKeyboardHeight(diff > 50 ? diff : 0);
+    }
+
+    vv.addEventListener('resize', onResize);
+    return () => vv.removeEventListener('resize', onResize);
+  }, []);
 
   // Create category inline
   const [showCreateCategory, setShowCreateCategory] = useState(false);
@@ -266,53 +282,59 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
       </div>
 
       {/* ===== BOTTOM SECTION ===== */}
-      <div className="flex-shrink-0">
-        {isTyping ? (
-          /* When keyboard is open: full-width button that covers the toolbar */
+      {isTyping && keyboardHeight > 0 ? (
+        /* Floating button over keyboard toolbar */
+        <div
+          className="fixed left-0 right-0 z-[70]"
+          style={{ bottom: `${keyboardHeight}px` }}
+        >
           <button
-            onClick={handleSave}
+            onClick={(e) => {
+              e.preventDefault();
+              handleSave();
+            }}
             disabled={saving || !amountStr || parseFloat(amountStr) <= 0}
             className="w-full py-4 font-bold text-base transition-all disabled:opacity-40"
             style={{ backgroundColor: headerColor, color: 'white' }}
           >
             {saving ? 'Guardando...' : editingExpense ? 'Guardar cambios' : 'Agregar gasto'}
           </button>
-        ) : (
-          /* When numpad is showing: rounded button + numpad */
-          <>
-            <div className="px-5 py-3">
-              <button
-                onClick={handleSave}
-                disabled={saving || !amountStr || parseFloat(amountStr) <= 0}
-                className="w-full py-4 rounded-2xl font-bold text-base transition-all disabled:opacity-40"
-                style={{ backgroundColor: headerColor, color: 'white' }}
-              >
-                {saving ? 'Guardando...' : editingExpense ? 'Guardar cambios' : 'Agregar gasto'}
-              </button>
+        </div>
+      ) : !isTyping ? (
+        /* Normal: rounded button + numpad */
+        <div className="flex-shrink-0">
+          <div className="px-5 py-3">
+            <button
+              onClick={handleSave}
+              disabled={saving || !amountStr || parseFloat(amountStr) <= 0}
+              className="w-full py-4 rounded-2xl font-bold text-base transition-all disabled:opacity-40"
+              style={{ backgroundColor: headerColor, color: 'white' }}
+            >
+              {saving ? 'Guardando...' : editingExpense ? 'Guardar cambios' : 'Agregar gasto'}
+            </button>
+          </div>
+          <div className="border-t border-dark-700">
+            <div className="grid grid-cols-3">
+              {['1','2','3','4','5','6','7','8','9','.','0','backspace'].map((key) => {
+                const isDel = key === 'backspace';
+                return (
+                  <button
+                    key={key}
+                    onClick={() => {
+                      if (isDel) handleNumpad('backspace');
+                      else handleNumpad(key);
+                    }}
+                    className="py-[14px] text-center text-xl font-medium border-b border-r border-dark-800 active:bg-dark-700 transition-colors bg-dark-900 text-white"
+                  >
+                    {isDel ? <span className="flex items-center justify-center"><Delete size={22} /></span> : key}
+                  </button>
+                );
+              })}
             </div>
-            <div className="border-t border-dark-700">
-              <div className="grid grid-cols-3">
-                {['1','2','3','4','5','6','7','8','9','.','0','backspace'].map((key) => {
-                  const isDel = key === 'backspace';
-                  return (
-                    <button
-                      key={key}
-                      onClick={() => {
-                        if (isDel) handleNumpad('backspace');
-                        else handleNumpad(key);
-                      }}
-                      className="py-[14px] text-center text-xl font-medium border-b border-r border-dark-800 active:bg-dark-700 transition-colors bg-dark-900 text-white"
-                    >
-                      {isDel ? <span className="flex items-center justify-center"><Delete size={22} /></span> : key}
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="h-[env(safe-area-inset-bottom)]" />
-            </div>
-          </>
-        )}
-      </div>
+            <div className="h-[env(safe-area-inset-bottom)]" />
+          </div>
+        </div>
+      ) : null}
 
       {/* ===== CURRENCY PICKER ===== */}
       {showCurrencyPicker && (
