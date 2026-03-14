@@ -512,10 +512,14 @@ export default function BudgetDetailView({ user, budget, onBack, onRefresh }: Pr
               <div className="relative">
                 <DollarSign size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-dark-400" />
                 <input
-                  type="number"
-                  step="0.01"
+                  type="text"
+                  inputMode="decimal"
+                  pattern="[0-9]*\.?[0-9]*"
                   value={editAmount}
-                  onChange={(e) => setEditAmount(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value.replace(/[^0-9.]/g, '');
+                    setEditAmount(val);
+                  }}
                   className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3.5 pl-10 pr-4 text-lg font-semibold focus:outline-none focus:border-brand-500 transition-colors"
                 />
               </div>
