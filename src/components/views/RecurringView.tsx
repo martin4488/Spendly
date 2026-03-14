@@ -5,7 +5,7 @@ import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/utils';
 import { Category, RecurringExpense } from '@/types';
-import { Plus, Edit3, Trash2, X, Pause, Play, DollarSign, FileText, CalendarOff } from 'lucide-react';
+import { Plus, Edit3, Trash2, X, Pause, Play, FileText, CalendarOff, Delete } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 
@@ -25,6 +25,22 @@ export default function RecurringView({ user }: { user: User }) {
   const [dayOfMonth, setDayOfMonth] = useState('1');
   const [endDate, setEndDate] = useState('');
   const [saving, setSaving] = useState(false);
+
+  function handleNumpad(key: string) {
+    if (key === 'backspace') {
+      setAmount(prev => prev.slice(0, -1));
+    } else if (key === '.') {
+      if (!amount.includes('.')) {
+        setAmount(prev => (prev || '0') + '.');
+      }
+    } else {
+      if (amount.includes('.')) {
+        const decimals = amount.split('.')[1];
+        if (decimals && decimals.length >= 2) return;
+      }
+      setAmount(prev => prev + key);
+    }
+  }
 
   useEffect(() => { loadData(); }, []);
 
@@ -201,7 +217,7 @@ export default function RecurringView({ user }: { user: User }) {
       {/* Form Modal - Fullscreen */}
       {showForm && (
         <div className="fixed inset-0 bg-dark-900 z-[60] flex flex-col slide-up">
-          <div className="flex items-center justify-between px-4 pt-5 pb-3">
+          <div className="flex items-center justify-between px-4 pt-5 pb-3 flex-shrink-0">
             <button onClick={() => setShowForm(false)} className="p-1 text-dark-400 hover:text-white">
               <X size={24} />
             </button>
@@ -209,26 +225,14 @@ export default function RecurringView({ user }: { user: User }) {
             <div className="w-8" />
           </div>
 
-          <div className="flex-1 overflow-y-auto px-5 pb-28 space-y-4">
-            <div>
-              <label className="text-xs text-dark-400 font-medium mb-1.5 block">Monto *</label>
-              <div className="relative">
-                <DollarSign size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-dark-400" />
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  pattern="[0-9]*\.?[0-9]*"
-                  placeholder="0.00"
-                  value={amount}
-                  onChange={(e) => {
-                    const val = e.target.value.replace(/[^0-9.]/g, '');
-                    setAmount(val);
-                  }}
-                  className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 pl-9 pr-4 text-lg font-semibold placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors"
-                />
-              </div>
-            </div>
+          {/* Amount display */}
+          <div className="px-5 py-4 flex-shrink-0 border-b border-dark-800">
+            <p className="text-xs text-dark-400 font-medium mb-1">Monto *</p>
+            <p className="text-3xl font-extrabold text-white">{amount || '0'}</p>
+          </div>
 
+          {/* Scrollable form fields */}
+          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
             <div>
               <label className="text-xs text-dark-400 font-medium mb-1.5 block">Descripción *</label>
               <div className="relative">
@@ -322,15 +326,37 @@ export default function RecurringView({ user }: { user: User }) {
             </div>
           </div>
 
-          {/* Fixed bottom button - always visible */}
-          <div className="px-4 py-4 bg-dark-900 border-t border-dark-800">
-            <button
-              onClick={handleSave}
-              disabled={saving || !amount || !description}
-              className="w-full bg-brand-600 hover:bg-brand-500 disabled:opacity-30 text-white font-bold py-4 rounded-2xl transition-all text-base"
-            >
-              {saving ? 'Guardando...' : editingId ? 'Guardar cambios' : 'Agregar gasto fijo'}
-            </button>
+          {/* Bottom: button + numpad */}
+          <div className="flex-shrink-0">
+            <div className="px-5 py-3">
+              <button
+                onClick={handleSave}
+                disabled={saving || !amount || !description}
+                className="w-full bg-brand-600 hover:bg-brand-500 disabled:opacity-30 text-white font-bold py-4 rounded-2xl transition-all text-base"
+              >
+                {saving ? 'Guardando...' : editingId ? 'Guardar cambios' : 'Agregar gasto fijo'}
+              </button>
+            </div>
+            <div className="border-t border-dark-700">
+              <div className="grid grid-cols-3">
+                {['1','2','3','4','5','6','7','8','9','.','0','backspace'].map((key) => {
+                  const isDel = key === 'backspace';
+                  return (
+                    <button
+                      key={key}
+                      onClick={() => {
+                        if (isDel) handleNumpad('backspace');
+                        else handleNumpad(key);
+                      }}
+                      className="py-[14px] text-center text-xl font-medium border-b border-r border-dark-800 active:bg-dark-700 transition-colors bg-dark-900 text-white"
+                    >
+                      {isDel ? <span className="flex items-center justify-center"><Delete size={22} /></span> : key}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="h-[env(safe-area-inset-bottom)]" />
+            </div>
           </div>
         </div>
       )}
