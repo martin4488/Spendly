@@ -237,21 +237,17 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
 
         {/* ===== CUSTOM NUMPAD ===== */}
         <div className="border-t border-dark-700">
-          <div className="grid grid-cols-4">
-            {['1','2','3','÷','4','5','6','×','7','8','9','-','.','0','backspace','+'].map((key) => {
-              const isOp = ['÷','×','-','+'].includes(key);
+          <div className="grid grid-cols-3">
+            {['1','2','3','4','5','6','7','8','9','.','0','backspace'].map((key) => {
               const isDel = key === 'backspace';
               return (
                 <button
                   key={key}
                   onClick={() => {
-                    if (isOp) return;
                     if (isDel) handleNumpad('backspace');
                     else handleNumpad(key);
                   }}
-                  className={`py-[14px] text-center text-xl font-medium border-b border-r border-dark-800 active:bg-dark-700 transition-colors ${
-                    isOp ? 'bg-dark-800/80 text-brand-400' : 'bg-dark-900 text-white'
-                  }`}
+                  className="py-[16px] text-center text-xl font-medium border-b border-r border-dark-800 active:bg-dark-700 transition-colors bg-dark-900 text-white"
                 >
                   {isDel ? <span className="flex items-center justify-center"><Delete size={22} /></span> : key}
                 </button>
