@@ -25,6 +25,20 @@ export default function RecurringView({ user }: { user: User }) {
   const [dayOfMonth, setDayOfMonth] = useState('1');
   const [endDate, setEndDate] = useState('');
   const [saving, setSaving] = useState(false);
+  const [isTyping, setIsTyping] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    function onResize() {
+      if (!vv) return;
+      const diff = window.innerHeight - vv.height;
+      setKeyboardHeight(diff > 50 ? diff : 0);
+    }
+    vv.addEventListener('resize', onResize);
+    return () => vv.removeEventListener('resize', onResize);
+  }, []);
 
   function handleNumpad(key: string) {
     if (key === 'backspace') {
@@ -242,6 +256,8 @@ export default function RecurringView({ user }: { user: User }) {
                   placeholder="Ej: Alquiler, Netflix, Gym..."
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
+                  onFocus={() => setIsTyping(true)}
+                  onBlur={() => setIsTyping(false)}
                   className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 pl-9 pr-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors"
                 />
               </div>
@@ -326,38 +342,53 @@ export default function RecurringView({ user }: { user: User }) {
             </div>
           </div>
 
-          {/* Bottom: button + numpad */}
-          <div className="flex-shrink-0">
-            <div className="px-5 py-3">
+          {/* Bottom: button + numpad or floating button */}
+          {isTyping && keyboardHeight > 0 ? (
+            <div
+              className="fixed left-0 right-0 z-[70]"
+              style={{ bottom: `${keyboardHeight}px` }}
+            >
               <button
-                onClick={handleSave}
+                onClick={(e) => { e.preventDefault(); handleSave(); }}
                 disabled={saving || !amount || !description}
-                className="w-full bg-brand-600 hover:bg-brand-500 disabled:opacity-30 text-white font-bold py-4 rounded-2xl transition-all text-base"
+                className="w-full bg-brand-600 hover:bg-brand-500 disabled:opacity-30 text-white font-bold py-4 transition-all text-base"
               >
                 {saving ? 'Guardando...' : editingId ? 'Guardar cambios' : 'Agregar gasto fijo'}
               </button>
             </div>
-            <div className="border-t border-dark-700">
-              <div className="grid grid-cols-3">
-                {['1','2','3','4','5','6','7','8','9','.','0','backspace'].map((key) => {
-                  const isDel = key === 'backspace';
-                  return (
-                    <button
-                      key={key}
-                      onClick={() => {
-                        if (isDel) handleNumpad('backspace');
-                        else handleNumpad(key);
-                      }}
-                      className="py-[14px] text-center text-xl font-medium border-b border-r border-dark-800 active:bg-dark-700 transition-colors bg-dark-900 text-white"
-                    >
-                      {isDel ? <span className="flex items-center justify-center"><Delete size={22} /></span> : key}
-                    </button>
-                  );
-                })}
+          ) : !isTyping ? (
+            <div className="flex-shrink-0">
+              <div className="px-5 py-3">
+                <button
+                  onClick={handleSave}
+                  disabled={saving || !amount || !description}
+                  className="w-full bg-brand-600 hover:bg-brand-500 disabled:opacity-30 text-white font-bold py-4 rounded-2xl transition-all text-base"
+                >
+                  {saving ? 'Guardando...' : editingId ? 'Guardar cambios' : 'Agregar gasto fijo'}
+                </button>
               </div>
-              <div className="h-[env(safe-area-inset-bottom)]" />
+              <div className="border-t border-dark-700">
+                <div className="grid grid-cols-3">
+                  {['1','2','3','4','5','6','7','8','9','.','0','backspace'].map((key) => {
+                    const isDel = key === 'backspace';
+                    return (
+                      <button
+                        key={key}
+                        onClick={() => {
+                          if (isDel) handleNumpad('backspace');
+                          else handleNumpad(key);
+                        }}
+                        className="py-[14px] text-center text-xl font-medium border-b border-r border-dark-800 active:bg-dark-700 transition-colors bg-dark-900 text-white"
+                      >
+                        {isDel ? <span className="flex items-center justify-center"><Delete size={22} /></span> : key}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="h-[env(safe-area-inset-bottom)]" />
+              </div>
             </div>
-          </div>
+          ) : null}
         </div>
       )}
     </div>
