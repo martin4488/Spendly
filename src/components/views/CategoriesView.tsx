@@ -308,13 +308,13 @@ export default function CategoriesView({ user }: { user: User }) {
             </div>
           </div>
 
-          {isTyping && keyboardHeight > 0 ? (
+          {isTyping ? (
             <div
               className="fixed left-0 right-0 z-[70]"
-              style={{ bottom: `${keyboardHeight}px` }}
+              style={{ bottom: keyboardHeight > 0 ? `${keyboardHeight}px` : '260px' }}
             >
               <button
-                onClick={(e) => { e.preventDefault(); handleSave(); }}
+                onMouseDown={(e) => { e.preventDefault(); handleSave(); }}
                 disabled={saving || !name}
                 className="w-full py-4 font-bold text-base transition-all disabled:opacity-30"
                 style={{ backgroundColor: color, color: 'white' }}
