@@ -38,7 +38,7 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
     function update() {
       if (!vv) return;
       const bottom = window.innerHeight - (vv.height + vv.offsetTop);
-      setBtnBottom(bottom > 50 ? bottom : 0);
+      setBtnBottom(bottom > 50 ? bottom - 44 : 0);
     }
     vv.addEventListener('resize', update);
     vv.addEventListener('scroll', update);
