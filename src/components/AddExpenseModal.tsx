@@ -56,7 +56,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
       // visualViewport.height is the visible area (excluding keyboard)
       // We position the button at the bottom of the visible area
       const bottom = window.innerHeight - (vv.height + vv.offsetTop);
-      setBtnBottom(bottom > 50 ? bottom + 44 : 0);
+      setBtnBottom(bottom > 50 ? bottom : 0);
     }
 
     vv.addEventListener('resize', update);
@@ -289,10 +289,10 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
 
       {/* ===== BOTTOM SECTION ===== */}
       {isTyping && btnBottom > 0 ? (
-        /* Floating button positioned above keyboard */
+        /* Floating button positioned to cover keyboard toolbar */
         <div
           className="fixed left-0 right-0 z-[70]"
-          style={{ bottom: `${btnBottom}px` }}
+          style={{ bottom: `${btnBottom - 44}px` }}
         >
           <button
             onMouseDown={(e) => {
@@ -300,7 +300,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
               handleSave();
             }}
             disabled={saving || !amountStr || parseFloat(amountStr) <= 0}
-            className="w-full py-4 font-bold text-base transition-all disabled:opacity-40"
+            className="w-full pt-4 pb-[60px] font-bold text-base transition-all disabled:opacity-40"
             style={{ backgroundColor: headerColor, color: 'white' }}
           >
             {saving ? 'Guardando...' : editingExpense ? 'Guardar cambios' : 'Agregar gasto'}
