@@ -56,7 +56,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
       // visualViewport.height is the visible area (excluding keyboard)
       // We position the button at the bottom of the visible area
       const bottom = window.innerHeight - (vv.height + vv.offsetTop);
-      setBtnBottom(bottom > 50 ? bottom : 0);
+      setBtnBottom(bottom > 50 ? bottom - 44 : 0);
     }
 
     vv.addEventListener('resize', update);
