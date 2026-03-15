@@ -44,22 +44,6 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
   const [showCurrencyPicker, setShowCurrencyPicker] = useState(false);
   const [saving, setSaving] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
-
-  // Track keyboard height via visualViewport
-  useEffect(() => {
-    const vv = window.visualViewport;
-    if (!vv) return;
-
-    function onResize() {
-      if (!vv) return;
-      const diff = window.innerHeight - vv.height;
-      setKeyboardHeight(diff > 50 ? diff : 0);
-    }
-
-    vv.addEventListener('resize', onResize);
-    return () => vv.removeEventListener('resize', onResize);
-  }, []);
 
   // Create category inline
   const [showCreateCategory, setShowCreateCategory] = useState(false);
@@ -283,11 +267,8 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
 
       {/* ===== BOTTOM SECTION ===== */}
       {isTyping ? (
-        /* Floating button over keyboard toolbar */
-        <div
-          className="fixed left-0 right-0 z-[70]"
-          style={{ bottom: keyboardHeight > 0 ? `${keyboardHeight}px` : '260px' }}
-        >
+        /* Floating button pinned to bottom - iOS will push it above keyboard with interactive-widget=resizes-content */
+        <div className="fixed left-0 right-0 bottom-0 z-[70]">
           <button
             onMouseDown={(e) => {
               e.preventDefault();
