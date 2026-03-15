@@ -67,7 +67,7 @@ function DonutChart({ cats, total }: { cats: CatSpend[]; total: number; }) {
   }
 
   return (
-    <svg viewBox="0 0 200 200" width="100%" height={190} style={{ display: 'block', overflow: 'visible' }}>
+    <svg viewBox="-30 -30 260 260" width="100%" height={200} style={{ display: 'block', overflow: 'visible' }}>
       {slices.map((s, i) => {
         if (s.pct < 0.001) return null;
         const gap = 1.5;
@@ -80,25 +80,34 @@ function DonutChart({ cats, total }: { cats: CatSpend[]; total: number; }) {
         );
       })}
 
-      {/* % labels floating outside */}
+      {/* Icon circles + % labels floating outside */}
       {slices.map((s, i) => {
         if (s.pct < 0.04) return null;
         const midAngle = s.startA + (s.endA - s.startA) / 2;
-        const labelR = R + 14;
-        const pos = polarToXY(midAngle, labelR);
+        const iconR = R + 20;
+        const pctR = R + 36;
+        const iconPos = polarToXY(midAngle, iconR);
+        const pctPos = polarToXY(midAngle, pctR);
         return (
-          <text
-            key={i}
-            x={pos.x}
-            y={pos.y}
-            textAnchor="middle"
-            dominantBaseline="middle"
-            fill={s.color}
-            fontSize={9}
-            fontWeight={700}
-          >
-            {s.pct > 0 ? `${(s.pct * 100).toFixed(1)}%` : ''}
-          </text>
+          <g key={i}>
+            {/* Icon circle */}
+            <circle cx={iconPos.x} cy={iconPos.y} r={11} fill={s.color} />
+            <text x={iconPos.x} y={iconPos.y} textAnchor="middle" dominantBaseline="middle" fontSize={11}>
+              {s.icon}
+            </text>
+            {/* % label */}
+            <text
+              x={pctPos.x}
+              y={pctPos.y}
+              textAnchor="middle"
+              dominantBaseline="middle"
+              fill={s.color}
+              fontSize={9}
+              fontWeight={700}
+            >
+              {`${(s.pct * 100).toFixed(1)}%`}
+            </text>
+          </g>
         );
       })}
 
@@ -336,16 +345,6 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
           {/* Donut */}
           <div className="px-6 mb-1">
             <DonutChart cats={catSpending} total={totalSpent} />
-          </div>
-
-          {/* Legend dots */}
-          <div className="flex flex-wrap justify-center gap-x-3 gap-y-1 px-4 mb-3">
-            {catSpending.map(cat => (
-              <div key={cat.id} className="flex items-center gap-1">
-                <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: cat.color }} />
-                <span className="text-[10px] text-dark-400">{cat.name} {cat.percentage.toFixed(1)}%</span>
-              </div>
-            ))}
           </div>
 
           {/* Category list */}
