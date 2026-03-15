@@ -149,11 +149,16 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
       const filtered = (exp || []).filter((e: any) => !e.category_id || !catIds.includes(e.category_id));
       setDrillDown({ id: catId, name, icon, color, expenses: filtered.map((e: any) => ({ id: e.id, date: e.date, description: e.description, amount: Number(e.amount) })) });
     } else {
+      // Check if this is a parent category (has subcategories in catSpending)
+      const parentCat = catSpending.find(c => c.id === catId);
+      const subIds = parentCat ? parentCat.subcategories.map(s => s.id) : [];
+      const allIds = [catId, ...subIds];
+
       const { data: exp } = await supabase
         .from('expenses')
-        .select('id, amount, description, date')
+        .select('id, amount, description, date, category_id')
         .eq('user_id', user.id)
-        .eq('category_id', catId)
+        .in('category_id', allIds)
         .gte('date', range.start)
         .lte('date', range.end)
         .order('date', { ascending: false });
