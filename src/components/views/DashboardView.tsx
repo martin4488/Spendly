@@ -106,8 +106,8 @@ function SwipeableExpenseRow({
         onClick={handleRowClick}
       >
         <div
-          className="w-11 h-11 rounded-full flex items-center justify-center text-lg flex-shrink-0"
-          style={{ backgroundColor: cat?.color ? cat.color + '30' : '#47556930' }}
+          className="w-11 h-11 rounded-xl flex items-center justify-center text-lg flex-shrink-0"
+          style={{ backgroundColor: cat?.color ?? '#475569' }}
         >
           {cat?.icon || '💵'}
         </div>
