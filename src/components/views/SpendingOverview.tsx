@@ -225,10 +225,10 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
         ) : (
           grouped.map(group => (
             <div key={group.date}>
-              <div className="flex items-center justify-between px-4 py-2 bg-dark-900/60 border-t border-dark-800/80">
-                <span className="text-xs font-semibold text-dark-400 uppercase tracking-wide capitalize">{group.label}</span>
-                <span className="text-xs font-bold text-red-400">-{formatCurrency(group.total)}</span>
-              </div>
+              <div className="flex items-center justify-between px-4 py-1.5 bg-dark-800/80 mt-2 first:mt-0">
+  <span className="text-[11px] font-semibold text-dark-500 uppercase tracking-widest capitalize">{group.label}</span>
+  <span className="text-[11px] font-semibold text-dark-500">-{formatCurrency(group.total)}</span>
+</div>
               {group.expenses.map(exp => (
                 <div key={exp.id} className="flex items-center gap-3.5 px-4 py-3 border-b border-dark-800/40">
                   <div className="w-11 h-11 rounded-xl flex items-center justify-center text-lg flex-shrink-0" style={{ backgroundColor: drillDown.color }}>
