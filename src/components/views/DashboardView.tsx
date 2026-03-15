@@ -8,7 +8,7 @@ import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { Expense, Category } from '@/types';
 import { Plus, Trash2, ChevronRight, PieChart, Search, X } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, CartesianGrid } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, CartesianGrid, ReferenceLine } from 'recharts';
 import AddExpenseModal from '@/components/AddExpenseModal';
 import type { CurrencyCode } from '@/lib/currency';
 
@@ -177,19 +177,19 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
 
   const chartData = viewMode === 'months'
     ? (() => {
-        const data: { name: string; total: number; isCurrent: boolean }[] = [];
+        const data: { name: string; year: string; total: number; isCurrent: boolean }[] = [];
         for (let i = 5; i >= 0; i--) {
           const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
           const range = getMonthRange(d);
           const total = expenses
             .filter(e => e.date >= range.start && e.date <= range.end)
             .reduce((sum, e) => sum + Number(e.amount), 0);
-          data.push({ name: format(d, 'MMM\nyyyy', { locale: es }), total, isCurrent: i === 0 });
+          data.push({ name: format(d, 'MMM', { locale: es }), year: format(d, 'yyyy'), total, isCurrent: i === 0 });
         }
         return data;
       })()
     : (() => {
-        const data: { name: string; total: number; isCurrent: boolean }[] = [];
+        const data: { name: string; year: string; total: number; isCurrent: boolean }[] = [];
         for (let i = 2; i >= 0; i--) {
           const year = now.getFullYear() - i;
           const start = `${year}-01-01`;
@@ -197,10 +197,13 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
           const total = expenses
             .filter(e => e.date >= start && e.date <= end)
             .reduce((sum, e) => sum + Number(e.amount), 0);
-          data.push({ name: String(year), total, isCurrent: i === 0 });
+          data.push({ name: String(year), year: '', total, isCurrent: i === 0 });
         }
         return data;
       })();
+
+  const chartMax = Math.max(...chartData.map(d => d.total), 1);
+  const chartMid = chartMax / 2;
 
   const displayExpenses = viewMode === 'months' ? currentMonthExp : currentYearExp;
   const filteredExpenses = searchQuery
@@ -319,10 +322,33 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       {/* Bar chart */}
       {!showSearch && (
         <div className="px-3 mb-0">
-          <ResponsiveContainer width="100%" height={100}>
-            <BarChart data={chartData} barCategoryGap={viewMode === 'years' ? '12%' : '18%'} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
+          <ResponsiveContainer width="100%" height={110}>
+            <BarChart data={chartData} barCategoryGap="55%" margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
               <CartesianGrid horizontal={true} vertical={false} strokeDasharray="3 3" stroke="#1e293b" />
-              <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#475569', fontSize: 8 }} interval={0} />
+              <ReferenceLine y={chartMid} stroke="#334155" strokeDasharray="3 3" />
+              <XAxis
+                dataKey="name"
+                axisLine={false}
+                tickLine={false}
+                interval={0}
+                tick={(props) => {
+                  const { x, y, payload, index } = props;
+                  const entry = chartData[index];
+                  return (
+                    <g transform={`translate(${x},${y})`}>
+                      <text x={0} y={0} dy={10} textAnchor="middle" fill="#475569" fontSize={8} fontWeight={entry?.isCurrent ? 600 : 400}>
+                        {payload.value}
+                      </text>
+                      {entry?.year && (
+                        <text x={0} y={0} dy={19} textAnchor="middle" fill="#334155" fontSize={7}>
+                          {entry.year}
+                        </text>
+                      )}
+                    </g>
+                  );
+                }}
+                height={28}
+              />
               <YAxis axisLine={false} tickLine={false} tick={{ fill: '#334155', fontSize: 8 }} tickFormatter={formatCompact} width={28} tickCount={3} />
               <Tooltip
                 contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px', color: '#f1f5f9', fontSize: '11px', padding: '4px 8px' }}
