@@ -377,20 +377,20 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
           </div>
 
           {/* Bottom: button + numpad or floating button */}
-          {isTyping && keyboardHeight > 0 ? (
+          {isTyping ? (
             <div
               className="fixed left-0 right-0 z-[70]"
-              style={{ bottom: `${keyboardHeight}px` }}
+              style={{ bottom: keyboardHeight > 0 ? `${keyboardHeight}px` : '260px' }}
             >
               <button
-                onClick={(e) => { e.preventDefault(); handleSave(); }}
+                onMouseDown={(e) => { e.preventDefault(); handleSave(); }}
                 disabled={saving || !name || !amount}
                 className="w-full bg-brand-600 hover:bg-brand-500 disabled:opacity-30 text-white font-bold py-4 transition-all text-base"
               >
                 {saving ? 'Guardando...' : editingBudget ? 'Guardar cambios' : 'Crear presupuesto'}
               </button>
             </div>
-          ) : !isTyping ? (
+          ) : (
             <div className="flex-shrink-0">
               <div className="px-5 py-3">
                 <button
@@ -422,7 +422,7 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
                 <div className="h-[env(safe-area-inset-bottom)]" />
               </div>
             </div>
-          ) : null}
+          )}
         </div>
       )}
 
