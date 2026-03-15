@@ -12,12 +12,6 @@ import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
 
 type ViewMode = 'months' | 'years';
 
-const DONUT_COLORS = [
-  '#D4A574', '#4A90D9', '#E8734A', '#F5A623', '#7ED321',
-  '#50C8C6', '#9B59B6', '#E74C6F', '#95A5A6', '#2ECC71',
-  '#3498DB', '#E67E22', '#1ABC9C', '#E74C3C', '#8E44AD',
-];
-
 interface CatSpend {
   id: string;
   name: string;
@@ -65,8 +59,7 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
       setTotalSpent(total);
       setCategories(allCats);
 
-      // Calculate spending per parent category (including subcategory spending)
-      const spending: CatSpend[] = parentCats.map((cat, idx) => {
+      const spending: CatSpend[] = parentCats.map((cat) => {
         const subIds = subcats.filter(sc => sc.parent_id === cat.id).map(sc => sc.id);
         const allIds = [cat.id, ...subIds];
         const catExpenses = allExpenses.filter(e => e.category_id && allIds.includes(e.category_id));
@@ -75,7 +68,7 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
           id: cat.id,
           name: cat.name,
           icon: cat.icon,
-          color: DONUT_COLORS[idx % DONUT_COLORS.length],
+          color: cat.color,
           spent,
           percentage: total > 0 ? (spent / total) * 100 : 0,
           transactions: catExpenses.length,
@@ -83,7 +76,6 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
       }).filter(c => c.spent > 0)
         .sort((a, b) => b.spent - a.spent);
 
-      // Add "Sin categoría" if there are uncategorized expenses
       const catIds = allCats.map(c => c.id);
       const uncategorized = allExpenses.filter(e => !e.category_id || !catIds.includes(e.category_id));
       if (uncategorized.length > 0) {
@@ -189,7 +181,6 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
               </PieChart>
             </ResponsiveContainer>
 
-            {/* Percentage labels around the donut */}
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
               <div className="text-center">
                 <p className="text-lg font-bold">100%</p>
@@ -198,7 +189,7 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
             </div>
           </div>
 
-          {/* Legend - colored dots */}
+          {/* Legend */}
           <div className="flex flex-wrap justify-center gap-x-4 gap-y-1.5 mt-2">
             {catSpending.slice(0, 8).map(cat => (
               <div key={cat.id} className="flex items-center gap-1.5">
@@ -217,16 +208,13 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
             key={cat.id}
             className="flex items-center gap-3.5 py-3.5 border-b border-dark-800/50"
           >
-            {/* Icon */}
             <div
-              className="w-11 h-11 rounded-full flex items-center justify-center text-lg flex-shrink-0"
               className="w-11 h-11 rounded-xl flex items-center justify-center text-lg flex-shrink-0"
-style={{ backgroundColor: cat.color }}
+              style={{ backgroundColor: cat.color }}
             >
               {cat.icon}
             </div>
 
-            {/* Name + transactions */}
             <div className="flex-1 min-w-0">
               <p className="text-[13px] font-semibold">{cat.name}</p>
               <p className="text-[11px] text-dark-500 mt-0.5">
@@ -234,7 +222,6 @@ style={{ backgroundColor: cat.color }}
               </p>
             </div>
 
-            {/* Amount */}
             <span className="text-[13px] font-bold text-red-400 flex-shrink-0">
               -{formatCurrency(cat.spent)}
             </span>
