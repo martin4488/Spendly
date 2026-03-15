@@ -95,7 +95,7 @@ function SwipeableExpenseRow({
 
       {/* Foreground row */}
       <div
-        className="flex items-center gap-3.5 px-4 py-3 bg-dark-900 active:bg-dark-800/60 transition-colors cursor-pointer select-none"
+        className="flex items-center gap-2.5 px-3 py-2 bg-dark-900 active:bg-dark-800/60 transition-colors cursor-pointer select-none"
         style={{
           transform: `translateX(-${offset}px)`,
           transition: isDragging ? 'none' : 'transform 0.2s ease',
@@ -106,21 +106,21 @@ function SwipeableExpenseRow({
         onClick={handleRowClick}
       >
         <div
-          className="w-11 h-11 rounded-xl flex items-center justify-center text-lg flex-shrink-0"
+          className="w-9 h-9 rounded-xl flex items-center justify-center text-base flex-shrink-0"
           style={{ backgroundColor: cat?.color ?? '#475569' }}
         >
           {cat?.icon || '💵'}
         </div>
 
         <div className="flex-1 min-w-0">
-          <p className="text-[13px] font-semibold truncate">{expense.description}</p>
-          <p className="text-[11px] text-dark-500 mt-0.5">
+          <p className="text-[12px] font-semibold truncate leading-tight">{expense.description}</p>
+          <p className="text-[10px] text-dark-500 mt-0.5 leading-tight">
             {cat?.name || 'Sin categoría'}
             {expense.is_recurring && ' · 🔄'}
           </p>
         </div>
 
-        <span className="text-[13px] font-bold text-red-400 flex-shrink-0">
+        <span className="text-[12px] font-bold text-red-400 flex-shrink-0">
           -{formatCurrency(Number(expense.amount))}
         </span>
       </div>
@@ -258,34 +258,34 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     <div className="max-w-lg mx-auto page-transition">
       {/* Top bar */}
       {showSearch ? (
-        <div className="flex items-center gap-2 px-4 pt-6 pb-2">
+        <div className="flex items-center gap-2 px-3 pt-4 pb-1">
           <div className="flex-1 relative">
-            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-dark-500" />
+            <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-dark-500" />
             <input
               ref={searchRef}
               type="text"
               placeholder="Buscar gastos..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-dark-800 border border-dark-700 rounded-full py-2 pl-9 pr-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-dark-500 transition-colors"
+              className="w-full bg-dark-800 border border-dark-700 rounded-full py-1.5 pl-8 pr-3 text-xs placeholder:text-dark-500 focus:outline-none focus:border-dark-500 transition-colors"
             />
           </div>
-          <button onClick={() => { setShowSearch(false); setSearchQuery(''); }} className="p-2 text-dark-400">
-            <X size={20} />
+          <button onClick={() => { setShowSearch(false); setSearchQuery(''); }} className="p-1.5 text-dark-400">
+            <X size={16} />
           </button>
         </div>
       ) : (
-        <div className="relative pt-8 pb-3 text-center">
+        <div className="relative pt-5 pb-2 text-center">
           <button
             onClick={() => setShowSearch(true)}
-            className="absolute top-7 right-4 p-2 text-dark-400 hover:text-dark-200 transition-colors"
+            className="absolute top-4 right-3 p-1.5 text-dark-400 hover:text-dark-200 transition-colors"
           >
-            <Search size={20} />
+            <Search size={17} />
           </button>
-          <p className="text-[2rem] font-extrabold tracking-tight">
+          <p className="text-[1.6rem] font-extrabold tracking-tight leading-none">
             -{formatCurrency(accumulatedTotal)}
           </p>
-          <p className="text-dark-400 text-xs mt-0.5 capitalize">
+          <p className="text-dark-400 text-[11px] mt-0.5 capitalize">
             {viewMode === 'months'
               ? format(now, 'MMMM yyyy', { locale: es })
               : now.getFullYear().toString()
@@ -295,11 +295,11 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       )}
 
       {/* Toggle */}
-      <div className="flex justify-center mb-4">
+      <div className="flex justify-center mb-2">
         <div className="inline-flex bg-dark-800 rounded-full p-0.5">
           <button
             onClick={() => setViewMode('months')}
-            className={`px-4 py-1.5 rounded-full text-xs font-medium transition-all ${
+            className={`px-3 py-1 rounded-full text-[11px] font-medium transition-all ${
               viewMode === 'months' ? 'bg-dark-600 text-white shadow-sm' : 'text-dark-400'
             }`}
           >
@@ -307,7 +307,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
           </button>
           <button
             onClick={() => setViewMode('years')}
-            className={`px-4 py-1.5 rounded-full text-xs font-medium transition-all ${
+            className={`px-3 py-1 rounded-full text-[11px] font-medium transition-all ${
               viewMode === 'years' ? 'bg-dark-600 text-white shadow-sm' : 'text-dark-400'
             }`}
           >
@@ -318,18 +318,18 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
 
       {/* Bar chart */}
       {!showSearch && (
-        <div className="px-4 mb-1">
-          <ResponsiveContainer width="100%" height={150}>
-            <BarChart data={chartData} barCategoryGap={viewMode === 'years' ? '12%' : '18%'}>
-              <CartesianGrid horizontal={true} vertical={false} strokeDasharray="4 4" stroke="#334155" />
-              <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 9 }} interval={0} />
-              <YAxis axisLine={false} tickLine={false} tick={{ fill: '#475569', fontSize: 9 }} tickFormatter={formatCompact} width={35} tickCount={3} />
+        <div className="px-3 mb-0">
+          <ResponsiveContainer width="100%" height={100}>
+            <BarChart data={chartData} barCategoryGap={viewMode === 'years' ? '12%' : '18%'} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
+              <CartesianGrid horizontal={true} vertical={false} strokeDasharray="3 3" stroke="#1e293b" />
+              <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#475569', fontSize: 8 }} interval={0} />
+              <YAxis axisLine={false} tickLine={false} tick={{ fill: '#334155', fontSize: 8 }} tickFormatter={formatCompact} width={28} tickCount={3} />
               <Tooltip
-                contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '10px', color: '#f1f5f9', fontSize: '12px', padding: '6px 10px' }}
+                contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px', color: '#f1f5f9', fontSize: '11px', padding: '4px 8px' }}
                 formatter={(value: number) => [formatCurrency(value), '']}
-                labelStyle={{ color: '#94a3b8', fontSize: '10px' }}
+                labelStyle={{ color: '#94a3b8', fontSize: '9px' }}
               />
-              <Bar dataKey="total" radius={[3, 3, 0, 0]}>
+              <Bar dataKey="total" radius={[2, 2, 0, 0]}>
                 {chartData.map((entry, i) => (
                   <Cell key={i} fill={entry.isCurrent ? '#ef4444' : 'rgba(239,68,68,0.15)'} />
                 ))}
@@ -341,22 +341,22 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
 
       {/* Spending Overview button */}
       {!showSearch && (
-        <div className="px-4 py-2 mb-1">
+        <div className="px-3 py-1">
           <button
             onClick={() => onNavigate('overview')}
-            className="w-full flex items-center justify-center gap-2 py-2.5 text-dark-300 hover:text-dark-100 transition-colors"
+            className="w-full flex items-center justify-center gap-1.5 py-1.5 text-dark-400 hover:text-dark-200 transition-colors"
           >
-            <PieChart size={16} className="text-brand-400" />
-            <span className="text-sm font-medium">Spending Overview</span>
-            <ChevronRight size={14} className="text-dark-500" />
+            <PieChart size={13} className="text-brand-400" />
+            <span className="text-[11px] font-medium">Spending Overview</span>
+            <ChevronRight size={12} className="text-dark-500" />
           </button>
         </div>
       )}
 
       {/* Search results */}
       {searchQuery && (
-        <div className="px-4 py-2">
-          <p className="text-xs text-dark-400">
+        <div className="px-3 py-1">
+          <p className="text-[11px] text-dark-400">
             {filteredExpenses.length} resultado{filteredExpenses.length !== 1 && 's'} para &quot;{searchQuery}&quot;
           </p>
         </div>
@@ -365,23 +365,22 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       {/* Expenses by day */}
       <div className="min-h-[200px]">
         {groupedByDay.length === 0 ? (
-          <div className="text-center py-12 px-4">
-            <div className="text-5xl mb-4">{searchQuery ? '🔍' : '🎯'}</div>
-            <p className="text-dark-300 font-medium">
+          <div className="text-center py-10 px-4">
+            <div className="text-4xl mb-3">{searchQuery ? '🔍' : '🎯'}</div>
+            <p className="text-dark-300 text-sm font-medium">
               {searchQuery ? 'No se encontraron gastos' : 'No hay gastos'}
             </p>
             {!searchQuery && (
-              <p className="text-dark-500 text-sm mt-1">Tocá + para agregar tu primer gasto</p>
+              <p className="text-dark-500 text-xs mt-1">Tocá + para agregar tu primer gasto</p>
             )}
           </div>
         ) : (
           groupedByDay.map((group) => (
             <div key={group.date}>
-              {/* Day header */}
-              <div className="flex items-center justify-between px-4 py-1.5 bg-dark-800/80 mt-2 first:mt-0">
-  <span className="text-[11px] font-semibold text-dark-500 uppercase tracking-widest capitalize">{group.label}</span>
-  <span className="text-[11px] font-semibold text-dark-500">-{formatCurrency(group.total)}</span>
-</div>
+              <div className="flex items-center justify-between px-3 py-1 bg-dark-800/60">
+                <span className="text-[10px] font-semibold text-dark-500 uppercase tracking-wider capitalize">{group.label}</span>
+                <span className="text-[10px] font-semibold text-dark-500">-{formatCurrency(group.total)}</span>
+              </div>
 
               {group.expenses.map((expense) => (
                 <SwipeableExpenseRow
@@ -399,9 +398,9 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       {/* FAB */}
       <button
         onClick={() => { setEditingExpense(null); setShowAddExpense(true); }}
-        className="fixed bottom-24 right-5 bg-brand-500 text-white w-14 h-14 rounded-full shadow-xl shadow-black/30 flex items-center justify-center z-40 active:scale-95 transition-transform"
+        className="fixed bottom-20 right-4 bg-brand-500 text-white w-12 h-12 rounded-full shadow-xl shadow-black/30 flex items-center justify-center z-40 active:scale-95 transition-transform"
       >
-        <Plus size={28} strokeWidth={2.5} />
+        <Plus size={24} strokeWidth={2.5} />
       </button>
 
       {/* Modal */}
