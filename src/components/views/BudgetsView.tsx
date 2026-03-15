@@ -29,24 +29,6 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
   const [selectedCatIds, setSelectedCatIds] = useState<string[]>([]);
   const [showCatPicker, setShowCatPicker] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [isTyping, setIsTyping] = useState(false);
-  const [btnBottom, setBtnBottom] = useState(0);
-
-  useEffect(() => {
-    const vv = window.visualViewport;
-    if (!vv) return;
-    function update() {
-      if (!vv) return;
-      const bottom = window.innerHeight - (vv.height + vv.offsetTop);
-      setBtnBottom(bottom > 50 ? bottom - 44 : 0);
-    }
-    vv.addEventListener('resize', update);
-    vv.addEventListener('scroll', update);
-    return () => {
-      vv.removeEventListener('resize', update);
-      vv.removeEventListener('scroll', update);
-    };
-  }, []);
 
   function handleNumpad(key: string) {
     if (key === 'backspace') {
@@ -324,8 +306,6 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
                   placeholder="Ej: Car, Groceries..."
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  onFocus={() => setIsTyping(true)}
-                  onBlur={() => setIsTyping(false)}
                   className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3.5 pl-11 pr-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors"
                 />
               </div>
@@ -380,53 +360,38 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
             </div>
           </div>
 
-          {/* Bottom: button + numpad or floating button */}
-          {isTyping && btnBottom > 0 ? (
-            <div
-              className="fixed left-0 right-0 z-[70]"
-              style={{ bottom: `${btnBottom}px` }}
-            >
+          {/* Bottom: button + numpad */}
+          <div className="flex-shrink-0">
+            <div className="px-5 py-3">
               <button
-                onMouseDown={(e) => { e.preventDefault(); handleSave(); }}
+                onClick={handleSave}
                 disabled={saving || !name || !amount}
-                className="w-full bg-brand-600 hover:bg-brand-500 disabled:opacity-30 text-white font-bold py-4 transition-all text-base"
+                className="w-full bg-brand-600 hover:bg-brand-500 disabled:opacity-30 text-white font-bold py-4 rounded-2xl transition-all text-base"
               >
                 {saving ? 'Guardando...' : editingBudget ? 'Guardar cambios' : 'Crear presupuesto'}
               </button>
             </div>
-          ) : (
-            <div className="flex-shrink-0">
-              <div className="px-5 py-3">
-                <button
-                  onClick={handleSave}
-                  disabled={saving || !name || !amount}
-                  className="w-full bg-brand-600 hover:bg-brand-500 disabled:opacity-30 text-white font-bold py-4 rounded-2xl transition-all text-base"
-                >
-                  {saving ? 'Guardando...' : editingBudget ? 'Guardar cambios' : 'Crear presupuesto'}
-                </button>
+            <div className="border-t border-dark-700">
+              <div className="grid grid-cols-3">
+                {['1','2','3','4','5','6','7','8','9','.','0','backspace'].map((key) => {
+                  const isDel = key === 'backspace';
+                  return (
+                    <button
+                      key={key}
+                      onClick={() => {
+                        if (isDel) handleNumpad('backspace');
+                        else handleNumpad(key);
+                      }}
+                      className="py-[14px] text-center text-xl font-medium border-b border-r border-dark-800 active:bg-dark-700 transition-colors bg-dark-900 text-white"
+                    >
+                      {isDel ? <span className="flex items-center justify-center"><Delete size={22} /></span> : key}
+                    </button>
+                  );
+                })}
               </div>
-              <div className="border-t border-dark-700">
-                <div className="grid grid-cols-3">
-                  {['1','2','3','4','5','6','7','8','9','.','0','backspace'].map((key) => {
-                    const isDel = key === 'backspace';
-                    return (
-                      <button
-                        key={key}
-                        onClick={() => {
-                          if (isDel) handleNumpad('backspace');
-                          else handleNumpad(key);
-                        }}
-                        className="py-[14px] text-center text-xl font-medium border-b border-r border-dark-800 active:bg-dark-700 transition-colors bg-dark-900 text-white"
-                      >
-                        {isDel ? <span className="flex items-center justify-center"><Delete size={22} /></span> : key}
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="h-[env(safe-area-inset-bottom)]" />
-              </div>
+              <div className="h-[env(safe-area-inset-bottom)]" />
             </div>
-          )}
+          </div>
         </div>
       )}
 
