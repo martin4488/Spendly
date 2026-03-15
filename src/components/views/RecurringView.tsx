@@ -3,27 +3,31 @@
 import { useState, useEffect } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
-import { formatCurrency } from '@/lib/utils';
-import { Category, RecurringExpense } from '@/types';
-import { Plus, Edit3, Trash2, X, Pause, Play, FileText, CalendarOff, Delete } from 'lucide-react';
-import { format, parseISO } from 'date-fns';
+import { formatCurrency, getBudgetPeriodRange } from '@/lib/utils';
+import { Budget, Category } from '@/types';
+import { Plus, X, ChevronRight, Delete } from 'lucide-react';
+import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 
-export default function RecurringView({ user }: { user: User }) {
-  const [items, setItems] = useState<RecurringExpense[]>([]);
+interface Props {
+  user: User;
+  onOpenBudget: (budget: Budget) => void;
+}
+
+export default function BudgetsView({ user, onOpenBudget }: Props) {
+  const [budgets, setBudgets] = useState<Budget[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingBudget, setEditingBudget] = useState<Budget | null>(null);
 
-  // Form
+  // Form state
+  const [name, setName] = useState('');
   const [amount, setAmount] = useState('');
-  const [description, setDescription] = useState('');
-  const [notes, setNotes] = useState('');
-  const [categoryId, setCategoryId] = useState('');
-  const [frequency, setFrequency] = useState<'weekly' | 'monthly' | 'yearly'>('monthly');
-  const [dayOfMonth, setDayOfMonth] = useState('1');
-  const [endDate, setEndDate] = useState('');
+  const [recurrence, setRecurrence] = useState<'monthly' | 'yearly'>('monthly');
+  const [startDate, setStartDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [selectedCatIds, setSelectedCatIds] = useState<string[]>([]);
+  const [showCatPicker, setShowCatPicker] = useState(false);
   const [saving, setSaving] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
@@ -60,64 +64,111 @@ export default function RecurringView({ user }: { user: User }) {
 
   async function loadData() {
     setLoading(true);
-    const [{ data: rec }, { data: cats }] = await Promise.all([
-      supabase
-        .from('recurring_expenses')
-        .select('*, category:categories(*)')
-        .eq('user_id', user.id)
-        .order('description'),
-      supabase.from('categories').select('*').eq('user_id', user.id).order('name'),
-    ]);
-    setItems(rec || []);
-    setCategories(cats || []);
-    setLoading(false);
+    try {
+      const [{ data: budgetsData }, { data: catsData }, { data: bcData }] = await Promise.all([
+        supabase.from('budgets').select('*').eq('user_id', user.id).order('name'),
+        supabase.from('categories').select('*').eq('user_id', user.id).order('name'),
+        supabase.from('budget_categories').select('*'),
+      ]);
+
+      const allCats = catsData || [];
+      setCategories(allCats);
+
+      // For each budget, compute spent amount
+      const enriched: Budget[] = [];
+      for (const b of (budgetsData || [])) {
+        const catIds = (bcData || []).filter(bc => bc.budget_id === b.id).map(bc => bc.category_id);
+        const bCats = allCats.filter(c => catIds.includes(c.id));
+
+        // Include subcategory IDs too
+        const allCatIds = [...catIds];
+        allCats.forEach(c => {
+          if (c.parent_id && catIds.includes(c.parent_id) && !allCatIds.includes(c.id)) {
+            allCatIds.push(c.id);
+          }
+        });
+
+        const range = getBudgetPeriodRange(b.start_date, b.recurrence);
+
+        let spent = 0;
+        if (allCatIds.length > 0) {
+          const { data: expenses } = await supabase
+            .from('expenses')
+            .select('amount')
+            .eq('user_id', user.id)
+            .in('category_id', allCatIds)
+            .gte('date', range.start)
+            .lte('date', range.end);
+          spent = (expenses || []).reduce((sum, e) => sum + Number(e.amount), 0);
+        }
+
+        enriched.push({
+          ...b,
+          category_ids: catIds,
+          categories: bCats,
+          spent,
+        });
+      }
+
+      setBudgets(enriched);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
   }
 
-  function openForm(item?: RecurringExpense) {
-    if (item) {
-      setEditingId(item.id);
-      setAmount(String(item.amount));
-      setDescription(item.description);
-      setNotes(item.notes || '');
-      setCategoryId(item.category_id || '');
-      setFrequency(item.frequency);
-      setDayOfMonth(String(item.day_of_month));
-      setEndDate(item.end_date || '');
+  function openForm(budget?: Budget) {
+    if (budget) {
+      setEditingBudget(budget);
+      setName(budget.name);
+      setAmount(String(budget.amount));
+      setRecurrence(budget.recurrence);
+      setStartDate(budget.start_date);
+      setSelectedCatIds(budget.category_ids || []);
     } else {
-      setEditingId(null);
+      setEditingBudget(null);
+      setName('');
       setAmount('');
-      setDescription('');
-      setNotes('');
-      setCategoryId('');
-      setFrequency('monthly');
-      setDayOfMonth('1');
-      setEndDate('');
+      setRecurrence('monthly');
+      setStartDate(format(new Date(new Date().getFullYear(), new Date().getMonth(), 1), 'yyyy-MM-dd'));
+      setSelectedCatIds([]);
     }
     setShowForm(true);
   }
 
   async function handleSave() {
-    if (!amount || !description) return;
+    if (!name || !amount) return;
     setSaving(true);
 
-    const data = {
-      user_id: user.id,
-      amount: parseFloat(amount),
-      description,
-      notes: notes || null,
-      category_id: categoryId || null,
-      frequency,
-      day_of_month: parseInt(dayOfMonth),
-      end_date: endDate || null,
-      is_active: true,
-    };
-
     try {
-      if (editingId) {
-        await supabase.from('recurring_expenses').update(data).eq('id', editingId);
+      const budgetData = {
+        user_id: user.id,
+        name,
+        amount: parseFloat(amount),
+        recurrence,
+        start_date: startDate,
+      };
+
+      let budgetId: string;
+
+      if (editingBudget) {
+        await supabase.from('budgets').update(budgetData).eq('id', editingBudget.id);
+        budgetId = editingBudget.id;
+        // Delete old category links
+        await supabase.from('budget_categories').delete().eq('budget_id', budgetId);
       } else {
-        await supabase.from('recurring_expenses').insert(data);
+        const { data } = await supabase.from('budgets').insert(budgetData).select().single();
+        budgetId = data.id;
       }
+
+      // Insert category links
+      if (selectedCatIds.length > 0) {
+        await supabase.from('budget_categories').insert(
+          selectedCatIds.map(cid => ({ budget_id: budgetId, category_id: cid }))
+        );
+      }
+
       setShowForm(false);
       loadData();
     } catch (err) {
@@ -127,33 +178,27 @@ export default function RecurringView({ user }: { user: User }) {
     }
   }
 
-  async function toggleActive(id: string, current: boolean) {
-    await supabase.from('recurring_expenses').update({ is_active: !current }).eq('id', id);
-    loadData();
-  }
-
   async function handleDelete(id: string) {
-    if (confirm('¿Eliminar este gasto recurrente?')) {
-      await supabase.from('recurring_expenses').delete().eq('id', id);
+    if (confirm('¿Eliminar este presupuesto?')) {
+      await supabase.from('budgets').delete().eq('id', id);
       loadData();
     }
   }
 
-  const totalMonthly = items
-    .filter(i => i.is_active)
-    .reduce((sum, i) => {
-      if (i.frequency === 'monthly') return sum + Number(i.amount);
-      if (i.frequency === 'weekly') return sum + Number(i.amount) * 4.33;
-      if (i.frequency === 'yearly') return sum + Number(i.amount) / 12;
-      return sum;
-    }, 0);
+  function toggleCat(catId: string) {
+    setSelectedCatIds(prev =>
+      prev.includes(catId) ? prev.filter(id => id !== catId) : [...prev, catId]
+    );
+  }
 
-  const freqLabels: Record<string, string> = { weekly: 'Semanal', monthly: 'Mensual', yearly: 'Anual' };
+  const parentCats = categories.filter(c => !c.parent_id);
+  const getSubcats = (pid: string) => categories.filter(c => c.parent_id === pid);
+  const recurrenceLabels: Record<string, string> = { monthly: 'Mensual', yearly: 'Anual' };
 
   return (
-    <div className="px-4 pt-6 pb-24 max-w-lg mx-auto page-transition">
+    <div className="px-4 pt-6 pb-4 max-w-lg mx-auto page-transition">
       <div className="flex items-center justify-between mb-5">
-        <h1 className="text-xl font-bold">Gastos fijos</h1>
+        <h1 className="text-xl font-bold">Presupuestos</h1>
         <button
           onClick={() => openForm()}
           className="bg-brand-600 hover:bg-brand-500 text-white p-2.5 rounded-xl transition-colors shadow-lg shadow-brand-600/20"
@@ -162,209 +207,198 @@ export default function RecurringView({ user }: { user: User }) {
         </button>
       </div>
 
-      {/* Summary */}
-      <div className="bg-dark-800 rounded-xl p-4 mb-5">
-        <p className="text-dark-400 text-xs">Total mensual estimado</p>
-        <p className="text-2xl font-bold mt-1">{formatCurrency(totalMonthly)}</p>
-        <p className="text-dark-500 text-xs mt-1">{items.filter(i => i.is_active).length} gastos activos</p>
-      </div>
-
       {loading ? (
         <div className="flex justify-center py-10">
           <div className="w-7 h-7 border-2 border-brand-500/30 border-t-brand-500 rounded-full animate-spin" />
         </div>
-      ) : items.length === 0 ? (
+      ) : budgets.length === 0 ? (
         <div className="text-center py-10">
-          <div className="text-5xl mb-4">🔄</div>
-          <p className="text-dark-300 font-medium">No tenés gastos fijos</p>
-          <p className="text-dark-500 text-sm mt-1">Agregá cosas como alquiler, Netflix, gym...</p>
+          <div className="text-5xl mb-4">💰</div>
+          <p className="text-dark-300 font-medium">No tenés presupuestos</p>
+          <p className="text-dark-500 text-sm mt-1">Creá uno para controlar tus gastos</p>
           <button
             onClick={() => openForm()}
-            className="mt-4 bg-brand-600 text-white text-sm font-medium px-5 py-2.5 rounded-xl"
+            className="mt-5 bg-brand-600/15 text-brand-400 text-sm font-semibold px-6 py-3 rounded-2xl border border-brand-600/20 hover:bg-brand-600/25 transition-colors"
           >
-            Agregar gasto fijo
+            Crear presupuesto
           </button>
         </div>
       ) : (
-        <div className="space-y-2">
-          {items.map((item) => (
-            <div
-              key={item.id}
-              className={`bg-dark-800 rounded-xl p-3.5 flex items-center justify-between ${!item.is_active ? 'opacity-50' : ''}`}
-            >
-              <div className="flex items-center gap-3 flex-1 min-w-0">
-                <span className="text-xl">{(item as any).category?.icon || '🔄'}</span>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium truncate">{item.description}</p>
-                  <p className="text-xs text-dark-400">
-                    {freqLabels[item.frequency]}
-                    {item.frequency !== 'weekly' && ` · Día ${item.day_of_month}`}
-                    {(item as any).category && ` · ${(item as any).category.name}`}
-                  </p>
-                  {item.end_date && (
-                    <p className="text-[10px] text-dark-500 mt-0.5">
-                      Hasta {format(parseISO(item.end_date), "d MMM yyyy", { locale: es })}
-                    </p>
-                  )}
+        <div className="space-y-3">
+          {budgets.map((budget) => {
+            const spent = budget.spent || 0;
+            const left = Math.max(budget.amount - spent, 0);
+            const pct = budget.amount > 0 ? (spent / budget.amount) * 100 : 0;
+            const range = getBudgetPeriodRange(budget.start_date, budget.recurrence);
+            const startLabel = format(new Date(range.start + 'T00:00'), "MMM d, yyyy", { locale: es });
+            const endLabel = format(new Date(range.end + 'T00:00'), "MMM d, yyyy", { locale: es });
+
+            return (
+              <button
+                key={budget.id}
+                onClick={() => onOpenBudget(budget)}
+                className="w-full bg-dark-800 rounded-2xl p-4 text-left hover:bg-dark-750 transition-colors"
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <h3 className="text-sm font-bold">{budget.name}</h3>
+                  <ChevronRight size={16} className="text-dark-500" />
                 </div>
-              </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
-                <span className="text-sm font-bold">{formatCurrency(Number(item.amount))}</span>
-                <button
-                  onClick={() => toggleActive(item.id, item.is_active)}
-                  className={`p-1.5 rounded-lg ${item.is_active ? 'text-brand-400' : 'text-dark-500'}`}
-                >
-                  {item.is_active ? <Pause size={14} /> : <Play size={14} />}
-                </button>
-                <button onClick={() => openForm(item)} className="p-1.5 text-dark-400 hover:text-dark-200">
-                  <Edit3 size={14} />
-                </button>
-                <button onClick={() => handleDelete(item.id)} className="p-1.5 text-dark-400 hover:text-red-400">
-                  <Trash2 size={14} />
-                </button>
-              </div>
-            </div>
-          ))}
+
+                <div className="flex items-baseline gap-1.5 mb-2">
+                  <span className={`text-lg font-extrabold ${pct >= 100 ? 'text-red-400' : 'text-brand-400'}`}>
+                    {formatCurrency(left)}
+                  </span>
+                  <span className="text-dark-500 text-xs">de {formatCurrency(budget.amount)}</span>
+                </div>
+
+                {/* Progress bar */}
+                <div className="w-full bg-dark-700 rounded-full h-2 mb-2.5">
+                  <div
+                    className="h-2 rounded-full transition-all duration-500"
+                    style={{
+                      width: `${Math.min(pct, 100)}%`,
+                      backgroundColor: pct >= 100 ? '#ef4444' : pct >= 80 ? '#f59e0b' : '#22c55e',
+                    }}
+                  />
+                  {/* Percentage label inside */}
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-dark-500 capitalize">{startLabel}</span>
+                  <span
+                    className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                      pct >= 100 ? 'bg-red-500/15 text-red-400' : 'bg-brand-500/15 text-brand-400'
+                    }`}
+                  >
+                    {pct.toFixed(1)}%
+                  </span>
+                  <span className="text-[10px] text-dark-500 capitalize">{endLabel}</span>
+                </div>
+              </button>
+            );
+          })}
         </div>
       )}
 
-      {/* Form Modal - Fullscreen */}
+      {/* ===== CREATE/EDIT FORM ===== */}
       {showForm && (
         <div className="fixed inset-0 bg-dark-900 z-[60] flex flex-col slide-up">
           <div className="flex items-center justify-between px-4 pt-5 pb-3 flex-shrink-0">
             <button onClick={() => setShowForm(false)} className="p-1 text-dark-400 hover:text-white">
               <X size={24} />
             </button>
-            <h2 className="text-base font-bold">{editingId ? 'Editar gasto fijo' : 'Nuevo gasto fijo'}</h2>
-            <div className="w-8" />
+            <h2 className="text-base font-bold">
+              {editingBudget ? 'Editar presupuesto' : 'Nuevo presupuesto'}
+            </h2>
+            {editingBudget ? (
+              <button
+                onClick={() => { handleDelete(editingBudget.id); setShowForm(false); }}
+                className="p-1 text-red-400 hover:text-red-300"
+              >
+                🗑️
+              </button>
+            ) : (
+              <div className="w-8" />
+            )}
           </div>
 
           {/* Amount display */}
           <div className="px-5 py-4 flex-shrink-0 border-b border-dark-800">
-            <p className="text-xs text-dark-400 font-medium mb-1">Monto *</p>
+            <p className="text-xs text-dark-400 font-medium mb-1 uppercase tracking-wider">Monto</p>
             <p className="text-3xl font-extrabold text-white">{amount || '0'}</p>
           </div>
 
           {/* Scrollable form fields */}
-          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+            {/* Budget name */}
             <div>
-              <label className="text-xs text-dark-400 font-medium mb-1.5 block">Descripción *</label>
+              <label className="text-xs text-dark-400 font-medium mb-1.5 block uppercase tracking-wider">Nombre</label>
               <div className="relative">
-                <FileText size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-dark-400" />
+                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-lg">💰</span>
                 <input
                   type="text"
-                  placeholder="Ej: Alquiler, Netflix, Gym..."
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="Ej: Car, Groceries..."
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
                   onFocus={() => setIsTyping(true)}
                   onBlur={() => setIsTyping(false)}
-                  className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 pl-9 pr-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors"
+                  className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3.5 pl-11 pr-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors"
                 />
               </div>
             </div>
 
+            {/* Recurrence */}
             <div>
-              <label className="text-xs text-dark-400 font-medium mb-1.5 block">Categoría</label>
-              <select
-                value={categoryId}
-                onChange={(e) => setCategoryId(e.target.value)}
-                className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors appearance-none"
-              >
-                <option value="">Sin categoría</option>
-                {categories.map((cat) => (
-                  <option key={cat.id} value={cat.id}>{cat.icon} {cat.name}</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs text-dark-400 font-medium mb-1.5 block">Frecuencia</label>
-                <select
-                  value={frequency}
-                  onChange={(e) => setFrequency(e.target.value as any)}
-                  className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors appearance-none"
-                >
-                  <option value="weekly">Semanal</option>
-                  <option value="monthly">Mensual</option>
-                  <option value="yearly">Anual</option>
-                </select>
-              </div>
-              <div>
-                <label className="text-xs text-dark-400 font-medium mb-1.5 block">Día del mes</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="28"
-                  value={dayOfMonth}
-                  onChange={(e) => setDayOfMonth(e.target.value)}
-                  className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors"
-                />
-              </div>
-            </div>
-
-            {/* End date (optional) */}
-            <div>
-              <label className="text-xs text-dark-400 font-medium mb-1.5 flex items-center gap-1.5">
-                <CalendarOff size={12} />
-                Fecha de finalización (opcional)
-              </label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="date"
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  className="flex-1 bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors"
-                />
-                {endDate && (
+              <label className="text-xs text-dark-400 font-medium mb-1.5 block uppercase tracking-wider">Recurrencia</label>
+              <div className="flex bg-dark-800 rounded-xl p-1 border border-dark-700">
+                {(['monthly', 'yearly'] as const).map((r) => (
                   <button
-                    onClick={() => setEndDate('')}
-                    className="p-2.5 bg-dark-800 border border-dark-700 rounded-xl text-dark-400 hover:text-red-400 transition-colors"
+                    key={r}
+                    onClick={() => setRecurrence(r)}
+                    className={`flex-1 py-2.5 rounded-lg text-xs font-medium transition-all ${
+                      recurrence === r ? 'bg-brand-600 text-white shadow-lg' : 'text-dark-400'
+                    }`}
                   >
-                    <X size={16} />
+                    {recurrenceLabels[r]}
                   </button>
-                )}
+                ))}
               </div>
-              {!endDate && (
-                <p className="text-[10px] text-dark-500 mt-1">Sin fecha = se repite indefinidamente</p>
-              )}
             </div>
 
+            {/* Start date */}
             <div>
-              <label className="text-xs text-dark-400 font-medium mb-1.5 block">Notas (opcional)</label>
-              <textarea
-                placeholder="Algún detalle extra..."
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                rows={2}
-                className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors resize-none"
+              <label className="text-xs text-dark-400 font-medium mb-1.5 block uppercase tracking-wider">Fecha inicio</label>
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors"
               />
+            </div>
+
+            {/* Category picker */}
+            <div>
+              <label className="text-xs text-dark-400 font-medium mb-1.5 block uppercase tracking-wider">
+                Categorías incluidas ({selectedCatIds.length})
+              </label>
+              <button
+                onClick={() => setShowCatPicker(true)}
+                className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3.5 px-4 text-sm text-left flex items-center justify-between hover:border-dark-600 transition-colors"
+              >
+                <span className={selectedCatIds.length > 0 ? 'text-white' : 'text-dark-500'}>
+                  {selectedCatIds.length > 0
+                    ? categories.filter(c => selectedCatIds.includes(c.id)).map(c => `${c.icon} ${c.name}`).join(', ')
+                    : 'Seleccionar categorías...'
+                  }
+                </span>
+                <ChevronRight size={16} className="text-dark-500" />
+              </button>
             </div>
           </div>
 
           {/* Bottom: button + numpad or floating button */}
-          {isTyping && keyboardHeight > 0 ? (
+          {isTyping ? (
             <div
               className="fixed left-0 right-0 z-[70]"
-              style={{ bottom: `${keyboardHeight}px` }}
+              style={{ bottom: keyboardHeight > 0 ? `${keyboardHeight}px` : '260px' }}
             >
               <button
-                onClick={(e) => { e.preventDefault(); handleSave(); }}
-                disabled={saving || !amount || !description}
+                onMouseDown={(e) => { e.preventDefault(); handleSave(); }}
+                disabled={saving || !name || !amount}
                 className="w-full bg-brand-600 hover:bg-brand-500 disabled:opacity-30 text-white font-bold py-4 transition-all text-base"
               >
-                {saving ? 'Guardando...' : editingId ? 'Guardar cambios' : 'Agregar gasto fijo'}
+                {saving ? 'Guardando...' : editingBudget ? 'Guardar cambios' : 'Crear presupuesto'}
               </button>
             </div>
-          ) : !isTyping ? (
+          ) : (
             <div className="flex-shrink-0">
               <div className="px-5 py-3">
                 <button
                   onClick={handleSave}
-                  disabled={saving || !amount || !description}
+                  disabled={saving || !name || !amount}
                   className="w-full bg-brand-600 hover:bg-brand-500 disabled:opacity-30 text-white font-bold py-4 rounded-2xl transition-all text-base"
                 >
-                  {saving ? 'Guardando...' : editingId ? 'Guardar cambios' : 'Agregar gasto fijo'}
+                  {saving ? 'Guardando...' : editingBudget ? 'Guardar cambios' : 'Crear presupuesto'}
                 </button>
               </div>
               <div className="border-t border-dark-700">
@@ -388,7 +422,93 @@ export default function RecurringView({ user }: { user: User }) {
                 <div className="h-[env(safe-area-inset-bottom)]" />
               </div>
             </div>
-          ) : null}
+          )}
+        </div>
+      )}
+
+      {/* ===== CATEGORY PICKER OVERLAY ===== */}
+      {showCatPicker && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[70] flex items-end">
+          <div className="bg-dark-800 w-full rounded-t-3xl max-h-[75vh] overflow-y-auto slide-up">
+            <div className="flex items-center justify-between p-4 border-b border-dark-700 sticky top-0 bg-dark-800 z-10">
+              <button onClick={() => setShowCatPicker(false)} className="p-1 text-dark-400">
+                <X size={20} />
+              </button>
+              <h3 className="text-base font-bold">Categorías del presupuesto</h3>
+              <button
+                onClick={() => {
+                  const allIds = categories.map(c => c.id);
+                  if (selectedCatIds.length === allIds.length) {
+                    setSelectedCatIds([]);
+                  } else {
+                    setSelectedCatIds(allIds);
+                  }
+                }}
+                className="text-xs text-brand-400 font-medium"
+              >
+                {selectedCatIds.length === categories.length ? 'Ninguna' : 'Todas'}
+              </button>
+            </div>
+
+            {parentCats.map((cat) => {
+              const isSelected = selectedCatIds.includes(cat.id);
+              const subs = getSubcats(cat.id);
+              return (
+                <div key={cat.id}>
+                  <button
+                    onClick={() => toggleCat(cat.id)}
+                    className="w-full flex items-center gap-3 px-4 py-4 border-b border-dark-700/30 active:bg-dark-700/50 transition-colors"
+                  >
+                    <div
+                      className="w-10 h-10 rounded-full flex items-center justify-center text-lg"
+                      style={{ backgroundColor: cat.color + '25' }}
+                    >
+                      {cat.icon}
+                    </div>
+                    <span className="text-sm font-medium flex-1 text-left">{cat.name}</span>
+                    <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${
+                      isSelected ? 'bg-brand-500 border-brand-500' : 'border-dark-600'
+                    }`}>
+                      {isSelected && (
+                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                          <path d="M2.5 6L5 8.5L9.5 3.5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
+                      )}
+                    </div>
+                  </button>
+                  {subs.map((sub) => {
+                    const subSelected = selectedCatIds.includes(sub.id);
+                    return (
+                      <button
+                        key={sub.id}
+                        onClick={() => toggleCat(sub.id)}
+                        className="w-full flex items-center gap-3 pl-10 pr-4 py-3 border-b border-dark-700/20 active:bg-dark-700/50 transition-colors"
+                      >
+                        <span className="text-dark-500 text-xs">└</span>
+                        <div
+                          className="w-8 h-8 rounded-full flex items-center justify-center text-sm"
+                          style={{ backgroundColor: (sub.color || cat.color) + '25' }}
+                        >
+                          {sub.icon}
+                        </div>
+                        <span className="text-sm text-dark-200 flex-1 text-left">{sub.name}</span>
+                        <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${
+                          subSelected ? 'bg-brand-500 border-brand-500' : 'border-dark-600'
+                        }`}>
+                          {subSelected && (
+                            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                              <path d="M2.5 6L5 8.5L9.5 3.5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                            </svg>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })}
+            <div className="h-8" />
+          </div>
         </div>
       )}
     </div>
