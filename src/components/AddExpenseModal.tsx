@@ -43,7 +43,6 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [showCurrencyPicker, setShowCurrencyPicker] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [isTyping, setIsTyping] = useState(false);
 
   // Create category inline
   const [showCreateCategory, setShowCreateCategory] = useState(false);
@@ -221,26 +220,24 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
 
       {/* ===== FORM FIELDS (scrollable middle) ===== */}
       <div className="flex-1 overflow-y-auto">
-        {/* Date - hidden when typing to prevent Safari toolbar */}
-        {!isTyping && (
-          <button
-            onClick={() => setShowDatePicker(!showDatePicker)}
-            className="flex items-center gap-3 px-5 py-4 border-b border-dark-800 w-full"
-          >
-            <Calendar size={18} className="text-dark-400" />
-            <span className="text-sm font-medium flex-1 text-left capitalize">{dateLabel}</span>
-            {date === today && (
-              <span
-                onClick={(e) => { e.stopPropagation(); setDate(yesterday); }}
-                className="text-xs text-dark-500 border border-dashed border-dark-600 rounded-full px-3 py-1"
-              >
-                Ayer?
-              </span>
-            )}
-          </button>
-        )}
+        {/* Date */}
+        <button
+          onClick={() => setShowDatePicker(!showDatePicker)}
+          className="flex items-center gap-3 px-5 py-4 border-b border-dark-800 w-full"
+        >
+          <Calendar size={18} className="text-dark-400" />
+          <span className="text-sm font-medium flex-1 text-left capitalize">{dateLabel}</span>
+          {date === today && (
+            <span
+              onClick={(e) => { e.stopPropagation(); setDate(yesterday); }}
+              className="text-xs text-dark-500 border border-dashed border-dark-600 rounded-full px-3 py-1"
+            >
+              Ayer?
+            </span>
+          )}
+        </button>
 
-        {showDatePicker && !isTyping && (
+        {showDatePicker && (
           <div className="px-5 py-3 border-b border-dark-800 bg-dark-800/50">
             <input
               type="date"
@@ -259,22 +256,16 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
             placeholder="Descripción"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            onFocus={() => setIsTyping(true)}
-            onBlur={() => setIsTyping(false)}
             className="flex-1 bg-transparent text-sm placeholder:text-dark-500 focus:outline-none"
           />
         </div>
       </div>
 
-      {/* ===== BOTTOM SECTION ===== */}
-      {isTyping ? (
-        /* When typing: simple button above keyboard, no toolbar because only 1 input visible */
-        <div className="flex-shrink-0 px-5 py-3">
+      {/* ===== BOTTOM SECTION (always visible) ===== */}
+      <div className="flex-shrink-0">
+        <div className="px-5 py-3">
           <button
-            onMouseDown={(e) => {
-              e.preventDefault();
-              handleSave();
-            }}
+            onClick={handleSave}
             disabled={saving || !amountStr || parseFloat(amountStr) <= 0}
             className="w-full py-4 rounded-2xl font-bold text-base transition-all disabled:opacity-40"
             style={{ backgroundColor: headerColor, color: 'white' }}
@@ -282,41 +273,27 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
             {saving ? 'Guardando...' : editingExpense ? 'Guardar cambios' : 'Agregar gasto'}
           </button>
         </div>
-      ) : (
-        /* Normal: rounded button + numpad */
-        <div className="flex-shrink-0">
-          <div className="px-5 py-3">
-            <button
-              onClick={handleSave}
-              disabled={saving || !amountStr || parseFloat(amountStr) <= 0}
-              className="w-full py-4 rounded-2xl font-bold text-base transition-all disabled:opacity-40"
-              style={{ backgroundColor: headerColor, color: 'white' }}
-            >
-              {saving ? 'Guardando...' : editingExpense ? 'Guardar cambios' : 'Agregar gasto'}
-            </button>
+        <div className="border-t border-dark-700">
+          <div className="grid grid-cols-3">
+            {['1','2','3','4','5','6','7','8','9','.','0','backspace'].map((key) => {
+              const isDel = key === 'backspace';
+              return (
+                <button
+                  key={key}
+                  onClick={() => {
+                    if (isDel) handleNumpad('backspace');
+                    else handleNumpad(key);
+                  }}
+                  className="py-[14px] text-center text-xl font-medium border-b border-r border-dark-800 active:bg-dark-700 transition-colors bg-dark-900 text-white"
+                >
+                  {isDel ? <span className="flex items-center justify-center"><Delete size={22} /></span> : key}
+                </button>
+              );
+            })}
           </div>
-          <div className="border-t border-dark-700">
-            <div className="grid grid-cols-3">
-              {['1','2','3','4','5','6','7','8','9','.','0','backspace'].map((key) => {
-                const isDel = key === 'backspace';
-                return (
-                  <button
-                    key={key}
-                    onClick={() => {
-                      if (isDel) handleNumpad('backspace');
-                      else handleNumpad(key);
-                    }}
-                    className="py-[14px] text-center text-xl font-medium border-b border-r border-dark-800 active:bg-dark-700 transition-colors bg-dark-900 text-white"
-                  >
-                    {isDel ? <span className="flex items-center justify-center"><Delete size={22} /></span> : key}
-                  </button>
-                );
-              })}
-            </div>
-            <div className="h-[env(safe-area-inset-bottom)]" />
-          </div>
+          <div className="h-[env(safe-area-inset-bottom)]" />
         </div>
-      )}
+      </div>
 
       {/* ===== CURRENCY PICKER ===== */}
       {showCurrencyPicker && (
