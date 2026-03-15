@@ -1,11 +1,87 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, getMonthRange, CATEGORY_ICONS, CATEGORY_COLORS } from '@/lib/utils';
 import { Category } from '@/types';
-import { Plus, Edit3, Trash2, X, FolderPlus } from 'lucide-react';
+import { Plus, Trash2, X, FolderPlus } from 'lucide-react';
+
+// ── Swipeable category row ────────────────────────────────────────────────────
+function SwipeableCatRow({
+  children,
+  onEdit,
+  onDelete,
+}: {
+  children: React.ReactNode;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const [offset, setOffset] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
+  const startXRef = useRef<number | null>(null);
+  const DELETE_THRESHOLD = 72;
+  const SNAP_THRESHOLD = 36;
+
+  function onTouchStart(e: React.TouchEvent) {
+    startXRef.current = e.touches[0].clientX;
+    setIsDragging(false);
+  }
+
+  function onTouchMove(e: React.TouchEvent) {
+    if (startXRef.current === null) return;
+    const dx = startXRef.current - e.touches[0].clientX;
+    if (dx > 5) setIsDragging(true);
+    if (dx > 0) setOffset(Math.min(dx, DELETE_THRESHOLD));
+    else if (dx < 0 && offset > 0) setOffset(Math.max(0, offset + dx));
+  }
+
+  function onTouchEnd() {
+    setOffset(offset > SNAP_THRESHOLD ? DELETE_THRESHOLD : 0);
+    startXRef.current = null;
+  }
+
+  function handleClick() {
+    if (isDragging) return;
+    if (offset > 0) { setOffset(0); return; }
+    onEdit();
+  }
+
+  return (
+    <div className="relative overflow-hidden">
+      {/* Delete button */}
+      <div
+        className="absolute right-0 top-0 bottom-0 flex items-center justify-center bg-red-500"
+        style={{ width: DELETE_THRESHOLD }}
+      >
+        <button
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          className="flex flex-col items-center justify-center w-full h-full gap-1 active:bg-red-600 transition-colors"
+        >
+          <Trash2 size={16} className="text-white" />
+          <span className="text-[10px] text-white font-medium">Borrar</span>
+        </button>
+      </div>
+
+      {/* Row content */}
+      <div
+        className="relative bg-dark-800 cursor-pointer select-none"
+        style={{
+          transform: `translateX(-${offset}px)`,
+          transition: isDragging ? 'none' : 'transform 0.2s ease',
+        }}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+        onClick={handleClick}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function CategoriesView({ user }: { user: User }) {
   const [categories, setCategories] = useState<Category[]>([]);
@@ -15,7 +91,6 @@ export default function CategoriesView({ user }: { user: User }) {
   const [parentId, setParentId] = useState<string | null>(null);
   const [spending, setSpending] = useState<Record<string, number>>({});
 
-  // Form state
   const [name, setName] = useState('');
   const [icon, setIcon] = useState('📦');
   const [color, setColor] = useState('#22c55e');
@@ -35,9 +110,7 @@ export default function CategoriesView({ user }: { user: User }) {
 
     const spendMap: Record<string, number> = {};
     expenses?.forEach(e => {
-      if (e.category_id) {
-        spendMap[e.category_id] = (spendMap[e.category_id] || 0) + Number(e.amount);
-      }
+      if (e.category_id) spendMap[e.category_id] = (spendMap[e.category_id] || 0) + Number(e.amount);
     });
     setSpending(spendMap);
 
@@ -71,15 +144,7 @@ export default function CategoriesView({ user }: { user: User }) {
   async function handleSave() {
     if (!name) return;
     setSaving(true);
-
-    const data = {
-      user_id: user.id,
-      name,
-      icon,
-      color,
-      parent_id: parentId,
-    };
-
+    const data = { user_id: user.id, name, icon, color, parent_id: parentId };
     try {
       if (editingId) {
         await supabase.from('categories').update(data).eq('id', editingId);
@@ -139,14 +204,14 @@ export default function CategoriesView({ user }: { user: User }) {
             const hasSubs = (cat.subcategories?.length || 0) > 0;
 
             return (
-              <div key={cat.id} className="bg-dark-800 rounded-xl overflow-hidden">
+              <div key={cat.id} className="rounded-xl overflow-hidden">
                 {/* Parent category */}
-                <div className="p-3.5">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3 flex-1 min-w-0">
+                <SwipeableCatRow onEdit={() => openForm(cat)} onDelete={() => handleDelete(cat.id)}>
+                  <div className="p-3.5">
+                    <div className="flex items-center gap-3">
                       <div
                         className="w-9 h-9 rounded-lg flex items-center justify-center text-lg flex-shrink-0"
-                        style={{ backgroundColor: cat.color + '20' }}
+                        style={{ backgroundColor: cat.color }}
                       >
                         {cat.icon}
                       </div>
@@ -154,28 +219,22 @@ export default function CategoriesView({ user }: { user: User }) {
                         <p className="text-sm font-medium">{cat.name}</p>
                         <p className="text-xs text-dark-400">{formatCurrency(totalSpent)} este mes</p>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-1 flex-shrink-0">
+                      {/* Only button: add subcategory */}
                       <button
-                        onClick={() => openForm(undefined, cat.id)}
-                        className="p-2 text-dark-400 hover:text-dark-200"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => { e.stopPropagation(); openForm(undefined, cat.id); }}
+                        className="p-2 text-dark-400 hover:text-dark-200 flex-shrink-0"
                         title="Agregar subcategoría"
                       >
-                        <FolderPlus size={14} />
-                      </button>
-                      <button onClick={() => openForm(cat)} className="p-2 text-dark-400 hover:text-dark-200">
-                        <Edit3 size={14} />
-                      </button>
-                      <button onClick={() => handleDelete(cat.id)} className="p-2 text-dark-400 hover:text-red-400">
-                        <Trash2 size={14} />
+                        <FolderPlus size={15} />
                       </button>
                     </div>
                   </div>
-                </div>
+                </SwipeableCatRow>
 
                 {/* Subcategories */}
                 {hasSubs && (
-                  <div className="border-t border-dark-700/50">
+                  <div className="bg-dark-800 border-t border-dark-700/50">
                     <div className="px-3.5 pt-2 pb-1">
                       <span className="text-[10px] uppercase tracking-wider text-dark-500 font-semibold">Subcategorías</span>
                     </div>
@@ -183,15 +242,16 @@ export default function CategoriesView({ user }: { user: User }) {
                       const subS = spending[sub.id] || 0;
                       const isLast = idx === cat.subcategories!.length - 1;
                       return (
-                        <div
+                        <SwipeableCatRow
                           key={sub.id}
-                          className={`flex items-center justify-between pl-5 pr-3.5 py-2.5 ${!isLast ? 'border-b border-dark-700/20' : ''}`}
+                          onEdit={() => openForm(sub)}
+                          onDelete={() => handleDelete(sub.id)}
                         >
-                          <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                          <div className={`flex items-center gap-2.5 pl-5 pr-3.5 py-2.5 ${!isLast ? 'border-b border-dark-700/20' : ''}`}>
                             <div className="text-dark-500 text-xs">└</div>
                             <div
                               className="w-7 h-7 rounded-md flex items-center justify-center text-sm flex-shrink-0"
-                              style={{ backgroundColor: (sub.color || cat.color) + '15' }}
+                              style={{ backgroundColor: sub.color || cat.color }}
                             >
                               {sub.icon}
                             </div>
@@ -200,15 +260,7 @@ export default function CategoriesView({ user }: { user: User }) {
                               <p className="text-xs text-dark-400">{formatCurrency(subS)}</p>
                             </div>
                           </div>
-                          <div className="flex items-center gap-1 flex-shrink-0">
-                            <button onClick={() => openForm(sub)} className="p-1.5 text-dark-400 hover:text-dark-200">
-                              <Edit3 size={13} />
-                            </button>
-                            <button onClick={() => handleDelete(sub.id)} className="p-1.5 text-dark-400 hover:text-red-400">
-                              <Trash2 size={13} />
-                            </button>
-                          </div>
-                        </div>
+                        </SwipeableCatRow>
                       );
                     })}
                   </div>
@@ -233,7 +285,6 @@ export default function CategoriesView({ user }: { user: User }) {
           </div>
 
           <div className="flex-1 overflow-y-auto px-5 pb-28">
-            {/* Preview */}
             <div className="flex items-center gap-4 py-5">
               <div
                 className="w-16 h-16 rounded-full flex items-center justify-center text-3xl flex-shrink-0 transition-colors"
@@ -254,7 +305,6 @@ export default function CategoriesView({ user }: { user: User }) {
               </div>
             </div>
 
-            {/* Color picker */}
             <div className="mb-5">
               <p className="text-xs text-dark-400 font-medium mb-2.5 uppercase tracking-wider">Color</p>
               <div className="flex gap-2 overflow-x-auto pb-2 -mx-5 px-5" style={{ scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' }}>
@@ -271,7 +321,6 @@ export default function CategoriesView({ user }: { user: User }) {
               </div>
             </div>
 
-            {/* Icon picker */}
             <div>
               <p className="text-xs text-dark-400 font-medium mb-2.5 uppercase tracking-wider">Ícono</p>
               <div className="grid grid-cols-6 gap-2">
@@ -280,9 +329,7 @@ export default function CategoriesView({ user }: { user: User }) {
                     key={ic}
                     onClick={() => setIcon(ic)}
                     className={`aspect-square rounded-xl flex items-center justify-center text-xl transition-all ${
-                      icon === ic
-                        ? 'bg-dark-600 ring-2 ring-brand-500'
-                        : 'bg-dark-800 hover:bg-dark-700'
+                      icon === ic ? 'bg-dark-600 ring-2 ring-brand-500' : 'bg-dark-800 hover:bg-dark-700'
                     }`}
                   >
                     {ic}
