@@ -44,6 +44,28 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
   const [showCurrencyPicker, setShowCurrencyPicker] = useState(false);
   const [saving, setSaving] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
+  const [btnBottom, setBtnBottom] = useState(0);
+
+  // Use visualViewport to position button above keyboard
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+
+    function update() {
+      if (!vv) return;
+      // visualViewport.height is the visible area (excluding keyboard)
+      // We position the button at the bottom of the visible area
+      const bottom = window.innerHeight - (vv.height + vv.offsetTop);
+      setBtnBottom(bottom > 50 ? bottom : 0);
+    }
+
+    vv.addEventListener('resize', update);
+    vv.addEventListener('scroll', update);
+    return () => {
+      vv.removeEventListener('resize', update);
+      vv.removeEventListener('scroll', update);
+    };
+  }, []);
 
   // Create category inline
   const [showCreateCategory, setShowCreateCategory] = useState(false);
@@ -266,8 +288,26 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
       </div>
 
       {/* ===== BOTTOM SECTION ===== */}
-      {isTyping ? (
-        /* Floating button pinned to bottom - iOS will push it above keyboard with interactive-widget=resizes-content */
+      {isTyping && btnBottom > 0 ? (
+        /* Floating button positioned above keyboard */
+        <div
+          className="fixed left-0 right-0 z-[70]"
+          style={{ bottom: `${btnBottom}px` }}
+        >
+          <button
+            onMouseDown={(e) => {
+              e.preventDefault();
+              handleSave();
+            }}
+            disabled={saving || !amountStr || parseFloat(amountStr) <= 0}
+            className="w-full py-4 font-bold text-base transition-all disabled:opacity-40"
+            style={{ backgroundColor: headerColor, color: 'white' }}
+          >
+            {saving ? 'Guardando...' : editingExpense ? 'Guardar cambios' : 'Agregar gasto'}
+          </button>
+        </div>
+      ) : isTyping ? (
+        /* Fallback when btnBottom not ready yet */
         <div className="fixed left-0 right-0 bottom-0 z-[70]">
           <button
             onMouseDown={(e) => {
