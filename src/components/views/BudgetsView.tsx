@@ -30,6 +30,23 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
   const [showCatPicker, setShowCatPicker] = useState(false);
   const [saving, setSaving] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
+  const [btnBottom, setBtnBottom] = useState(0);
+
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    function update() {
+      if (!vv) return;
+      const bottom = window.innerHeight - (vv.height + vv.offsetTop);
+      setBtnBottom(bottom > 50 ? bottom : 0);
+    }
+    vv.addEventListener('resize', update);
+    vv.addEventListener('scroll', update);
+    return () => {
+      vv.removeEventListener('resize', update);
+      vv.removeEventListener('scroll', update);
+    };
+  }, []);
 
   function handleNumpad(key: string) {
     if (key === 'backspace') {
@@ -364,10 +381,10 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
           </div>
 
           {/* Bottom: button + numpad or floating button */}
-          {isTyping ? (
+          {isTyping && btnBottom > 0 ? (
             <div
-              className="fixed left-0 right-0 bottom-0 z-[70]"
-              
+              className="fixed left-0 right-0 z-[70]"
+              style={{ bottom: `${btnBottom}px` }}
             >
               <button
                 onMouseDown={(e) => { e.preventDefault(); handleSave(); }}
