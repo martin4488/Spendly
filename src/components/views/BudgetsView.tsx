@@ -30,19 +30,6 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
   const [showCatPicker, setShowCatPicker] = useState(false);
   const [saving, setSaving] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
-
-  useEffect(() => {
-    const vv = window.visualViewport;
-    if (!vv) return;
-    function onResize() {
-      if (!vv) return;
-      const diff = window.innerHeight - vv.height;
-      setKeyboardHeight(diff > 50 ? diff : 0);
-    }
-    vv.addEventListener('resize', onResize);
-    return () => vv.removeEventListener('resize', onResize);
-  }, []);
 
   function handleNumpad(key: string) {
     if (key === 'backspace') {
@@ -379,8 +366,8 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
           {/* Bottom: button + numpad or floating button */}
           {isTyping ? (
             <div
-              className="fixed left-0 right-0 z-[70]"
-              style={{ bottom: keyboardHeight > 0 ? `${keyboardHeight}px` : '260px' }}
+              className="fixed left-0 right-0 bottom-0 z-[70]"
+              
             >
               <button
                 onMouseDown={(e) => { e.preventDefault(); handleSave(); }}
