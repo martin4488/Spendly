@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, getMonthRange, getYearRange } from '@/lib/utils';
-import { format, parseISO, subMonths } from 'date-fns';
+import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { Expense, Category } from '@/types';
 import { Plus, Trash2, ChevronRight, PieChart, Search, X } from 'lucide-react';
@@ -149,7 +149,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
 
   async function loadData() {
     try {
-      const startDate = format(subMonths(new Date(), 11), 'yyyy-MM-dd');
+      const startDate = `${new Date().getFullYear() - 2}-01-01`;
       const { data: exp } = await supabase
         .from('expenses')
         .select('*, category:categories(*)')
@@ -190,14 +190,14 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       })()
     : (() => {
         const data: { name: string; total: number; isCurrent: boolean }[] = [];
-        for (let m = 0; m < 12; m++) {
-          const d = new Date(now.getFullYear(), m, 1);
-          if (d > now) break;
-          const range = getMonthRange(d);
+        for (let i = 2; i >= 0; i--) {
+          const year = now.getFullYear() - i;
+          const start = `${year}-01-01`;
+          const end = `${year}-12-31`;
           const total = expenses
-            .filter(e => e.date >= range.start && e.date <= range.end)
+            .filter(e => e.date >= start && e.date <= end)
             .reduce((sum, e) => sum + Number(e.amount), 0);
-          data.push({ name: format(d, 'MMM', { locale: es }), total, isCurrent: m === now.getMonth() });
+          data.push({ name: String(year), total, isCurrent: i === 0 });
         }
         return data;
       })();
