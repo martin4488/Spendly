@@ -3,27 +3,22 @@
 import { useState, useEffect } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
-import { formatCurrency } from '@/lib/utils';
-import { Category, RecurringExpense } from '@/types';
-import { Plus, Edit3, Trash2, X, Pause, Play, FileText, CalendarOff, Delete } from 'lucide-react';
-import { format, parseISO } from 'date-fns';
-import { es } from 'date-fns/locale';
+import { formatCurrency, getMonthRange, CATEGORY_ICONS, CATEGORY_COLORS } from '@/lib/utils';
+import { Category } from '@/types';
+import { Plus, Edit3, Trash2, X, FolderPlus } from 'lucide-react';
 
-export default function RecurringView({ user }: { user: User }) {
-  const [items, setItems] = useState<RecurringExpense[]>([]);
+export default function CategoriesView({ user }: { user: User }) {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [parentId, setParentId] = useState<string | null>(null);
+  const [spending, setSpending] = useState<Record<string, number>>({});
 
-  // Form
-  const [amount, setAmount] = useState('');
-  const [description, setDescription] = useState('');
-  const [notes, setNotes] = useState('');
-  const [categoryId, setCategoryId] = useState('');
-  const [frequency, setFrequency] = useState<'weekly' | 'monthly' | 'yearly'>('monthly');
-  const [dayOfMonth, setDayOfMonth] = useState('1');
-  const [endDate, setEndDate] = useState('');
+  // Form state
+  const [name, setName] = useState('');
+  const [icon, setIcon] = useState('📦');
+  const [color, setColor] = useState('#22c55e');
   const [saving, setSaving] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [btnBottom, setBtnBottom] = useState(0);
@@ -44,83 +39,70 @@ export default function RecurringView({ user }: { user: User }) {
     };
   }, []);
 
-  function handleNumpad(key: string) {
-    if (key === 'backspace') {
-      setAmount(prev => prev.slice(0, -1));
-    } else if (key === '.') {
-      if (!amount.includes('.')) {
-        setAmount(prev => (prev || '0') + '.');
-      }
-    } else {
-      if (amount.includes('.')) {
-        const decimals = amount.split('.')[1];
-        if (decimals && decimals.length >= 2) return;
-      }
-      setAmount(prev => prev + key);
-    }
-  }
-
   useEffect(() => { loadData(); }, []);
 
   async function loadData() {
     setLoading(true);
-    const [{ data: rec }, { data: cats }] = await Promise.all([
-      supabase
-        .from('recurring_expenses')
-        .select('*, category:categories(*)')
-        .eq('user_id', user.id)
-        .order('description'),
+    const monthRange = getMonthRange();
+
+    const [{ data: cats }, { data: expenses }] = await Promise.all([
       supabase.from('categories').select('*').eq('user_id', user.id).order('name'),
+      supabase.from('expenses').select('amount, category_id').eq('user_id', user.id)
+        .gte('date', monthRange.start).lte('date', monthRange.end),
     ]);
-    setItems(rec || []);
-    setCategories(cats || []);
+
+    const spendMap: Record<string, number> = {};
+    expenses?.forEach(e => {
+      if (e.category_id) {
+        spendMap[e.category_id] = (spendMap[e.category_id] || 0) + Number(e.amount);
+      }
+    });
+    setSpending(spendMap);
+
+    if (cats) {
+      const parentCats = cats.filter(c => !c.parent_id).map(c => ({
+        ...c,
+        subcategories: cats.filter(sc => sc.parent_id === c.id),
+      }));
+      setCategories(parentCats);
+    }
     setLoading(false);
   }
 
-  function openForm(item?: RecurringExpense) {
-    if (item) {
-      setEditingId(item.id);
-      setAmount(String(item.amount));
-      setDescription(item.description);
-      setNotes(item.notes || '');
-      setCategoryId(item.category_id || '');
-      setFrequency(item.frequency);
-      setDayOfMonth(String(item.day_of_month));
-      setEndDate(item.end_date || '');
+  function openForm(category?: Category, asSubcategoryOf?: string) {
+    if (category) {
+      setEditingId(category.id);
+      setName(category.name);
+      setIcon(category.icon);
+      setColor(category.color);
+      setParentId(category.parent_id);
     } else {
       setEditingId(null);
-      setAmount('');
-      setDescription('');
-      setNotes('');
-      setCategoryId('');
-      setFrequency('monthly');
-      setDayOfMonth('1');
-      setEndDate('');
+      setName('');
+      setIcon('📦');
+      setColor(CATEGORY_COLORS[Math.floor(Math.random() * CATEGORY_COLORS.length)]);
+      setParentId(asSubcategoryOf || null);
     }
     setShowForm(true);
   }
 
   async function handleSave() {
-    if (!amount || !description) return;
+    if (!name) return;
     setSaving(true);
 
     const data = {
       user_id: user.id,
-      amount: parseFloat(amount),
-      description,
-      notes: notes || null,
-      category_id: categoryId || null,
-      frequency,
-      day_of_month: parseInt(dayOfMonth),
-      end_date: endDate || null,
-      is_active: true,
+      name,
+      icon,
+      color,
+      parent_id: parentId,
     };
 
     try {
       if (editingId) {
-        await supabase.from('recurring_expenses').update(data).eq('id', editingId);
+        await supabase.from('categories').update(data).eq('id', editingId);
       } else {
-        await supabase.from('recurring_expenses').insert(data);
+        await supabase.from('categories').insert(data);
       }
       setShowForm(false);
       loadData();
@@ -131,33 +113,17 @@ export default function RecurringView({ user }: { user: User }) {
     }
   }
 
-  async function toggleActive(id: string, current: boolean) {
-    await supabase.from('recurring_expenses').update({ is_active: !current }).eq('id', id);
-    loadData();
-  }
-
   async function handleDelete(id: string) {
-    if (confirm('¿Eliminar este gasto recurrente?')) {
-      await supabase.from('recurring_expenses').delete().eq('id', id);
+    if (confirm('¿Eliminar esta categoría? Los gastos asociados quedarán sin categoría.')) {
+      await supabase.from('categories').delete().eq('id', id);
       loadData();
     }
   }
 
-  const totalMonthly = items
-    .filter(i => i.is_active)
-    .reduce((sum, i) => {
-      if (i.frequency === 'monthly') return sum + Number(i.amount);
-      if (i.frequency === 'weekly') return sum + Number(i.amount) * 4.33;
-      if (i.frequency === 'yearly') return sum + Number(i.amount) / 12;
-      return sum;
-    }, 0);
-
-  const freqLabels: Record<string, string> = { weekly: 'Semanal', monthly: 'Mensual', yearly: 'Anual' };
-
   return (
-    <div className="px-4 pt-6 pb-24 max-w-lg mx-auto page-transition">
+    <div className="px-4 pt-6 pb-4 max-w-lg mx-auto page-transition">
       <div className="flex items-center justify-between mb-5">
-        <h1 className="text-xl font-bold">Gastos fijos</h1>
+        <h1 className="text-xl font-bold">Categorías</h1>
         <button
           onClick={() => openForm()}
           className="bg-brand-600 hover:bg-brand-500 text-white p-2.5 rounded-xl transition-colors shadow-lg shadow-brand-600/20"
@@ -166,187 +132,186 @@ export default function RecurringView({ user }: { user: User }) {
         </button>
       </div>
 
-      {/* Summary */}
-      <div className="bg-dark-800 rounded-xl p-4 mb-5">
-        <p className="text-dark-400 text-xs">Total mensual estimado</p>
-        <p className="text-2xl font-bold mt-1">{formatCurrency(totalMonthly)}</p>
-        <p className="text-dark-500 text-xs mt-1">{items.filter(i => i.is_active).length} gastos activos</p>
-      </div>
-
       {loading ? (
         <div className="flex justify-center py-10">
           <div className="w-7 h-7 border-2 border-brand-500/30 border-t-brand-500 rounded-full animate-spin" />
         </div>
-      ) : items.length === 0 ? (
+      ) : categories.length === 0 ? (
         <div className="text-center py-10">
-          <div className="text-5xl mb-4">🔄</div>
-          <p className="text-dark-300 font-medium">No tenés gastos fijos</p>
-          <p className="text-dark-500 text-sm mt-1">Agregá cosas como alquiler, Netflix, gym...</p>
+          <div className="text-5xl mb-4">📂</div>
+          <p className="text-dark-300 font-medium">No tenés categorías</p>
+          <p className="text-dark-500 text-sm mt-1">Crealas para organizar tus gastos</p>
           <button
             onClick={() => openForm()}
             className="mt-4 bg-brand-600 text-white text-sm font-medium px-5 py-2.5 rounded-xl"
           >
-            Agregar gasto fijo
+            Crear primera categoría
           </button>
         </div>
       ) : (
-        <div className="space-y-2">
-          {items.map((item) => (
-            <div
-              key={item.id}
-              className={`bg-dark-800 rounded-xl p-3.5 flex items-center justify-between ${!item.is_active ? 'opacity-50' : ''}`}
-            >
-              <div className="flex items-center gap-3 flex-1 min-w-0">
-                <span className="text-xl">{(item as any).category?.icon || '🔄'}</span>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium truncate">{item.description}</p>
-                  <p className="text-xs text-dark-400">
-                    {freqLabels[item.frequency]}
-                    {item.frequency !== 'weekly' && ` · Día ${item.day_of_month}`}
-                    {(item as any).category && ` · ${(item as any).category.name}`}
-                  </p>
-                  {item.end_date && (
-                    <p className="text-[10px] text-dark-500 mt-0.5">
-                      Hasta {format(parseISO(item.end_date), "d MMM yyyy", { locale: es })}
-                    </p>
-                  )}
+        <div className="space-y-3">
+          {categories.map((cat) => {
+            const catSpent = spending[cat.id] || 0;
+            const subSpent = (cat.subcategories || []).reduce((s, sc) => s + (spending[sc.id] || 0), 0);
+            const totalSpent = catSpent + subSpent;
+            const hasSubs = (cat.subcategories?.length || 0) > 0;
+
+            return (
+              <div key={cat.id} className="bg-dark-800 rounded-xl overflow-hidden">
+                {/* Parent category */}
+                <div className="p-3.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3 flex-1 min-w-0">
+                      <div
+                        className="w-9 h-9 rounded-lg flex items-center justify-center text-lg flex-shrink-0"
+                        style={{ backgroundColor: cat.color + '20' }}
+                      >
+                        {cat.icon}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium">{cat.name}</p>
+                        <p className="text-xs text-dark-400">{formatCurrency(totalSpent)} este mes</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <button
+                        onClick={() => openForm(undefined, cat.id)}
+                        className="p-2 text-dark-400 hover:text-dark-200"
+                        title="Agregar subcategoría"
+                      >
+                        <FolderPlus size={14} />
+                      </button>
+                      <button onClick={() => openForm(cat)} className="p-2 text-dark-400 hover:text-dark-200">
+                        <Edit3 size={14} />
+                      </button>
+                      <button onClick={() => handleDelete(cat.id)} className="p-2 text-dark-400 hover:text-red-400">
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
                 </div>
+
+                {/* Subcategories */}
+                {hasSubs && (
+                  <div className="border-t border-dark-700/50">
+                    <div className="px-3.5 pt-2 pb-1">
+                      <span className="text-[10px] uppercase tracking-wider text-dark-500 font-semibold">Subcategorías</span>
+                    </div>
+                    {cat.subcategories!.map((sub, idx) => {
+                      const subS = spending[sub.id] || 0;
+                      const isLast = idx === cat.subcategories!.length - 1;
+                      return (
+                        <div
+                          key={sub.id}
+                          className={`flex items-center justify-between pl-5 pr-3.5 py-2.5 ${!isLast ? 'border-b border-dark-700/20' : ''}`}
+                        >
+                          <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                            <div className="text-dark-500 text-xs">└</div>
+                            <div
+                              className="w-7 h-7 rounded-md flex items-center justify-center text-sm flex-shrink-0"
+                              style={{ backgroundColor: (sub.color || cat.color) + '15' }}
+                            >
+                              {sub.icon}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-medium text-dark-200">{sub.name}</p>
+                              <p className="text-xs text-dark-400">{formatCurrency(subS)}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1 flex-shrink-0">
+                            <button onClick={() => openForm(sub)} className="p-1.5 text-dark-400 hover:text-dark-200">
+                              <Edit3 size={13} />
+                            </button>
+                            <button onClick={() => handleDelete(sub.id)} className="p-1.5 text-dark-400 hover:text-red-400">
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
-                <span className="text-sm font-bold">{formatCurrency(Number(item.amount))}</span>
-                <button
-                  onClick={() => toggleActive(item.id, item.is_active)}
-                  className={`p-1.5 rounded-lg ${item.is_active ? 'text-brand-400' : 'text-dark-500'}`}
-                >
-                  {item.is_active ? <Pause size={14} /> : <Play size={14} />}
-                </button>
-                <button onClick={() => openForm(item)} className="p-1.5 text-dark-400 hover:text-dark-200">
-                  <Edit3 size={14} />
-                </button>
-                <button onClick={() => handleDelete(item.id)} className="p-1.5 text-dark-400 hover:text-red-400">
-                  <Trash2 size={14} />
-                </button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
-      {/* Form Modal - Fullscreen */}
+      {/* Form Modal */}
       {showForm && (
         <div className="fixed inset-0 bg-dark-900 z-[60] flex flex-col slide-up">
-          <div className="flex items-center justify-between px-4 pt-5 pb-3 flex-shrink-0">
+          <div className="flex items-center justify-between px-4 pt-5 pb-3">
             <button onClick={() => setShowForm(false)} className="p-1 text-dark-400 hover:text-white">
               <X size={24} />
             </button>
-            <h2 className="text-base font-bold">{editingId ? 'Editar gasto fijo' : 'Nuevo gasto fijo'}</h2>
+            <h2 className="text-base font-bold">
+              {editingId ? 'Editar categoría' : parentId ? 'Nueva subcategoría' : 'Crear categoría'}
+            </h2>
             <div className="w-8" />
           </div>
 
-          {/* Amount display */}
-          <div className="px-5 py-4 flex-shrink-0 border-b border-dark-800">
-            <p className="text-xs text-dark-400 font-medium mb-1">Monto *</p>
-            <p className="text-3xl font-extrabold text-white">{amount || '0'}</p>
-          </div>
-
-          {/* Scrollable form fields */}
-          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-            <div>
-              <label className="text-xs text-dark-400 font-medium mb-1.5 block">Descripción *</label>
-              <div className="relative">
-                <FileText size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-dark-400" />
-                <input
-                  type="text"
-                  placeholder="Ej: Alquiler, Netflix, Gym..."
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  onFocus={() => setIsTyping(true)}
-                  onBlur={() => setIsTyping(false)}
-                  className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 pl-9 pr-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="text-xs text-dark-400 font-medium mb-1.5 block">Categoría</label>
-              <select
-                value={categoryId}
-                onChange={(e) => setCategoryId(e.target.value)}
-                className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors appearance-none"
+          <div className="flex-1 overflow-y-auto px-5 pb-28">
+            {/* Preview */}
+            <div className="flex items-center gap-4 py-5">
+              <div
+                className="w-16 h-16 rounded-full flex items-center justify-center text-3xl flex-shrink-0 transition-colors"
+                style={{ backgroundColor: color }}
               >
-                <option value="">Sin categoría</option>
-                {categories.map((cat) => (
-                  <option key={cat.id} value={cat.id}>{cat.icon} {cat.name}</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs text-dark-400 font-medium mb-1.5 block">Frecuencia</label>
-                <select
-                  value={frequency}
-                  onChange={(e) => setFrequency(e.target.value as any)}
-                  className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors appearance-none"
-                >
-                  <option value="weekly">Semanal</option>
-                  <option value="monthly">Mensual</option>
-                  <option value="yearly">Anual</option>
-                </select>
+                {icon}
               </div>
-              <div>
-                <label className="text-xs text-dark-400 font-medium mb-1.5 block">Día del mes</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="28"
-                  value={dayOfMonth}
-                  onChange={(e) => setDayOfMonth(e.target.value)}
-                  className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors"
-                />
+              <div
+                contentEditable
+                suppressContentEditableWarning
+                onInput={(e) => setName((e.target as HTMLDivElement).textContent || '')}
+                onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }}
+                onFocus={() => setIsTyping(true)}
+                onBlur={() => setIsTyping(false)}
+                data-placeholder="Nombre de categoría"
+                className="flex-1 text-lg font-semibold focus:outline-none border-b border-dark-700 pb-2 empty:before:content-[attr(data-placeholder)] empty:before:text-dark-500 min-h-[28px]"
+                role="textbox"
+              >
+                {editingId ? name : ''}
               </div>
             </div>
 
-            {/* End date (optional) */}
-            <div>
-              <label className="text-xs text-dark-400 font-medium mb-1.5 flex items-center gap-1.5">
-                <CalendarOff size={12} />
-                Fecha de finalización (opcional)
-              </label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="date"
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  className="flex-1 bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors"
-                />
-                {endDate && (
+            {/* Color picker */}
+            <div className="mb-5">
+              <p className="text-xs text-dark-400 font-medium mb-2.5 uppercase tracking-wider">Color</p>
+              <div className="flex gap-2 overflow-x-auto pb-2 -mx-5 px-5" style={{ scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' }}>
+                {CATEGORY_COLORS.map((c) => (
                   <button
-                    onClick={() => setEndDate('')}
-                    className="p-2.5 bg-dark-800 border border-dark-700 rounded-xl text-dark-400 hover:text-red-400 transition-colors"
-                  >
-                    <X size={16} />
-                  </button>
-                )}
+                    key={c}
+                    onClick={() => setColor(c)}
+                    className={`w-8 h-8 rounded-full flex-shrink-0 transition-all ${
+                      color === c ? 'ring-2 ring-white ring-offset-2 ring-offset-dark-900 scale-110' : ''
+                    }`}
+                    style={{ backgroundColor: c }}
+                  />
+                ))}
               </div>
-              {!endDate && (
-                <p className="text-[10px] text-dark-500 mt-1">Sin fecha = se repite indefinidamente</p>
-              )}
             </div>
 
+            {/* Icon picker */}
             <div>
-              <label className="text-xs text-dark-400 font-medium mb-1.5 block">Notas (opcional)</label>
-              <textarea
-                placeholder="Algún detalle extra..."
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                rows={2}
-                className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors resize-none"
-              />
+              <p className="text-xs text-dark-400 font-medium mb-2.5 uppercase tracking-wider">Ícono</p>
+              <div className="grid grid-cols-6 gap-2">
+                {CATEGORY_ICONS.map((ic) => (
+                  <button
+                    key={ic}
+                    onClick={() => setIcon(ic)}
+                    className={`aspect-square rounded-xl flex items-center justify-center text-xl transition-all ${
+                      icon === ic
+                        ? 'bg-dark-600 ring-2 ring-brand-500'
+                        : 'bg-dark-800 hover:bg-dark-700'
+                    }`}
+                  >
+                    {ic}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
-          {/* Bottom: button + numpad or floating button */}
           {isTyping && btnBottom > 0 ? (
             <div
               className="fixed left-0 right-0 z-[70]"
@@ -354,43 +319,23 @@ export default function RecurringView({ user }: { user: User }) {
             >
               <button
                 onMouseDown={(e) => { e.preventDefault(); handleSave(); }}
-                disabled={saving || !amount || !description}
-                className="w-full bg-brand-600 hover:bg-brand-500 disabled:opacity-30 text-white font-bold py-4 transition-all text-base"
+                disabled={saving || !name}
+                className="w-full py-4 font-bold text-base transition-all disabled:opacity-30"
+                style={{ backgroundColor: color, color: 'white' }}
               >
-                {saving ? 'Guardando...' : editingId ? 'Guardar cambios' : 'Agregar gasto fijo'}
+                {saving ? 'Guardando...' : editingId ? 'Guardar cambios' : 'Crear categoría'}
               </button>
             </div>
           ) : (
-            <div className="flex-shrink-0">
-              <div className="px-5 py-3">
-                <button
-                  onClick={handleSave}
-                  disabled={saving || !amount || !description}
-                  className="w-full bg-brand-600 hover:bg-brand-500 disabled:opacity-30 text-white font-bold py-4 rounded-2xl transition-all text-base"
-                >
-                  {saving ? 'Guardando...' : editingId ? 'Guardar cambios' : 'Agregar gasto fijo'}
-                </button>
-              </div>
-              <div className="border-t border-dark-700">
-                <div className="grid grid-cols-3">
-                  {['1','2','3','4','5','6','7','8','9','.','0','backspace'].map((key) => {
-                    const isDel = key === 'backspace';
-                    return (
-                      <button
-                        key={key}
-                        onClick={() => {
-                          if (isDel) handleNumpad('backspace');
-                          else handleNumpad(key);
-                        }}
-                        className="py-[14px] text-center text-xl font-medium border-b border-r border-dark-800 active:bg-dark-700 transition-colors bg-dark-900 text-white"
-                      >
-                        {isDel ? <span className="flex items-center justify-center"><Delete size={22} /></span> : key}
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="h-[env(safe-area-inset-bottom)]" />
-              </div>
+            <div className="px-4 py-4 bg-dark-900 border-t border-dark-800">
+              <button
+                onClick={handleSave}
+                disabled={saving || !name}
+                className="w-full py-4 rounded-2xl font-bold text-base transition-all disabled:opacity-30"
+                style={{ backgroundColor: color, color: 'white' }}
+              >
+                {saving ? 'Guardando...' : editingId ? 'Guardar cambios' : 'Crear categoría'}
+              </button>
             </div>
           )}
         </div>
