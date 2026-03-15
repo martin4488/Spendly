@@ -8,7 +8,6 @@ import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { Expense, Category } from '@/types';
 import { Plus, Trash2, ChevronRight, PieChart, Search, X } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, CartesianGrid, ReferenceLine } from 'recharts';
 import AddExpenseModal from '@/components/AddExpenseModal';
 import type { CurrencyCode } from '@/lib/currency';
 
@@ -17,6 +16,94 @@ type ViewMode = 'months' | 'years';
 function formatCompact(value: number): string {
   if (value >= 1000) return `${(value / 1000).toFixed(1)}k`;
   return String(Math.round(value));
+}
+
+// ── Custom chart matching Wallet iOS style ────────────────────────────────────
+function WalletChart({
+  data,
+  formatValue,
+}: {
+  data: { name: string; year: string; total: number; isCurrent: boolean }[];
+  formatValue: (v: number) => string;
+}) {
+  const W = 340; // viewBox width
+  const H = 130; // viewBox height
+  const padL = 4;
+  const padR = 4;
+  const padTop = 24; // space for top label
+  const padBottom = 32; // space for x-axis labels
+  const plotH = H - padTop - padBottom;
+  const plotW = W - padL - padR;
+
+  const maxVal = Math.max(...data.map(d => d.total), 1);
+  const midVal = maxVal / 2;
+  const topVal = maxVal * 1.05; // slight headroom
+
+  const toY = (v: number) => padTop + plotH - (v / topVal) * plotH;
+  const baseY = toY(0);
+  const midY = toY(midVal);
+  const topY = toY(topVal);
+
+  const n = data.length;
+  const slotW = plotW / n;
+  const barW = slotW * 0.28; // thin bars like Wallet
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} style={{ display: 'block' }}>
+      {/* Top dashed line + label */}
+      <line x1={padL} y1={topY} x2={W - padR} y2={topY} stroke="#2d3f55" strokeDasharray="3 3" strokeWidth={1} />
+      <text x={padL + 2} y={topY - 3} fill="#64748b" fontSize={10}>{formatCompact(topVal)}</text>
+
+      {/* Mid dashed line + label */}
+      <line x1={padL} y1={midY} x2={W - padR} y2={midY} stroke="#2d3f55" strokeDasharray="3 3" strokeWidth={1} />
+      <text x={padL + 2} y={midY - 3} fill="#64748b" fontSize={10}>{formatCompact(midVal)}</text>
+
+      {/* Zero dashed line + label */}
+      <line x1={padL} y1={baseY} x2={W - padR} y2={baseY} stroke="#2d3f55" strokeDasharray="3 3" strokeWidth={1} />
+      <text x={padL + 2} y={baseY - 3} fill="#64748b" fontSize={10}>0</text>
+
+      {/* Solid baseline */}
+      <line x1={padL} y1={baseY} x2={W - padR} y2={baseY} stroke="#3d5068" strokeWidth={1.5} />
+
+      {/* Bars + x labels */}
+      {data.map((entry, i) => {
+        const cx = padL + i * slotW + slotW / 2;
+        const barH = Math.max((entry.total / topVal) * plotH, entry.total > 0 ? 2 : 0);
+        const barX = cx - barW / 2;
+        const barY = baseY - barH;
+        return (
+          <g key={i}>
+            {/* Bar */}
+            <rect
+              x={barX}
+              y={barY}
+              width={barW}
+              height={barH}
+              rx={2}
+              fill={entry.isCurrent ? '#ef4444' : 'rgba(239,68,68,0.18)'}
+            />
+            {/* Month label */}
+            <text
+              x={cx}
+              y={baseY + 13}
+              textAnchor="middle"
+              fill={entry.isCurrent ? '#94a3b8' : '#64748b'}
+              fontSize={11}
+              fontWeight={entry.isCurrent ? 600 : 400}
+            >
+              {entry.name}
+            </text>
+            {/* Year label (only for months mode) */}
+            {entry.year && (
+              <text x={cx} y={baseY + 24} textAnchor="middle" fill="#475569" fontSize={9}>
+                {entry.year}
+              </text>
+            )}
+          </g>
+        );
+      })}
+    </svg>
+  );
 }
 
 // ─── Swipeable expense row ────────────────────────────────────────────────────
@@ -202,9 +289,6 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
         return data;
       })();
 
-  const chartMax = Math.max(...chartData.map(d => d.total), 1);
-  const chartMid = chartMax / 2;
-
   const displayExpenses = viewMode === 'months' ? currentMonthExp : currentYearExp;
   const filteredExpenses = searchQuery
     ? displayExpenses.filter(e =>
@@ -322,46 +406,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       {/* Bar chart */}
       {!showSearch && (
         <div className="px-3 mb-0">
-          <ResponsiveContainer width="100%" height={110}>
-            <BarChart data={chartData} barCategoryGap="55%" margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
-              <CartesianGrid horizontal={true} vertical={false} strokeDasharray="3 3" stroke="#2d3f55" />
-              <ReferenceLine y={chartMid} stroke="#2d3f55" strokeDasharray="3 3" />
-              <XAxis
-                dataKey="name"
-                axisLine={false}
-                tickLine={false}
-                interval={0}
-                tick={(props) => {
-                  const { x, y, payload, index } = props;
-                  const entry = chartData[index];
-                  return (
-                    <g transform={`translate(${x},${y})`}>
-                      <text x={0} y={0} dy={10} textAnchor="middle" fill={entry?.isCurrent ? '#94a3b8' : '#64748b'} fontSize={8} fontWeight={entry?.isCurrent ? 600 : 400}>
-                        {payload.value}
-                      </text>
-                      {entry?.year && (
-                        <text x={0} y={0} dy={19} textAnchor="middle" fill="#475569" fontSize={7}>
-                          {entry.year}
-                        </text>
-                      )}
-                    </g>
-                  );
-                }}
-                height={28}
-              />
-              <YAxis axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 8 }} tickFormatter={formatCompact} width={28} tickCount={3} />
-              <Tooltip
-                contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px', color: '#f1f5f9', fontSize: '11px', padding: '4px 8px' }}
-                formatter={(value: number) => [formatCurrency(value), '']}
-                labelStyle={{ color: '#94a3b8', fontSize: '9px' }}
-              />
-              <Bar dataKey="total" radius={[2, 2, 0, 0]}>
-                {chartData.map((entry, i) => (
-                  <Cell key={i} fill={entry.isCurrent ? '#ef4444' : 'rgba(239,68,68,0.15)'} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+          <WalletChart data={chartData} formatValue={formatCurrency} />
         </div>
       )}
 
