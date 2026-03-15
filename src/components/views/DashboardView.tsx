@@ -324,8 +324,8 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
         <div className="px-3 mb-0">
           <ResponsiveContainer width="100%" height={110}>
             <BarChart data={chartData} barCategoryGap="55%" margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
-              <CartesianGrid horizontal={true} vertical={false} strokeDasharray="3 3" stroke="#1e293b" />
-              <ReferenceLine y={chartMid} stroke="#334155" strokeDasharray="3 3" />
+              <CartesianGrid horizontal={true} vertical={false} strokeDasharray="3 3" stroke="#2d3f55" />
+              <ReferenceLine y={chartMid} stroke="#2d3f55" strokeDasharray="3 3" />
               <XAxis
                 dataKey="name"
                 axisLine={false}
@@ -336,11 +336,11 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
                   const entry = chartData[index];
                   return (
                     <g transform={`translate(${x},${y})`}>
-                      <text x={0} y={0} dy={10} textAnchor="middle" fill="#475569" fontSize={8} fontWeight={entry?.isCurrent ? 600 : 400}>
+                      <text x={0} y={0} dy={10} textAnchor="middle" fill={entry?.isCurrent ? '#94a3b8' : '#64748b'} fontSize={8} fontWeight={entry?.isCurrent ? 600 : 400}>
                         {payload.value}
                       </text>
                       {entry?.year && (
-                        <text x={0} y={0} dy={19} textAnchor="middle" fill="#334155" fontSize={7}>
+                        <text x={0} y={0} dy={19} textAnchor="middle" fill="#475569" fontSize={7}>
                           {entry.year}
                         </text>
                       )}
@@ -349,7 +349,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
                 }}
                 height={28}
               />
-              <YAxis axisLine={false} tickLine={false} tick={{ fill: '#334155', fontSize: 8 }} tickFormatter={formatCompact} width={28} tickCount={3} />
+              <YAxis axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 8 }} tickFormatter={formatCompact} width={28} tickCount={3} />
               <Tooltip
                 contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px', color: '#f1f5f9', fontSize: '11px', padding: '4px 8px' }}
                 formatter={(value: number) => [formatCurrency(value), '']}
