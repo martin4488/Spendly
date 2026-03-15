@@ -44,28 +44,6 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
   const [showCurrencyPicker, setShowCurrencyPicker] = useState(false);
   const [saving, setSaving] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
-  const [btnBottom, setBtnBottom] = useState(0);
-
-  // Use visualViewport to position button above keyboard
-  useEffect(() => {
-    const vv = window.visualViewport;
-    if (!vv) return;
-
-    function update() {
-      if (!vv) return;
-      // visualViewport.height is the visible area (excluding keyboard)
-      // We position the button at the bottom of the visible area
-      const bottom = window.innerHeight - (vv.height + vv.offsetTop);
-      setBtnBottom(bottom > 50 ? bottom : 0);
-    }
-
-    vv.addEventListener('resize', update);
-    vv.addEventListener('scroll', update);
-    return () => {
-      vv.removeEventListener('resize', update);
-      vv.removeEventListener('scroll', update);
-    };
-  }, []);
 
   // Create category inline
   const [showCreateCategory, setShowCreateCategory] = useState(false);
@@ -243,24 +221,26 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
 
       {/* ===== FORM FIELDS (scrollable middle) ===== */}
       <div className="flex-1 overflow-y-auto">
-        {/* Date */}
-        <button
-          onClick={() => setShowDatePicker(!showDatePicker)}
-          className="flex items-center gap-3 px-5 py-4 border-b border-dark-800 w-full"
-        >
-          <Calendar size={18} className="text-dark-400" />
-          <span className="text-sm font-medium flex-1 text-left capitalize">{dateLabel}</span>
-          {date === today && (
-            <span
-              onClick={(e) => { e.stopPropagation(); setDate(yesterday); }}
-              className="text-xs text-dark-500 border border-dashed border-dark-600 rounded-full px-3 py-1"
-            >
-              Ayer?
-            </span>
-          )}
-        </button>
+        {/* Date - hidden when typing to prevent Safari toolbar */}
+        {!isTyping && (
+          <button
+            onClick={() => setShowDatePicker(!showDatePicker)}
+            className="flex items-center gap-3 px-5 py-4 border-b border-dark-800 w-full"
+          >
+            <Calendar size={18} className="text-dark-400" />
+            <span className="text-sm font-medium flex-1 text-left capitalize">{dateLabel}</span>
+            {date === today && (
+              <span
+                onClick={(e) => { e.stopPropagation(); setDate(yesterday); }}
+                className="text-xs text-dark-500 border border-dashed border-dark-600 rounded-full px-3 py-1"
+              >
+                Ayer?
+              </span>
+            )}
+          </button>
+        )}
 
-        {showDatePicker && (
+        {showDatePicker && !isTyping && (
           <div className="px-5 py-3 border-b border-dark-800 bg-dark-800/50">
             <input
               type="date"
@@ -281,41 +261,22 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
             onChange={(e) => setDescription(e.target.value)}
             onFocus={() => setIsTyping(true)}
             onBlur={() => setIsTyping(false)}
-            enterKeyHint="done"
             className="flex-1 bg-transparent text-sm placeholder:text-dark-500 focus:outline-none"
           />
         </div>
       </div>
 
       {/* ===== BOTTOM SECTION ===== */}
-      {isTyping && btnBottom > 0 ? (
-        /* Floating button positioned to cover keyboard toolbar */
-        <div
-          className="fixed left-0 right-0 z-[70]"
-          style={{ bottom: `${btnBottom - 44}px` }}
-        >
+      {isTyping ? (
+        /* When typing: simple button above keyboard, no toolbar because only 1 input visible */
+        <div className="flex-shrink-0 px-5 py-3">
           <button
             onMouseDown={(e) => {
               e.preventDefault();
               handleSave();
             }}
             disabled={saving || !amountStr || parseFloat(amountStr) <= 0}
-            className="w-full pt-4 pb-[60px] font-bold text-base transition-all disabled:opacity-40"
-            style={{ backgroundColor: headerColor, color: 'white' }}
-          >
-            {saving ? 'Guardando...' : editingExpense ? 'Guardar cambios' : 'Agregar gasto'}
-          </button>
-        </div>
-      ) : isTyping ? (
-        /* Fallback when btnBottom not ready yet */
-        <div className="fixed left-0 right-0 bottom-0 z-[70]">
-          <button
-            onMouseDown={(e) => {
-              e.preventDefault();
-              handleSave();
-            }}
-            disabled={saving || !amountStr || parseFloat(amountStr) <= 0}
-            className="w-full py-4 font-bold text-base transition-all disabled:opacity-40"
+            className="w-full py-4 rounded-2xl font-bold text-base transition-all disabled:opacity-40"
             style={{ backgroundColor: headerColor, color: 'white' }}
           >
             {saving ? 'Guardando...' : editingExpense ? 'Guardar cambios' : 'Agregar gasto'}
