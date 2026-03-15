@@ -21,19 +21,6 @@ export default function CategoriesView({ user }: { user: User }) {
   const [color, setColor] = useState('#22c55e');
   const [saving, setSaving] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
-
-  useEffect(() => {
-    const vv = window.visualViewport;
-    if (!vv) return;
-    function onResize() {
-      if (!vv) return;
-      const diff = window.innerHeight - vv.height;
-      setKeyboardHeight(diff > 50 ? diff : 0);
-    }
-    vv.addEventListener('resize', onResize);
-    return () => vv.removeEventListener('resize', onResize);
-  }, []);
 
   useEffect(() => { loadData(); }, []);
 
@@ -310,8 +297,8 @@ export default function CategoriesView({ user }: { user: User }) {
 
           {isTyping ? (
             <div
-              className="fixed left-0 right-0 z-[70]"
-              style={{ bottom: keyboardHeight > 0 ? `${keyboardHeight}px` : '260px' }}
+              className="fixed left-0 right-0 bottom-0 z-[70]"
+              
             >
               <button
                 onMouseDown={(e) => { e.preventDefault(); handleSave(); }}
