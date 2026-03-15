@@ -7,7 +7,7 @@ import { formatCurrency, getMonthRange, getYearRange } from '@/lib/utils';
 import { format, parseISO, subMonths } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { Expense, Category } from '@/types';
-import { Plus, Trash2, Edit3, ChevronRight, PieChart, Search, X } from 'lucide-react';
+import { Plus, Trash2, ChevronRight, PieChart, Search, X } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, CartesianGrid } from 'recharts';
 import AddExpenseModal from '@/components/AddExpenseModal';
 import type { CurrencyCode } from '@/lib/currency';
@@ -18,6 +18,116 @@ function formatCompact(value: number): string {
   if (value >= 1000) return `${(value / 1000).toFixed(1)}k`;
   return String(Math.round(value));
 }
+
+// ─── Swipeable expense row ────────────────────────────────────────────────────
+function SwipeableExpenseRow({
+  expense,
+  onEdit,
+  onDelete,
+}: {
+  expense: Expense;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const [offset, setOffset] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
+  const startXRef = useRef<number | null>(null);
+  const currentXRef = useRef<number>(0);
+  const DELETE_THRESHOLD = 72; // px – how far you need to swipe to reveal the button
+  const SNAP_THRESHOLD = 36;   // px – snap open if you've swiped past this
+
+  const cat = (expense as any).category;
+
+  // ── touch handlers ──────────────────────────────────────────────────────────
+  function onTouchStart(e: React.TouchEvent) {
+    startXRef.current = e.touches[0].clientX;
+    setIsDragging(false);
+  }
+
+  function onTouchMove(e: React.TouchEvent) {
+    if (startXRef.current === null) return;
+    const dx = startXRef.current - e.touches[0].clientX; // positive = swipe left
+    if (dx > 5) setIsDragging(true);
+    if (dx > 0) {
+      currentXRef.current = Math.min(dx, DELETE_THRESHOLD);
+      setOffset(currentXRef.current);
+    } else if (dx < 0 && offset > 0) {
+      // swiping back right
+      currentXRef.current = Math.max(0, offset + dx);
+      setOffset(currentXRef.current);
+    }
+  }
+
+  function onTouchEnd() {
+    if (currentXRef.current > SNAP_THRESHOLD) {
+      setOffset(DELETE_THRESHOLD); // snap open
+    } else {
+      setOffset(0); // snap closed
+    }
+    startXRef.current = null;
+  }
+
+  function handleRowClick() {
+    if (isDragging) return; // ignore tap if we were swiping
+    if (offset > 0) {
+      setOffset(0); // close swipe on tap
+    } else {
+      onEdit();
+    }
+  }
+
+  return (
+    <div className="relative overflow-hidden border-b border-dark-800/40">
+      {/* Red delete button revealed underneath */}
+      <div
+        className="absolute right-0 top-0 bottom-0 flex items-center justify-center bg-red-500"
+        style={{ width: DELETE_THRESHOLD }}
+      >
+        <button
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          className="flex flex-col items-center justify-center w-full h-full gap-1 active:bg-red-600 transition-colors"
+        >
+          <Trash2 size={18} className="text-white" />
+          <span className="text-[10px] text-white font-medium">Borrar</span>
+        </button>
+      </div>
+
+      {/* Foreground row */}
+      <div
+        className="flex items-center gap-3.5 px-4 py-3 bg-dark-900 active:bg-dark-800/60 transition-colors cursor-pointer select-none"
+        style={{
+          transform: `translateX(-${offset}px)`,
+          transition: isDragging ? 'none' : 'transform 0.2s ease',
+        }}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+        onClick={handleRowClick}
+      >
+        <div
+          className="w-11 h-11 rounded-full flex items-center justify-center text-lg flex-shrink-0"
+          style={{ backgroundColor: cat?.color ? cat.color + '30' : '#47556930' }}
+        >
+          {cat?.icon || '💵'}
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <p className="text-[13px] font-semibold truncate">{expense.description}</p>
+          <p className="text-[11px] text-dark-500 mt-0.5">
+            {cat?.name || 'Sin categoría'}
+            {expense.is_recurring && ' · 🔄'}
+          </p>
+        </div>
+
+        <span className="text-[13px] font-bold text-red-400 flex-shrink-0">
+          -{formatCurrency(Number(expense.amount))}
+        </span>
+      </div>
+    </div>
+  );
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function DashboardView({ user, onNavigate, defaultCurrency }: { user: User; onNavigate: (tab: any) => void; defaultCurrency: CurrencyCode }) {
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -65,7 +175,6 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     ? currentMonthExp.reduce((sum, e) => sum + Number(e.amount), 0)
     : currentYearExp.reduce((sum, e) => sum + Number(e.amount), 0);
 
-  // Chart data
   const chartData = viewMode === 'months'
     ? (() => {
         const data: { name: string; total: number; isCurrent: boolean }[] = [];
@@ -75,11 +184,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
           const total = expenses
             .filter(e => e.date >= range.start && e.date <= range.end)
             .reduce((sum, e) => sum + Number(e.amount), 0);
-          data.push({
-            name: format(d, 'MMM\nyyyy', { locale: es }),
-            total,
-            isCurrent: i === 0,
-          });
+          data.push({ name: format(d, 'MMM\nyyyy', { locale: es }), total, isCurrent: i === 0 });
         }
         return data;
       })()
@@ -92,20 +197,11 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
           const total = expenses
             .filter(e => e.date >= range.start && e.date <= range.end)
             .reduce((sum, e) => sum + Number(e.amount), 0);
-          data.push({
-            name: format(d, 'MMM', { locale: es }),
-            total,
-            isCurrent: m === now.getMonth(),
-          });
+          data.push({ name: format(d, 'MMM', { locale: es }), total, isCurrent: m === now.getMonth() });
         }
         return data;
       })();
 
-  // Calculate nice reference lines
-  const maxVal = Math.max(...chartData.map(d => d.total), 1);
-  const midVal = maxVal / 2;
-
-  // Filter + group by day
   const displayExpenses = viewMode === 'months' ? currentMonthExp : currentYearExp;
   const filteredExpenses = searchQuery
     ? displayExpenses.filter(e =>
@@ -160,7 +256,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
 
   return (
     <div className="max-w-lg mx-auto page-transition">
-      {/* Top bar with search */}
+      {/* Top bar */}
       {showSearch ? (
         <div className="flex items-center gap-2 px-4 pt-6 pb-2">
           <div className="flex-1 relative">
@@ -174,24 +270,18 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
               className="w-full bg-dark-800 border border-dark-700 rounded-full py-2 pl-9 pr-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-dark-500 transition-colors"
             />
           </div>
-          <button
-            onClick={() => { setShowSearch(false); setSearchQuery(''); }}
-            className="p-2 text-dark-400"
-          >
+          <button onClick={() => { setShowSearch(false); setSearchQuery(''); }} className="p-2 text-dark-400">
             <X size={20} />
           </button>
         </div>
       ) : (
         <div className="relative pt-8 pb-3 text-center">
-          {/* Search icon top right */}
           <button
             onClick={() => setShowSearch(true)}
             className="absolute top-7 right-4 p-2 text-dark-400 hover:text-dark-200 transition-colors"
           >
             <Search size={20} />
           </button>
-
-          {/* Total */}
           <p className="text-[2rem] font-extrabold tracking-tight">
             -{formatCurrency(accumulatedTotal)}
           </p>
@@ -204,7 +294,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
         </div>
       )}
 
-      {/* Toggle months/years */}
+      {/* Toggle */}
       <div className="flex justify-center mb-4">
         <div className="inline-flex bg-dark-800 rounded-full p-0.5">
           <button
@@ -231,45 +321,17 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
         <div className="px-4 mb-1">
           <ResponsiveContainer width="100%" height={150}>
             <BarChart data={chartData} barCategoryGap={viewMode === 'years' ? '12%' : '18%'}>
-              <CartesianGrid
-                horizontal={true}
-                vertical={false}
-                strokeDasharray="4 4"
-                stroke="#334155"
-              />
-              <XAxis
-                dataKey="name"
-                axisLine={false}
-                tickLine={false}
-                tick={{ fill: '#64748b', fontSize: 9 }}
-                interval={0}
-              />
-              <YAxis
-                axisLine={false}
-                tickLine={false}
-                tick={{ fill: '#475569', fontSize: 9 }}
-                tickFormatter={formatCompact}
-                width={35}
-                tickCount={3}
-              />
+              <CartesianGrid horizontal={true} vertical={false} strokeDasharray="4 4" stroke="#334155" />
+              <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 9 }} interval={0} />
+              <YAxis axisLine={false} tickLine={false} tick={{ fill: '#475569', fontSize: 9 }} tickFormatter={formatCompact} width={35} tickCount={3} />
               <Tooltip
-                contentStyle={{
-                  backgroundColor: '#1e293b',
-                  border: '1px solid #334155',
-                  borderRadius: '10px',
-                  color: '#f1f5f9',
-                  fontSize: '12px',
-                  padding: '6px 10px',
-                }}
+                contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '10px', color: '#f1f5f9', fontSize: '12px', padding: '6px 10px' }}
                 formatter={(value: number) => [formatCurrency(value), '']}
                 labelStyle={{ color: '#94a3b8', fontSize: '10px' }}
               />
               <Bar dataKey="total" radius={[3, 3, 0, 0]}>
                 {chartData.map((entry, i) => (
-                  <Cell
-                    key={i}
-                    fill={entry.isCurrent ? '#ef4444' : 'rgba(239,68,68,0.15)'}
-                  />
+                  <Cell key={i} fill={entry.isCurrent ? '#ef4444' : 'rgba(239,68,68,0.15)'} />
                 ))}
               </Bar>
             </BarChart>
@@ -291,7 +353,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
         </div>
       )}
 
-      {/* Search results indicator */}
+      {/* Search results */}
       {searchQuery && (
         <div className="px-4 py-2">
           <p className="text-xs text-dark-400">
@@ -315,48 +377,20 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
         ) : (
           groupedByDay.map((group) => (
             <div key={group.date}>
+              {/* Day header */}
               <div className="flex items-center justify-between px-4 py-2 bg-dark-900/60 border-t border-dark-800/80">
                 <span className="text-xs font-semibold text-dark-400 uppercase tracking-wide capitalize">{group.label}</span>
                 <span className="text-xs font-bold text-red-400">-{formatCurrency(group.total)}</span>
               </div>
 
-              {group.expenses.map((expense) => {
-                const cat = (expense as any).category;
-                return (
-                  <div
-                    key={expense.id}
-                    className="flex items-center gap-3.5 px-4 py-3 border-b border-dark-800/40"
-                  >
-                    <div
-                      className="w-11 h-11 rounded-full flex items-center justify-center text-lg flex-shrink-0"
-                      style={{ backgroundColor: cat?.color ? cat.color + '30' : '#47556930' }}
-                    >
-                      {cat?.icon || '💵'}
-                    </div>
-
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[13px] font-semibold truncate">{expense.description}</p>
-                      <p className="text-[11px] text-dark-500 mt-0.5">
-                        {cat?.name || 'Sin categoría'}
-                        {expense.is_recurring && ' · 🔄'}
-                      </p>
-                    </div>
-
-                    <span className="text-[13px] font-bold text-red-400 flex-shrink-0">
-                      -{formatCurrency(Number(expense.amount))}
-                    </span>
-
-                    <div className="flex flex-shrink-0 -mr-1">
-                      <button onClick={() => openEdit(expense)} className="p-1 text-dark-600 hover:text-dark-300">
-                        <Edit3 size={12} />
-                      </button>
-                      <button onClick={() => handleDelete(expense.id)} className="p-1 text-dark-600 hover:text-red-400">
-                        <Trash2 size={12} />
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
+              {group.expenses.map((expense) => (
+                <SwipeableExpenseRow
+                  key={expense.id}
+                  expense={expense}
+                  onEdit={() => openEdit(expense)}
+                  onDelete={() => handleDelete(expense.id)}
+                />
+              ))}
             </div>
           ))
         )}
