@@ -282,14 +282,14 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
       </div>
 
       {/* ===== BOTTOM SECTION ===== */}
-      {isTyping && keyboardHeight > 0 ? (
+      {isTyping ? (
         /* Floating button over keyboard toolbar */
         <div
           className="fixed left-0 right-0 z-[70]"
-          style={{ bottom: `${keyboardHeight}px` }}
+          style={{ bottom: keyboardHeight > 0 ? `${keyboardHeight}px` : '260px' }}
         >
           <button
-            onClick={(e) => {
+            onMouseDown={(e) => {
               e.preventDefault();
               handleSave();
             }}
@@ -300,7 +300,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
             {saving ? 'Guardando...' : editingExpense ? 'Guardar cambios' : 'Agregar gasto'}
           </button>
         </div>
-      ) : !isTyping ? (
+      ) : (
         /* Normal: rounded button + numpad */
         <div className="flex-shrink-0">
           <div className="px-5 py-3">
@@ -334,7 +334,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
             <div className="h-[env(safe-area-inset-bottom)]" />
           </div>
         </div>
-      ) : null}
+      )}
 
       {/* ===== CURRENCY PICKER ===== */}
       {showCurrencyPicker && (
