@@ -20,24 +20,6 @@ export default function CategoriesView({ user }: { user: User }) {
   const [icon, setIcon] = useState('📦');
   const [color, setColor] = useState('#22c55e');
   const [saving, setSaving] = useState(false);
-  const [isTyping, setIsTyping] = useState(false);
-  const [btnBottom, setBtnBottom] = useState(0);
-
-  useEffect(() => {
-    const vv = window.visualViewport;
-    if (!vv) return;
-    function update() {
-      if (!vv) return;
-      const bottom = window.innerHeight - (vv.height + vv.offsetTop);
-      setBtnBottom(bottom > 50 ? bottom - 44 : 0);
-    }
-    vv.addEventListener('resize', update);
-    vv.addEventListener('scroll', update);
-    return () => {
-      vv.removeEventListener('resize', update);
-      vv.removeEventListener('scroll', update);
-    };
-  }, []);
 
   useEffect(() => { loadData(); }, []);
 
@@ -264,8 +246,6 @@ export default function CategoriesView({ user }: { user: User }) {
                 suppressContentEditableWarning
                 onInput={(e) => setName((e.target as HTMLDivElement).textContent || '')}
                 onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }}
-                onFocus={() => setIsTyping(true)}
-                onBlur={() => setIsTyping(false)}
                 data-placeholder="Nombre de categoría"
                 className="flex-1 text-lg font-semibold focus:outline-none border-b border-dark-700 pb-2 empty:before:content-[attr(data-placeholder)] empty:before:text-dark-500 min-h-[28px]"
                 role="textbox"
@@ -312,32 +292,16 @@ export default function CategoriesView({ user }: { user: User }) {
             </div>
           </div>
 
-          {isTyping && btnBottom > 0 ? (
-            <div
-              className="fixed left-0 right-0 z-[70]"
-              style={{ bottom: `${btnBottom}px` }}
+          <div className="px-4 py-4 bg-dark-900 border-t border-dark-800">
+            <button
+              onClick={handleSave}
+              disabled={saving || !name}
+              className="w-full py-4 rounded-2xl font-bold text-base transition-all disabled:opacity-30"
+              style={{ backgroundColor: color, color: 'white' }}
             >
-              <button
-                onMouseDown={(e) => { e.preventDefault(); handleSave(); }}
-                disabled={saving || !name}
-                className="w-full py-4 font-bold text-base transition-all disabled:opacity-30"
-                style={{ backgroundColor: color, color: 'white' }}
-              >
-                {saving ? 'Guardando...' : editingId ? 'Guardar cambios' : 'Crear categoría'}
-              </button>
-            </div>
-          ) : (
-            <div className="px-4 py-4 bg-dark-900 border-t border-dark-800">
-              <button
-                onClick={handleSave}
-                disabled={saving || !name}
-                className="w-full py-4 rounded-2xl font-bold text-base transition-all disabled:opacity-30"
-                style={{ backgroundColor: color, color: 'white' }}
-              >
-                {saving ? 'Guardando...' : editingId ? 'Guardar cambios' : 'Crear categoría'}
-              </button>
-            </div>
-          )}
+              {saving ? 'Guardando...' : editingId ? 'Guardar cambios' : 'Crear categoría'}
+            </button>
+          </div>
         </div>
       )}
     </div>
