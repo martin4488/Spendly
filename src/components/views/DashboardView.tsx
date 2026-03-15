@@ -200,11 +200,10 @@ function SwipeableExpenseRow({
         </div>
 
         <div className="flex-1 min-w-0">
-          <p className="text-[12px] font-semibold truncate leading-tight">{expense.description}</p>
-          <p className="text-[10px] text-dark-500 mt-0.5 leading-tight">
-            {cat?.name || 'Sin categoría'}
-            {expense.is_recurring && ' · 🔄'}
-          </p>
+          <p className="text-[12px] font-semibold truncate leading-tight">{cat?.name || 'Sin categoría'}{expense.is_recurring && ' 🔄'}</p>
+          {expense.description && expense.description !== (cat?.name || '') && (
+            <p className="text-[10px] text-dark-500 mt-0.5 leading-tight truncate">{expense.description}</p>
+          )}
         </div>
 
         <span className="text-[12px] font-bold text-red-400 flex-shrink-0">
