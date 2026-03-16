@@ -176,7 +176,7 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
       const range = getRange(currentDate, viewMode);
       const [{ data: expenses }, { data: cats }] = await Promise.all([
         supabase.from('expenses').select('id, amount, category_id, description, date').eq('user_id', user.id).gte('date', range.start).lte('date', range.end).order('date', { ascending: false }),
-        supabase.from('categories').select('*').eq('user_id', user.id),
+        supabase.from('categories').select('*').eq('user_id', user.id).eq('deleted', false),
       ]);
       const allExp = expenses || [];
       const allCats = cats || [];
@@ -322,7 +322,7 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
   const swipeStartX = useRef<number | null>(null);
 
   useEffect(() => {
-    supabase.from('categories').select('*').eq('user_id', user.id).then(({ data }) => setAllCats(data || []));
+    supabase.from('categories').select('*').eq('user_id', user.id).eq('deleted', false).then(({ data }) => setAllCats(data || []));
   }, []);
 
   useEffect(() => { loadData(); }, [viewMode, currentDate]);
@@ -333,7 +333,7 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
       const range = getRange(currentDate, viewMode);
       let list: ExpenseDetail[] = [];
       if (drillDown.id === 'uncategorized') {
-        const { data: cats } = await supabase.from('categories').select('id').eq('user_id', user.id);
+        const { data: cats } = await supabase.from('categories').select('id').eq('user_id', user.id).eq('deleted', false);
         const ids = new Set((cats || []).map((c: any) => c.id));
         const { data: exp } = await supabase.from('expenses').select('id, amount, description, date, category_id').eq('user_id', user.id).gte('date', range.start).lte('date', range.end).order('date', { ascending: false });
         list = (exp || []).filter((e: any) => !e.category_id || !ids.has(e.category_id)).map((e: any) => ({ id: e.id, date: e.date, description: e.description, amount: Number(e.amount), category_id: e.category_id }));
