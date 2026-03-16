@@ -161,39 +161,6 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
     finally { setSaving(false); }
   }
 
-  // ── Recursive picker row renderer ─────────────────────────────────────────
-  function renderPickerNodes(nodes: CatNode[], depth = 0): React.ReactNode {
-    return nodes.map(node => (
-      <div key={node.id}>
-        {depth === 0 && (
-          <div className="px-5 pt-4 pb-1">
-            <span className="text-xs font-bold text-dark-400 uppercase tracking-wider">{node.name}</span>
-          </div>
-        )}
-        <button
-          onClick={() => handleSelectCategory(node.id)}
-          className={`w-full flex items-center gap-3 border-b border-dark-800/60 transition-colors ${categoryId === node.id ? 'bg-dark-800' : 'active:bg-dark-800/60'}`}
-          style={{ paddingLeft: `${depth === 0 ? 20 : depth * 16 + 20}px`, paddingRight: 20, paddingTop: depth === 0 ? 14 : 10, paddingBottom: depth === 0 ? 14 : 10 }}
-        >
-          <div className="rounded-full flex items-center justify-center flex-shrink-0"
-            style={{
-              width: depth === 0 ? 36 : depth === 1 ? 30 : 24,
-              height: depth === 0 ? 36 : depth === 1 ? 30 : 24,
-              fontSize: depth === 0 ? 18 : depth === 1 ? 15 : 12,
-              backgroundColor: node.color + '30',
-            }}>
-            {node.icon}
-          </div>
-          <p className={`flex-1 text-left font-medium ${depth === 0 ? 'text-sm' : depth === 1 ? 'text-sm text-dark-200' : 'text-xs text-dark-400'}`}>
-            {node.name}
-          </p>
-          {categoryId === node.id && <Check size={depth === 0 ? 18 : 15} className="text-brand-400 flex-shrink-0" />}
-        </button>
-        {node.children.length > 0 && renderPickerNodes(node.children, depth + 1)}
-      </div>
-    ));
-  }
-
   return (
     <div className="fixed inset-0 z-[60] flex flex-col bg-dark-900">
 
@@ -339,6 +306,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
 
           <div className="flex-1 overflow-y-auto">
             {q ? (
+              // ── Search results — lista simple ──
               searchResults.length === 0 ? (
                 <div className="text-center py-10 text-dark-500 text-sm">Sin resultados</div>
               ) : (
@@ -349,7 +317,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
                       <button key={cat.id} onClick={() => handleSelectCategory(cat.id)}
                         className={`w-full flex items-center gap-3 px-5 py-3.5 border-b border-dark-800/60 transition-colors ${isActive ? 'bg-dark-800' : 'active:bg-dark-800/60'}`}>
                         <div className="w-9 h-9 rounded-full flex items-center justify-center text-lg flex-shrink-0"
-                          style={{ backgroundColor: cat.color + '30' }}>{cat.icon}</div>
+                          style={{ backgroundColor: cat.color }}>{cat.icon}</div>
                         <div className="flex-1 text-left">
                           <p className="text-sm font-medium">{cat.name}</p>
                           {ancestors.length > 0 && (
@@ -363,7 +331,62 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
                 </div>
               )
             ) : (
-              <div className="pb-6">{renderPickerNodes(roots)}</div>
+              // ── Grid view — grilla 4 cols, agrupada por padre ──
+              <div className="pb-8">
+                {roots.map(root => {
+                  // Flatten root + all descendants for this section
+                  const entries = flattenTree([root]);
+                  return (
+                    <div key={root.id} className="mb-6">
+                      {/* Section header = nombre del padre */}
+                      <div className="px-4 pt-4 pb-2">
+                        <span className="text-xs font-bold text-dark-400 uppercase tracking-wider">{root.name}</span>
+                      </div>
+                      <div className="grid grid-cols-4 gap-x-2 gap-y-4 px-4">
+                        {entries.map(({ cat, ancestors }) => {
+                          const isActive = categoryId === cat.id;
+                          const depth = ancestors.length;
+                          // Icon size shrinks slightly for deeper levels
+                          const iconSize = depth === 0 ? 52 : depth === 1 ? 46 : 40;
+                          return (
+                            <button
+                              key={cat.id}
+                              onClick={() => handleSelectCategory(cat.id)}
+                              className="flex flex-col items-center gap-1.5 active:opacity-70 transition-opacity"
+                            >
+                              <div
+                                className="rounded-full flex items-center justify-center relative flex-shrink-0"
+                                style={{
+                                  width: iconSize,
+                                  height: iconSize,
+                                  backgroundColor: cat.color,
+                                  fontSize: depth === 0 ? 24 : depth === 1 ? 20 : 17,
+                                  boxShadow: isActive ? `0 0 0 3px white, 0 0 0 5px ${cat.color}` : undefined,
+                                }}
+                              >
+                                {cat.icon}
+                              </div>
+                              <span
+                                className="text-center leading-tight text-dark-200 w-full"
+                                style={{
+                                  fontSize: 11,
+                                  display: '-webkit-box',
+                                  WebkitLineClamp: 2,
+                                  WebkitBoxOrient: 'vertical' as any,
+                                  overflow: 'hidden',
+                                  wordBreak: 'break-word',
+                                }}
+                              >
+                                {cat.name}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </div>
         </div>
