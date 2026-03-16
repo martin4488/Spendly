@@ -67,9 +67,9 @@ function DonutChart({ cats, total, onPress }: { cats: CatSpend[]; total: number;
   }
 
   // Position icon + label outside, with connector line
-  // Use a larger radius for icons so they don't overlap
-  const ICON_R = 128;
-  const PCT_OFFSET = 18; // below icon center
+  const ICON_R = 102; // just outside the donut edge (R=85)
+  const LINE_START_R = R + 1;
+  const LINE_END_R = ICON_R - 14;
 
   return (
     <svg viewBox="0 0 300 300" width="100%" height={260} style={{ display: 'block', overflow: 'visible' }}>
@@ -90,11 +90,15 @@ function DonutChart({ cats, total, onPress }: { cats: CatSpend[]; total: number;
       {slices.map((s, i) => {
         if (s.pct < 0.03) return null;
         const midAngle = s.startA + (s.endA - s.startA) / 2;
-        const lineStart = polarToXY(midAngle, R + 2);
-        const lineEnd = polarToXY(midAngle, ICON_R - 14);
+        const lineStart = polarToXY(midAngle, LINE_START_R);
+        const lineEnd = polarToXY(midAngle, LINE_END_R);
         const iconPos = polarToXY(midAngle, ICON_R);
-        const pctPos = polarToXY(midAngle, ICON_R + PCT_OFFSET);
-        const iconRadius = s.pct > 0.12 ? 16 : 13;
+        const iconRadius = 13;
+
+        // % label: offset perpendicular to the radial direction so it doesn't overlap icon
+        // Place it just outside the icon in the same radial direction
+        const pctR = ICON_R + iconRadius + 8;
+        const pctPos = polarToXY(midAngle, pctR);
 
         return (
           <g key={i}>
@@ -103,19 +107,19 @@ function DonutChart({ cats, total, onPress }: { cats: CatSpend[]; total: number;
               x1={lineStart.x} y1={lineStart.y}
               x2={lineEnd.x} y2={lineEnd.y}
               stroke={s.color}
-              strokeWidth={1.2}
-              opacity={0.7}
+              strokeWidth={1}
+              opacity={0.6}
             />
             {/* Icon circle */}
             <circle cx={iconPos.x} cy={iconPos.y} r={iconRadius} fill={s.color} />
             <text
               x={iconPos.x} y={iconPos.y}
               textAnchor="middle" dominantBaseline="middle"
-              fontSize={iconRadius * 1.1}
+              fontSize={13}
             >
               {s.icon}
             </text>
-            {/* % below icon */}
+            {/* % outside the icon, same radial direction */}
             <text
               x={pctPos.x} y={pctPos.y}
               textAnchor="middle" dominantBaseline="middle"
