@@ -31,6 +31,7 @@ interface ExpenseDetail {
   date: string;
   description: string;
   amount: number;
+  category_id?: string | null;
 }
 
 interface DrillDown {
@@ -39,6 +40,7 @@ interface DrillDown {
   icon: string;
   color: string;
   allIds: string[]; // cat + subcats
+  subcategories: { id: string; name: string; icon: string; color: string }[];
 }
 
 // ── SVG Donut ────────────────────────────────────────────────────────────────
@@ -270,7 +272,11 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
     const allIds = cat.id === 'uncategorized'
       ? ['uncategorized']
       : [cat.id, ...cat.subcategories.map(s => s.id)];
-    setDrillDown({ id: cat.id, name: cat.name, icon: cat.icon, color: cat.color, allIds });
+    setDrillDown({
+      id: cat.id, name: cat.name, icon: cat.icon, color: cat.color,
+      allIds,
+      subcategories: cat.subcategories.map(s => ({ id: s.id, name: s.name, icon: s.icon, color: s.color })),
+    });
   }
 
   function navigate(dir: 1 | -1) {
@@ -469,7 +475,7 @@ function DrillDownView({
         setBarData(buildBarData(filtered, currentDate, viewMode));
       } else {
         const { data: exp } = await query.in('category_id', drillDown.allIds);
-        const list = (exp || []).map((e: any) => ({ id: e.id, date: e.date, description: e.description, amount: Number(e.amount) }));
+        const list = (exp || []).map((e: any) => ({ id: e.id, date: e.date, description: e.description, amount: Number(e.amount), category_id: e.category_id }));
         setExpenses(list);
         const total = list.reduce((s, e) => s + e.amount, 0);
         setPeriodTotal(total);
@@ -619,19 +625,25 @@ function DrillDownView({
                     <span className="text-[10px] font-semibold text-dark-500 uppercase tracking-wider capitalize">{group.label}</span>
                     <span className="text-[10px] font-semibold text-dark-500">-{formatCurrency(group.total)}</span>
                   </div>
-                  {group.expenses.map(exp => (
-                    <div key={exp.id} className="flex items-center gap-2.5 px-4 py-2.5 border-b border-dark-800/40">
-                      <div className="w-8 h-8 rounded-xl flex items-center justify-center text-base flex-shrink-0"
-                        style={{ backgroundColor: drillDown.color }}>{drillDown.icon}</div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-[12px] font-semibold truncate">{drillDown.name}</p>
-                        {exp.description && exp.description !== drillDown.name && (
-                          <p className="text-[10px] text-dark-500 truncate">{exp.description}</p>
-                        )}
+                  {group.expenses.map(exp => {
+                    const sub = drillDown.subcategories.find(s => s.id === exp.category_id);
+                    const displayIcon  = sub ? sub.icon  : drillDown.icon;
+                    const displayColor = sub ? sub.color : drillDown.color;
+                    const displayName  = sub ? sub.name  : drillDown.name;
+                    return (
+                      <div key={exp.id} className="flex items-center gap-2.5 px-4 py-2.5 border-b border-dark-800/40">
+                        <div className="w-8 h-8 rounded-xl flex items-center justify-center text-base flex-shrink-0"
+                          style={{ backgroundColor: displayColor }}>{displayIcon}</div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[12px] font-semibold truncate">{displayName}</p>
+                          {exp.description && exp.description !== displayName && (
+                            <p className="text-[10px] text-dark-500 truncate">{exp.description}</p>
+                          )}
+                        </div>
+                        <span className="text-[12px] font-bold text-red-400 flex-shrink-0">-{formatCurrency(exp.amount)}</span>
                       </div>
-                      <span className="text-[12px] font-bold text-red-400 flex-shrink-0">-{formatCurrency(exp.amount)}</span>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ))}
             </div>
