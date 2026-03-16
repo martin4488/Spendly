@@ -45,10 +45,10 @@ function DonutChart({ cats, total }: { cats: CatSpend[]; total: number }) {
   const CX = 160; const CY = 160;
   const R_OUTER = 90;   // donut outer edge
   const R_INNER = 56;   // donut inner edge (hole)
-  const R_ICON  = 118;  // center of icon bubble
+  const R_ICON  = 116;  // center of icon bubble
   const R_LINE_START = R_OUTER + 2;
   const R_LINE_END   = R_ICON - 16;
-  const R_LABEL = R_ICON + 18; // % label radius — well outside icon
+  const R_LABEL = R_ICON + 26; // % label radius — well outside icon
 
   let cumAngle = -90;
 
@@ -112,12 +112,21 @@ function DonutChart({ cats, total }: { cats: CatSpend[]; total: number }) {
         // For very small slices, pull icon closer to avoid crowding
         const iconR   = s.pct < 0.04 ? R_ICON - 6 : R_ICON;
         const lineEndR = iconR - 16;
-        const labelR  = iconR + (s.pct < 0.04 ? 15 : 20);
+        const labelR  = iconR + (s.pct < 0.04 ? 22 : 28);
 
         const lineStart = polar(midAngle, R_LINE_START);
         const lineEnd   = polar(midAngle, lineEndR);
         const iconPos   = polar(midAngle, iconR);
-        const labelPos  = polar(midAngle, labelR);
+
+        // Anti-overlap: nudge label perpendicular if adjacent slice is close
+        const prevSlice = i > 0 ? slices[i - 1] : null;
+        const nextSlice = i < slices.length - 1 ? slices[i + 1] : null;
+        const angularGapPrev = prevSlice ? Math.abs(midAngle - (prevSlice.startA + (prevSlice.endA - prevSlice.startA) / 2)) : 999;
+        const angularGapNext = nextSlice ? Math.abs(midAngle - (nextSlice.startA + (nextSlice.endA - nextSlice.startA) / 2)) : 999;
+        const isCrowded = angularGapPrev < 18 || angularGapNext < 18;
+        // If crowded, push label further out radially
+        const effectiveLabelR = isCrowded ? labelR + 10 : labelR;
+        const labelPos  = polar(midAngle, effectiveLabelR);
 
         const iconSize  = s.pct < 0.04 ? 11 : 14;
         const iconR_circle = s.pct < 0.04 ? 11 : 14;
