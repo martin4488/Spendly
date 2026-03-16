@@ -218,12 +218,7 @@ export default function CategoriesView({ user }: { user: User }) {
   function renderChildren(nodes: CatNode[], depth: number) {
     if (nodes.length === 0) return null;
     return (
-      <div className="bg-dark-800 border-t border-dark-700/50">
-        <div className="px-3.5 pt-2 pb-1" style={{ paddingLeft: `${depth * 12 + 14}px` }}>
-          <span className="text-[10px] uppercase tracking-wider text-dark-500 font-semibold">
-            {depth === 1 ? 'Subcategorías' : 'Sub-subcategorías'}
-          </span>
-        </div>
+      <div className="bg-dark-800">
         {nodes.map((node, idx) => {
           const spent = totalSpend(node);
           const isLast = idx === nodes.length - 1;
