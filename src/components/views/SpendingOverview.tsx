@@ -39,9 +39,17 @@ interface DrillDown {
   expenses: ExpenseDetail[];
 }
 
-// ── SVG Donut matching Wallet iOS style ──────────────────────────────────────
-function DonutChart({ cats, total, onPress }: { cats: CatSpend[]; total: number; onPress: (cat: CatSpend) => void }) {
-  const R = 85; const r = 52; const cx = 150; const cy = 150;
+// ── SVG Donut — estilo Wallet iOS ────────────────────────────────────────────
+function DonutChart({ cats, total }: { cats: CatSpend[]; total: number }) {
+  // Canvas center and radii
+  const CX = 160; const CY = 160;
+  const R_OUTER = 90;   // donut outer edge
+  const R_INNER = 56;   // donut inner edge (hole)
+  const R_ICON  = 118;  // center of icon bubble
+  const R_LINE_START = R_OUTER + 2;
+  const R_LINE_END   = R_ICON - 16;
+  const R_LABEL = R_ICON + 18; // % label radius — well outside icon
+
   let cumAngle = -90;
 
   const slices = cats.map(cat => {
@@ -52,92 +60,128 @@ function DonutChart({ cats, total, onPress }: { cats: CatSpend[]; total: number;
     return { ...cat, pct, startA, endA: cumAngle };
   });
 
-  function polarToXY(angleDeg: number, rad: number) {
-    const a = (angleDeg * Math.PI) / 180;
-    return { x: cx + rad * Math.cos(a), y: cy + rad * Math.sin(a) };
+  function toRad(deg: number) { return (deg * Math.PI) / 180; }
+
+  function polar(angleDeg: number, r: number) {
+    return {
+      x: CX + r * Math.cos(toRad(angleDeg)),
+      y: CY + r * Math.sin(toRad(angleDeg)),
+    };
   }
 
-  function describeArc(startDeg: number, endDeg: number, outerR: number, innerR: number) {
-    const s1 = polarToXY(startDeg, outerR);
-    const e1 = polarToXY(endDeg, outerR);
-    const s2 = polarToXY(endDeg, innerR);
-    const e2 = polarToXY(startDeg, innerR);
+  function arc(startDeg: number, endDeg: number, ro: number, ri: number) {
+    const s1 = polar(startDeg, ro);
+    const e1 = polar(endDeg, ro);
+    const s2 = polar(endDeg, ri);
+    const e2 = polar(startDeg, ri);
     const large = endDeg - startDeg > 180 ? 1 : 0;
-    return `M ${s1.x} ${s1.y} A ${outerR} ${outerR} 0 ${large} 1 ${e1.x} ${e1.y} L ${s2.x} ${s2.y} A ${innerR} ${innerR} 0 ${large} 0 ${e2.x} ${e2.y} Z`;
+    return `M ${s1.x} ${s1.y} A ${ro} ${ro} 0 ${large} 1 ${e1.x} ${e1.y} L ${s2.x} ${s2.y} A ${ri} ${ri} 0 ${large} 0 ${e2.x} ${e2.y} Z`;
   }
 
-  // Position icon + label outside, with connector line
-  const ICON_R = 102; // just outside the donut edge (R=85)
-  const LINE_START_R = R + 1;
-  const LINE_END_R = ICON_R - 14;
+  // Small slices (< 2%) get a tiny icon radius so they don't overlap each other
+  // but we still show them — just smaller icon + no label if too tiny
+  const SHOW_LABEL_THRESHOLD = 0.025; // 2.5%
+  const SHOW_ICON_THRESHOLD  = 0.008; // 0.8% — below this skip entirely
 
   return (
-    <svg viewBox="0 0 300 300" width="100%" height={260} style={{ display: 'block', overflow: 'visible' }}>
-      {/* Arcs */}
+    <svg
+      viewBox="0 0 320 320"
+      width="100%"
+      height={280}
+      style={{ display: 'block', overflow: 'visible' }}
+    >
+      {/* ── Arcs ── */}
       {slices.map((s, i) => {
-        if (s.pct < 0.001) return null;
-        const gap = 1.2;
+        if (s.pct < SHOW_ICON_THRESHOLD) return null;
+        const GAP = s.pct < 0.03 ? 0.4 : 1.2;
         return (
           <path
             key={i}
-            d={describeArc(s.startA + gap / 2, s.endA - gap / 2, R, r)}
+            d={arc(s.startA + GAP / 2, s.endA - GAP / 2, R_OUTER, R_INNER)}
             fill={s.color}
           />
         );
       })}
 
-      {/* Connector lines + icon circles + % labels */}
+      {/* ── Connectors + icons + labels ── */}
       {slices.map((s, i) => {
-        if (s.pct < 0.03) return null;
-        const midAngle = s.startA + (s.endA - s.startA) / 2;
-        const lineStart = polarToXY(midAngle, LINE_START_R);
-        const lineEnd = polarToXY(midAngle, LINE_END_R);
-        const iconPos = polarToXY(midAngle, ICON_R);
-        const iconRadius = 13;
+        if (s.pct < SHOW_ICON_THRESHOLD) return null;
 
-        // % label: offset perpendicular to the radial direction so it doesn't overlap icon
-        // Place it just outside the icon in the same radial direction
-        const pctR = ICON_R + iconRadius + 8;
-        const pctPos = polarToXY(midAngle, pctR);
+        const midAngle = s.startA + (s.endA - s.startA) / 2;
+
+        // For very small slices, pull icon closer to avoid crowding
+        const iconR   = s.pct < 0.04 ? R_ICON - 6 : R_ICON;
+        const lineEndR = iconR - 16;
+        const labelR  = iconR + (s.pct < 0.04 ? 15 : 20);
+
+        const lineStart = polar(midAngle, R_LINE_START);
+        const lineEnd   = polar(midAngle, lineEndR);
+        const iconPos   = polar(midAngle, iconR);
+        const labelPos  = polar(midAngle, labelR);
+
+        const iconSize  = s.pct < 0.04 ? 11 : 14;
+        const iconR_circle = s.pct < 0.04 ? 11 : 14;
+        const showLabel = s.pct >= SHOW_LABEL_THRESHOLD;
 
         return (
           <g key={i}>
-            {/* Connector line */}
+            {/* Connector line — thick and visible */}
             <line
               x1={lineStart.x} y1={lineStart.y}
-              x2={lineEnd.x} y2={lineEnd.y}
+              x2={lineEnd.x}   y2={lineEnd.y}
               stroke={s.color}
-              strokeWidth={1}
-              opacity={0.6}
+              strokeWidth={s.pct < 0.04 ? 1.2 : 1.8}
+              opacity={0.85}
             />
-            {/* Icon circle */}
-            <circle cx={iconPos.x} cy={iconPos.y} r={iconRadius} fill={s.color} />
+
+            {/* Icon bubble */}
+            <circle
+              cx={iconPos.x} cy={iconPos.y}
+              r={iconR_circle}
+              fill={s.color}
+            />
             <text
               x={iconPos.x} y={iconPos.y}
-              textAnchor="middle" dominantBaseline="middle"
-              fontSize={13}
+              textAnchor="middle"
+              dominantBaseline="middle"
+              fontSize={iconSize}
             >
               {s.icon}
             </text>
-            {/* % outside the icon, same radial direction */}
-            <text
-              x={pctPos.x} y={pctPos.y}
-              textAnchor="middle" dominantBaseline="middle"
-              fill={s.color}
-              fontSize={9}
-              fontWeight={700}
-            >
-              {`${(s.pct * 100).toFixed(1)}%`}
-            </text>
+
+            {/* % label — only for slices big enough */}
+            {showLabel && (
+              <text
+                x={labelPos.x} y={labelPos.y}
+                textAnchor="middle"
+                dominantBaseline="middle"
+                fill={s.color}
+                fontSize={9.5}
+                fontWeight={700}
+              >
+                {`${(s.pct * 100).toFixed(1)}%`}
+              </text>
+            )}
           </g>
         );
       })}
 
-      {/* Center: total */}
-      <text x={cx} y={cy - 8} textAnchor="middle" fill="white" fontSize={14} fontWeight={700}>
+      {/* ── Center total ── */}
+      <text
+        x={CX} y={CY - 9}
+        textAnchor="middle"
+        fill="white"
+        fontSize={15}
+        fontWeight={700}
+      >
         -{formatCurrency(total)}
       </text>
-      <text x={cx} y={cy + 10} textAnchor="middle" fill="#64748b" fontSize={10}>
+      <text
+        x={CX} y={CY + 10}
+        textAnchor="middle"
+        fill="#64748b"
+        fontSize={10}
+      >
         Gastos totales
       </text>
     </svg>
@@ -168,7 +212,6 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [drillDown, setDrillDown] = useState<DrillDown | null>(null);
 
-  // Swipe state
   const swipeStartX = useRef<number | null>(null);
 
   useEffect(() => { loadData(); }, [viewMode, currentDate]);
@@ -196,20 +239,33 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
         const subSpending: CatSpend[] = children.map((sub: any) => {
           const subExp = allExpenses.filter((e: any) => e.category_id === sub.id);
           const subSpent = subExp.reduce((s: number, e: any) => s + Number(e.amount), 0);
-          return { id: sub.id, name: sub.name, icon: sub.icon, color: sub.color || cat.color, spent: subSpent, percentage: total > 0 ? (subSpent / total) * 100 : 0, transactions: subExp.length, subcategories: [] };
+          return {
+            id: sub.id, name: sub.name, icon: sub.icon, color: sub.color || cat.color,
+            spent: subSpent, percentage: total > 0 ? (subSpent / total) * 100 : 0,
+            transactions: subExp.length, subcategories: [],
+          };
         }).filter((s: CatSpend) => s.spent > 0).sort((a: CatSpend, b: CatSpend) => b.spent - a.spent);
 
         const directExp = allExpenses.filter((e: any) => e.category_id === cat.id);
         const directSpent = directExp.reduce((s: number, e: any) => s + Number(e.amount), 0);
         const totalCatSpent = directSpent + subSpending.reduce((s, sc) => s + sc.spent, 0);
-        return { id: cat.id, name: cat.name, icon: cat.icon, color: cat.color, spent: totalCatSpent, percentage: total > 0 ? (totalCatSpent / total) * 100 : 0, transactions: directExp.length + subSpending.reduce((s, sc) => s + sc.transactions, 0), subcategories: subSpending };
+        return {
+          id: cat.id, name: cat.name, icon: cat.icon, color: cat.color,
+          spent: totalCatSpent, percentage: total > 0 ? (totalCatSpent / total) * 100 : 0,
+          transactions: directExp.length + subSpending.reduce((s, sc) => s + sc.transactions, 0),
+          subcategories: subSpending,
+        };
       }).filter((c: CatSpend) => c.spent > 0).sort((a: CatSpend, b: CatSpend) => b.spent - a.spent);
 
       const catIds = allCats.map((c: any) => c.id);
       const uncat = allExpenses.filter((e: any) => !e.category_id || !catIds.includes(e.category_id));
       if (uncat.length > 0) {
         const uncatSpent = uncat.reduce((s: number, e: any) => s + Number(e.amount), 0);
-        spending.push({ id: 'uncategorized', name: 'Sin categoría', icon: '📦', color: '#95A5A6', spent: uncatSpent, percentage: total > 0 ? (uncatSpent / total) * 100 : 0, transactions: uncat.length, subcategories: [] });
+        spending.push({
+          id: 'uncategorized', name: 'Sin categoría', icon: '📦', color: '#95A5A6',
+          spent: uncatSpent, percentage: total > 0 ? (uncatSpent / total) * 100 : 0,
+          transactions: uncat.length, subcategories: [],
+        });
       }
 
       setCatSpending(spending);
@@ -222,7 +278,8 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
     if (catId === 'uncategorized') {
       const [{ data: allCats }, { data: exp }] = await Promise.all([
         supabase.from('categories').select('id').eq('user_id', user.id),
-        supabase.from('expenses').select('id, amount, description, date').eq('user_id', user.id).gte('date', range.start).lte('date', range.end).order('date', { ascending: false }),
+        supabase.from('expenses').select('id, amount, description, date').eq('user_id', user.id)
+          .gte('date', range.start).lte('date', range.end).order('date', { ascending: false }),
       ]);
       const ids = (allCats || []).map((c: any) => c.id);
       const filtered = (exp || []).filter((e: any) => !e.category_id || !ids.includes(e.category_id));
@@ -231,7 +288,11 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
       const parentCat = catSpending.find(c => c.id === catId);
       const subIds = parentCat ? parentCat.subcategories.map(s => s.id) : [];
       const allIds = [catId, ...subIds];
-      const { data: exp } = await supabase.from('expenses').select('id, amount, description, date, category_id').eq('user_id', user.id).in('category_id', allIds).gte('date', range.start).lte('date', range.end).order('date', { ascending: false });
+      const { data: exp } = await supabase.from('expenses')
+        .select('id, amount, description, date, category_id')
+        .eq('user_id', user.id).in('category_id', allIds)
+        .gte('date', range.start).lte('date', range.end)
+        .order('date', { ascending: false });
       setDrillDown({ id: catId, name, icon, color, expenses: (exp || []).map((e: any) => ({ id: e.id, date: e.date, description: e.description, amount: Number(e.amount) })) });
     }
   }
@@ -338,14 +399,26 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
       {/* Toggle */}
       <div className="flex justify-center mb-2">
         <div className="inline-flex bg-dark-800 rounded-full p-0.5">
-          <button onClick={() => { setViewMode('months'); setCurrentDate(now); }} className={`px-3 py-1 rounded-full text-[11px] font-medium transition-all ${viewMode === 'months' ? 'bg-dark-600 text-white' : 'text-dark-400'}`}>Por meses</button>
-          <button onClick={() => { setViewMode('years'); setCurrentDate(now); }} className={`px-3 py-1 rounded-full text-[11px] font-medium transition-all ${viewMode === 'years' ? 'bg-dark-600 text-white' : 'text-dark-400'}`}>Por año</button>
+          <button
+            onClick={() => { setViewMode('months'); setCurrentDate(now); }}
+            className={`px-3 py-1 rounded-full text-[11px] font-medium transition-all ${viewMode === 'months' ? 'bg-dark-600 text-white' : 'text-dark-400'}`}
+          >
+            Por meses
+          </button>
+          <button
+            onClick={() => { setViewMode('years'); setCurrentDate(now); }}
+            className={`px-3 py-1 rounded-full text-[11px] font-medium transition-all ${viewMode === 'years' ? 'bg-dark-600 text-white' : 'text-dark-400'}`}
+          >
+            Por año
+          </button>
         </div>
       </div>
 
-      {/* Period slider */}
+      {/* Period navigation */}
       <div className="flex items-center justify-between px-4 mb-1">
-        <button onClick={() => navigate(-1)} className="text-[11px] text-dark-500 capitalize py-1 px-2 active:text-dark-300">← {prevLabel}</button>
+        <button onClick={() => navigate(-1)} className="text-[11px] text-dark-500 capitalize py-1 px-2 active:text-dark-300">
+          ← {prevLabel}
+        </button>
         <p className="text-[13px] font-semibold capitalize">{periodLabel}</p>
         {isAtPresent
           ? <div className="w-20" />
@@ -366,7 +439,7 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
         <>
           {/* Donut */}
           <div className="px-2 mb-2">
-            <DonutChart cats={catSpending} total={totalSpent} onPress={(cat) => openDrillDown(cat.id, cat.name, cat.icon, cat.color)} />
+            <DonutChart cats={catSpending} total={totalSpent} />
           </div>
 
           {/* Category list */}
@@ -390,7 +463,10 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
                     </button>
                     <span className="text-[12px] font-bold text-red-400 flex-shrink-0">-{formatCurrency(cat.spent)}</span>
                     {hasSubs && (
-                      <button onClick={() => setExpanded(prev => { const n = new Set(prev); n.has(cat.id) ? n.delete(cat.id) : n.add(cat.id); return n; })} className="p-0.5 text-dark-500 ml-0.5">
+                      <button
+                        onClick={() => setExpanded(prev => { const n = new Set(prev); n.has(cat.id) ? n.delete(cat.id) : n.add(cat.id); return n; })}
+                        className="p-0.5 text-dark-500 ml-0.5"
+                      >
                         {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
                       </button>
                     )}
@@ -398,8 +474,11 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
                   {hasSubs && isExpanded && (
                     <div className="pb-1">
                       {cat.subcategories.map((sub, idx) => (
-                        <button key={sub.id} onClick={() => openDrillDown(sub.id, sub.name, sub.icon, sub.color)}
-                          className={`w-full flex items-center gap-2 pl-4 pr-1 py-2 active:bg-dark-800/40 ${idx < cat.subcategories.length - 1 ? 'border-b border-dark-800/20' : ''}`}>
+                        <button
+                          key={sub.id}
+                          onClick={() => openDrillDown(sub.id, sub.name, sub.icon, sub.color)}
+                          className={`w-full flex items-center gap-2 pl-4 pr-1 py-2 active:bg-dark-800/40 ${idx < cat.subcategories.length - 1 ? 'border-b border-dark-800/20' : ''}`}
+                        >
                           <span className="text-dark-600 text-xs">└</span>
                           <div className="w-7 h-7 rounded-lg flex items-center justify-center text-sm flex-shrink-0" style={{ backgroundColor: sub.color }}>{sub.icon}</div>
                           <div className="flex-1 min-w-0 text-left">
