@@ -66,7 +66,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
 
   const headerColor = selectedCat?.color || '#475569';
   const headerIcon = selectedCat?.icon || '💵';
-  const headerName = selectedCat?.name || 'Sin categoría';
+  const headerName = selectedCat?.name || 'Categoría';
   const displayAmount = amountStr || '0';
 
   const today = new Date().toISOString().split('T')[0];
@@ -79,6 +79,9 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
   const convertedAmount = isOtherCurrency ? convertCurrency(amt, currency, defaultCurrency) : null;
 
   const currencyInfo = CURRENCIES[currency];
+
+  // Save is only enabled if amount is valid AND a category is selected
+  const canSave = !saving && !!amountStr && parseFloat(amountStr) > 0 && !!categoryId;
 
   function handleNumpad(key: string) {
     if (key === 'backspace') {
@@ -130,7 +133,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
 
   async function handleSave() {
     const amt = parseFloat(amountStr);
-    if (!amt || amt <= 0) return;
+    if (!amt || amt <= 0 || !categoryId) return;
     setSaving(true);
 
     // Calculate final amount in default currency
@@ -152,7 +155,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
       amount: finalAmount,
       description: description || headerName,
       notes: null,
-      category_id: categoryId || null,
+      category_id: categoryId,
       date,
       original_currency: originalCurrency,
       original_amount: originalAmount,
@@ -259,6 +262,18 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
             className="flex-1 bg-transparent text-sm placeholder:text-dark-500 focus:outline-none"
           />
         </div>
+
+        {/* Category required hint */}
+        {!categoryId && (
+          <button
+            onClick={() => setShowCategoryPicker(true)}
+            className="flex items-center gap-3 px-5 py-4 border-b border-dark-800 w-full"
+          >
+            <span className="text-dark-400 text-lg">🏷️</span>
+            <span className="text-sm text-dark-500 flex-1 text-left">Elegir categoría</span>
+            <span className="text-xs text-brand-400 font-medium">Requerido</span>
+          </button>
+        )}
       </div>
 
       {/* ===== BOTTOM SECTION (always visible) ===== */}
@@ -266,7 +281,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
         <div className="px-5 py-3">
           <button
             onClick={handleSave}
-            disabled={saving || !amountStr || parseFloat(amountStr) <= 0}
+            disabled={!canSave}
             className="w-full py-4 rounded-2xl font-bold text-base transition-all disabled:opacity-40"
             style={{ backgroundColor: headerColor, color: 'white' }}
           >
@@ -357,19 +372,6 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
             </div>
 
             <div className="p-4 grid grid-cols-4 gap-3">
-              {/* Sin categoría */}
-              <button
-                onClick={() => { setCategoryId(''); setShowCategoryPicker(false); }}
-                className="flex flex-col items-center gap-1.5"
-              >
-                <div className={`w-14 h-14 rounded-full flex items-center justify-center text-xl transition-all ${
-                  !categoryId ? 'ring-2 ring-brand-500 ring-offset-2 ring-offset-dark-800' : ''
-                } bg-dark-600`}>
-                  💵
-                </div>
-                <span className="text-[10px] text-dark-300 text-center leading-tight">Sin cat.</span>
-              </button>
-
               {parentCats.map((cat) => {
                 const isActive = categoryId === cat.id;
                 return (
