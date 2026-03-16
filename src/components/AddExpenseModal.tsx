@@ -63,7 +63,8 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
       .from('categories')
       .select('*')
       .eq('user_id', user.id)
-      .order('name');
+      .order('position')
+      .order('created_at');
     setCategories(data || []);
   }
 
