@@ -510,17 +510,14 @@ export default function CategoriesView({ user }: { user: User }) {
               >
                 {icon}
               </div>
-              <div
-                contentEditable
-                suppressContentEditableWarning
-                onInput={(e) => setName((e.target as HTMLDivElement).textContent || '')}
-                onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }}
-                data-placeholder="Nombre de categoría"
-                className="flex-1 text-lg font-semibold focus:outline-none border-b border-dark-700 pb-2 empty:before:content-[attr(data-placeholder)] empty:before:text-dark-500 min-h-[28px]"
-                role="textbox"
-              >
-                {editingId ? name : ''}
-              </div>
+              <input
+                type="text"
+                placeholder="Nombre de categoría"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="flex-1 text-lg font-semibold bg-transparent focus:outline-none border-b border-dark-700 pb-2 placeholder:text-dark-500 min-h-[28px]"
+                autoFocus={showForm}
+              />
             </div>
 
             <div className="mb-5">
