@@ -1,14 +1,148 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, CATEGORY_ICONS, CATEGORY_COLORS } from '@/lib/utils';
 import { Category, RecurringExpense } from '@/types';
-import { Plus, Edit3, Trash2, X, Pause, Play, FileText, CalendarOff, Delete } from 'lucide-react';
+import { Plus, X, CalendarOff, Delete, Search, Settings, ArrowLeft, Check, Trash2 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 
+// ── Swipe-to-delete row ───────────────────────────────────────────────────────
+function SwipeableRow({
+  children,
+  onTap,
+  onDelete,
+}: {
+  children: React.ReactNode;
+  onTap: () => void;
+  onDelete: () => void;
+}) {
+  const [offset, setOffset] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
+  const startXRef = useRef<number | null>(null);
+  const DELETE_THRESHOLD = 72;
+  const SNAP_THRESHOLD = 36;
+
+  function onTouchStart(e: React.TouchEvent) {
+    startXRef.current = e.touches[0].clientX;
+    setIsDragging(false);
+  }
+  function onTouchMove(e: React.TouchEvent) {
+    if (startXRef.current === null) return;
+    const dx = startXRef.current - e.touches[0].clientX;
+    if (dx > 5) setIsDragging(true);
+    if (dx > 0) setOffset(Math.min(dx, DELETE_THRESHOLD));
+    else if (dx < 0 && offset > 0) setOffset(Math.max(0, offset + dx));
+  }
+  function onTouchEnd() {
+    setOffset(offset > SNAP_THRESHOLD ? DELETE_THRESHOLD : 0);
+    startXRef.current = null;
+  }
+  function handleClick() {
+    if (isDragging) return;
+    if (offset > 0) { setOffset(0); return; }
+    onTap();
+  }
+
+  return (
+    <div className="relative overflow-hidden rounded-xl">
+      {/* Delete button revealed on swipe */}
+      <div
+        className="absolute right-0 top-0 bottom-0 flex items-center justify-center bg-red-500 rounded-r-xl"
+        style={{ width: DELETE_THRESHOLD }}
+      >
+        <button
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          className="flex flex-col items-center justify-center w-full h-full gap-1 active:bg-red-600 transition-colors"
+        >
+          <Trash2 size={16} className="text-white" />
+          <span className="text-[10px] text-white font-medium">Borrar</span>
+        </button>
+      </div>
+      {/* Row */}
+      <div
+        className="relative bg-dark-800 cursor-pointer select-none"
+        style={{
+          transform: `translateX(-${offset}px)`,
+          transition: isDragging ? 'none' : 'transform 0.2s ease',
+        }}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+        onClick={handleClick}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ── Category Picker (same as AddExpenseModal) ─────────────────────────────────
+function CategoryPicker({
+  categories,
+  categoryId,
+  onSelect,
+  onClose,
+}: {
+  categories: Category[];
+  categoryId: string;
+  onSelect: (id: string) => void;
+  onClose: () => void;
+}) {
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showCreateCategory, setShowCreateCategory] = useState(false);
+  const [newCatName, setNewCatName] = useState('');
+  const [newCatIcon, setNewCatIcon] = useState('📦');
+  const [newCatColor, setNewCatColor] = useState(CATEGORY_COLORS[Math.floor(Math.random() * CATEGORY_COLORS.length)]);
+  const [newCatParentId, setNewCatParentId] = useState<string | null>(null);
+  const [savingCat, setSavingCat] = useState(false);
+  const [localCats, setLocalCats] = useState<Category[]>(categories);
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  const parentCats = localCats.filter(c => !c.parent_id);
+  const getSubcats = (pid: string) => localCats.filter(c => c.parent_id === pid);
+  const grouped = parentCats.map(p => ({ parent: p, subcats: getSubcats(p.id) }));
+
+  const q = searchQuery.trim().toLowerCase();
+  const searchResults: Array<{ cat: Category; parent?: Category }> = q
+    ? localCats.filter(c => c.name.toLowerCase().includes(q)).map(c => ({
+        cat: c,
+        parent: c.parent_id ? localCats.find(p => p.id === c.parent_id) : undefined,
+      }))
+    : [];
+
+  function handleSelect(id: string) {
+    onSelect(id);
+    onClose();
+  }
+
+  async function handleCreateCategory(user_id: string) {
+    if (!newCatName) return;
+    setSavingCat(true);
+    try {
+      const { data } = await supabase
+        .from('categories')
+        .insert({ user_id, name: newCatName, icon: newCatIcon, color: newCatColor, parent_id: newCatParentId })
+        .select().single();
+      if (data) {
+        const { data: cats } = await supabase.from('categories').select('*').eq('user_id', user_id).order('position').order('created_at');
+        setLocalCats(cats || []);
+        onSelect(data.id);
+        setShowCreateCategory(false);
+        onClose();
+      }
+    } catch (err) { console.error(err); }
+    finally { setSavingCat(false); }
+  }
+
+  // We need user_id for create — passed via closure from parent
+  return null; // placeholder, see usage below
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
 export default function RecurringView({ user }: { user: User }) {
   const [items, setItems] = useState<RecurringExpense[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -16,7 +150,7 @@ export default function RecurringView({ user }: { user: User }) {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
-  // Form
+  // Form state
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
   const [notes, setNotes] = useState('');
@@ -26,33 +160,23 @@ export default function RecurringView({ user }: { user: User }) {
   const [endDate, setEndDate] = useState('');
   const [saving, setSaving] = useState(false);
 
-  function handleNumpad(key: string) {
-    if (key === 'backspace') {
-      setAmount(prev => prev.slice(0, -1));
-    } else if (key === '.') {
-      if (!amount.includes('.')) {
-        setAmount(prev => (prev || '0') + '.');
-      }
-    } else {
-      if (amount.includes('.')) {
-        const decimals = amount.split('.')[1];
-        if (decimals && decimals.length >= 2) return;
-      }
-      setAmount(prev => prev + key);
-    }
-  }
+  // Category picker state
+  const [showCategoryPicker, setShowCategoryPicker] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showCreateCategory, setShowCreateCategory] = useState(false);
+  const [newCatName, setNewCatName] = useState('');
+  const [newCatIcon, setNewCatIcon] = useState('📦');
+  const [newCatColor, setNewCatColor] = useState(CATEGORY_COLORS[Math.floor(Math.random() * CATEGORY_COLORS.length)]);
+  const [newCatParentId, setNewCatParentId] = useState<string | null>(null);
+  const [savingCat, setSavingCat] = useState(false);
 
   useEffect(() => { loadData(); }, []);
 
   async function loadData() {
     setLoading(true);
     const [{ data: rec }, { data: cats }] = await Promise.all([
-      supabase
-        .from('recurring_expenses')
-        .select('*, category:categories(*)')
-        .eq('user_id', user.id)
-        .order('description'),
-      supabase.from('categories').select('*').eq('user_id', user.id).order('name'),
+      supabase.from('recurring_expenses').select('*, category:categories(*)').eq('user_id', user.id).order('description'),
+      supabase.from('categories').select('*').eq('user_id', user.id).order('position').order('created_at'),
     ]);
     setItems(rec || []);
     setCategories(cats || []);
@@ -85,7 +209,6 @@ export default function RecurringView({ user }: { user: User }) {
   async function handleSave() {
     if (!amount || !description) return;
     setSaving(true);
-
     const data = {
       user_id: user.id,
       amount: parseFloat(amount),
@@ -97,7 +220,6 @@ export default function RecurringView({ user }: { user: User }) {
       end_date: endDate || null,
       is_active: true,
     };
-
     try {
       if (editingId) {
         await supabase.from('recurring_expenses').update(data).eq('id', editingId);
@@ -106,33 +228,84 @@ export default function RecurringView({ user }: { user: User }) {
       }
       setShowForm(false);
       loadData();
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setSaving(false);
-    }
+    } catch (err) { console.error(err); }
+    finally { setSaving(false); }
   }
 
-  async function toggleActive(id: string, current: boolean) {
-    await supabase.from('recurring_expenses').update({ is_active: !current }).eq('id', id);
-    loadData();
-  }
-
+  // Soft delete: mark as deleted, keep generated expenses intact
   async function handleDelete(id: string) {
-    if (confirm('¿Eliminar este gasto recurrente?')) {
-      await supabase.from('recurring_expenses').delete().eq('id', id);
-      loadData();
+    await supabase.from('recurring_expenses').update({ is_active: false, end_date: new Date().toISOString().split('T')[0] }).eq('id', id);
+    // Remove from list visually but keep in DB so past expenses still reference it
+    setItems(prev => prev.filter(i => i.id !== id));
+  }
+
+  function handleNumpad(key: string) {
+    if (key === 'backspace') {
+      setAmount(prev => prev.slice(0, -1));
+    } else if (key === '.') {
+      if (!amount.includes('.')) setAmount(prev => (prev || '0') + '.');
+    } else {
+      if (amount.includes('.')) {
+        const decimals = amount.split('.')[1];
+        if (decimals && decimals.length >= 2) return;
+      }
+      setAmount(prev => prev + key);
     }
   }
 
-  const totalMonthly = items
-    .filter(i => i.is_active)
-    .reduce((sum, i) => {
-      if (i.frequency === 'monthly') return sum + Number(i.amount);
-      if (i.frequency === 'weekly') return sum + Number(i.amount) * 4.33;
-      if (i.frequency === 'yearly') return sum + Number(i.amount) / 12;
-      return sum;
-    }, 0);
+  // Category picker helpers
+  const parentCats = categories.filter(c => !c.parent_id);
+  const getSubcats = (pid: string) => categories.filter(c => c.parent_id === pid);
+  const grouped = parentCats.map(p => ({ parent: p, subcats: getSubcats(p.id) }));
+  const q = searchQuery.trim().toLowerCase();
+  const searchResults: Array<{ cat: Category; parent?: Category }> = q
+    ? categories.filter(c => c.name.toLowerCase().includes(q)).map(c => ({
+        cat: c,
+        parent: c.parent_id ? categories.find(p => p.id === c.parent_id) : undefined,
+      }))
+    : [];
+
+  function handleSelectCategory(id: string) {
+    setCategoryId(id);
+    setShowCategoryPicker(false);
+    setSearchQuery('');
+  }
+
+  function openCreateCategory(parentId: string | null = null) {
+    setNewCatParentId(parentId);
+    setNewCatName('');
+    setNewCatIcon('📦');
+    setNewCatColor(CATEGORY_COLORS[Math.floor(Math.random() * CATEGORY_COLORS.length)]);
+    setShowCreateCategory(true);
+  }
+
+  async function handleCreateCategory() {
+    if (!newCatName) return;
+    setSavingCat(true);
+    try {
+      const { data } = await supabase.from('categories')
+        .insert({ user_id: user.id, name: newCatName, icon: newCatIcon, color: newCatColor, parent_id: newCatParentId })
+        .select().single();
+      if (data) {
+        const { data: cats } = await supabase.from('categories').select('*').eq('user_id', user.id).order('position').order('created_at');
+        setCategories(cats || []);
+        setCategoryId(data.id);
+        setShowCreateCategory(false);
+        setShowCategoryPicker(false);
+        setSearchQuery('');
+      }
+    } catch (err) { console.error(err); }
+    finally { setSavingCat(false); }
+  }
+
+  const selectedCat = categories.find(c => c.id === categoryId);
+
+  const totalMonthly = items.reduce((sum, i) => {
+    if (i.frequency === 'monthly') return sum + Number(i.amount);
+    if (i.frequency === 'weekly') return sum + Number(i.amount) * 4.33;
+    if (i.frequency === 'yearly') return sum + Number(i.amount) / 12;
+    return sum;
+  }, 0);
 
   const freqLabels: Record<string, string> = { weekly: 'Semanal', monthly: 'Mensual', yearly: 'Anual' };
 
@@ -152,7 +325,7 @@ export default function RecurringView({ user }: { user: User }) {
       <div className="bg-dark-800 rounded-xl p-4 mb-5">
         <p className="text-dark-400 text-xs">Total mensual estimado</p>
         <p className="text-2xl font-bold mt-1">{formatCurrency(totalMonthly)}</p>
-        <p className="text-dark-500 text-xs mt-1">{items.filter(i => i.is_active).length} gastos activos</p>
+        <p className="text-dark-500 text-xs mt-1">{items.length} gastos activos</p>
       </div>
 
       {loading ? (
@@ -164,24 +337,27 @@ export default function RecurringView({ user }: { user: User }) {
           <div className="text-5xl mb-4">🔄</div>
           <p className="text-dark-300 font-medium">No tenés gastos fijos</p>
           <p className="text-dark-500 text-sm mt-1">Agregá cosas como alquiler, Netflix, gym...</p>
-          <button
-            onClick={() => openForm()}
-            className="mt-4 bg-brand-600 text-white text-sm font-medium px-5 py-2.5 rounded-xl"
-          >
+          <button onClick={() => openForm()} className="mt-4 bg-brand-600 text-white text-sm font-medium px-5 py-2.5 rounded-xl">
             Agregar gasto fijo
           </button>
         </div>
       ) : (
         <div className="space-y-2">
           {items.map((item) => (
-            <div
+            <SwipeableRow
               key={item.id}
-              className={`bg-dark-800 rounded-xl p-3.5 flex items-center justify-between ${!item.is_active ? 'opacity-50' : ''}`}
+              onTap={() => openForm(item)}
+              onDelete={() => handleDelete(item.id)}
             >
-              <div className="flex items-center gap-3 flex-1 min-w-0">
-                <span className="text-xl">{(item as any).category?.icon || '🔄'}</span>
+              <div className="p-3.5 flex items-center gap-3">
+                <div
+                  className="w-10 h-10 rounded-xl flex items-center justify-center text-xl flex-shrink-0"
+                  style={{ backgroundColor: (item as any).category?.color || '#475569' }}
+                >
+                  {(item as any).category?.icon || '🔄'}
+                </div>
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium truncate">{item.description}</p>
+                  <p className="text-sm font-semibold truncate">{item.description}</p>
                   <p className="text-xs text-dark-400">
                     {freqLabels[item.frequency]}
                     {item.frequency !== 'weekly' && ` · Día ${item.day_of_month}`}
@@ -193,29 +369,15 @@ export default function RecurringView({ user }: { user: User }) {
                     </p>
                   )}
                 </div>
+                <span className="text-sm font-bold flex-shrink-0">{formatCurrency(Number(item.amount))}</span>
               </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
-                <span className="text-sm font-bold">{formatCurrency(Number(item.amount))}</span>
-                <button
-                  onClick={() => toggleActive(item.id, item.is_active)}
-                  className={`p-1.5 rounded-lg ${item.is_active ? 'text-brand-400' : 'text-dark-500'}`}
-                >
-                  {item.is_active ? <Pause size={14} /> : <Play size={14} />}
-                </button>
-                <button onClick={() => openForm(item)} className="p-1.5 text-dark-400 hover:text-dark-200">
-                  <Edit3 size={14} />
-                </button>
-                <button onClick={() => handleDelete(item.id)} className="p-1.5 text-dark-400 hover:text-red-400">
-                  <Trash2 size={14} />
-                </button>
-              </div>
-            </div>
+            </SwipeableRow>
           ))}
         </div>
       )}
 
-      {/* Form Modal - Fullscreen */}
-      {showForm && (
+      {/* ── Form Modal ── */}
+      {showForm && !showCategoryPicker && !showCreateCategory && (
         <div className="fixed inset-0 bg-dark-900 z-[60] flex flex-col slide-up">
           <div className="flex items-center justify-between px-4 pt-5 pb-3 flex-shrink-0">
             <button onClick={() => setShowForm(false)} className="p-1 text-dark-400 hover:text-white">
@@ -231,36 +393,47 @@ export default function RecurringView({ user }: { user: User }) {
             <p className="text-3xl font-extrabold text-white">{amount || '0'}</p>
           </div>
 
-          {/* Scrollable form fields */}
           <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+            {/* Description */}
             <div>
               <label className="text-xs text-dark-400 font-medium mb-1.5 block">Descripción *</label>
-              <div className="relative">
-                <FileText size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-dark-400" />
-                <input
-                  type="text"
-                  placeholder="Ej: Alquiler, Netflix, Gym..."
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 pl-9 pr-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors"
-                />
-              </div>
+              <input
+                type="text"
+                placeholder="Ej: Alquiler, Netflix, Gym..."
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors"
+              />
             </div>
 
+            {/* Category — same style as AddExpense */}
             <div>
               <label className="text-xs text-dark-400 font-medium mb-1.5 block">Categoría</label>
-              <select
-                value={categoryId}
-                onChange={(e) => setCategoryId(e.target.value)}
-                className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors appearance-none"
+              <button
+                onClick={() => setShowCategoryPicker(true)}
+                className="w-full flex items-center gap-3 bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-left transition-colors active:bg-dark-700"
               >
-                <option value="">Sin categoría</option>
-                {categories.map((cat) => (
-                  <option key={cat.id} value={cat.id}>{cat.icon} {cat.name}</option>
-                ))}
-              </select>
+                {selectedCat ? (
+                  <>
+                    <div className="w-7 h-7 rounded-full flex items-center justify-center text-base flex-shrink-0"
+                      style={{ backgroundColor: selectedCat.color + '30' }}>
+                      {selectedCat.icon}
+                    </div>
+                    <span className="flex-1 text-sm">{selectedCat.name}</span>
+                  </>
+                ) : (
+                  <>
+                    <div className="w-7 h-7 rounded-full bg-dark-700 flex items-center justify-center flex-shrink-0">
+                      <span className="text-dark-400 text-xs">🏷️</span>
+                    </div>
+                    <span className="flex-1 text-sm text-dark-500">Elegir categoría</span>
+                  </>
+                )}
+                <span className="text-dark-500 text-xs">›</span>
+              </button>
             </div>
 
+            {/* Frequency + day */}
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs text-dark-400 font-medium mb-1.5 block">Frecuencia</label>
@@ -277,9 +450,7 @@ export default function RecurringView({ user }: { user: User }) {
               <div>
                 <label className="text-xs text-dark-400 font-medium mb-1.5 block">Día del mes</label>
                 <input
-                  type="number"
-                  min="1"
-                  max="28"
+                  type="number" min="1" max="28"
                   value={dayOfMonth}
                   onChange={(e) => setDayOfMonth(e.target.value)}
                   className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors"
@@ -287,33 +458,27 @@ export default function RecurringView({ user }: { user: User }) {
               </div>
             </div>
 
-            {/* End date (optional) */}
+            {/* End date */}
             <div>
               <label className="text-xs text-dark-400 font-medium mb-1.5 flex items-center gap-1.5">
-                <CalendarOff size={12} />
-                Fecha de finalización (opcional)
+                <CalendarOff size={12} /> Fecha de finalización (opcional)
               </label>
               <div className="flex items-center gap-2">
                 <input
-                  type="date"
-                  value={endDate}
+                  type="date" value={endDate}
                   onChange={(e) => setEndDate(e.target.value)}
                   className="flex-1 bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors"
                 />
                 {endDate && (
-                  <button
-                    onClick={() => setEndDate('')}
-                    className="p-2.5 bg-dark-800 border border-dark-700 rounded-xl text-dark-400 hover:text-red-400 transition-colors"
-                  >
+                  <button onClick={() => setEndDate('')} className="p-2.5 bg-dark-800 border border-dark-700 rounded-xl text-dark-400 hover:text-red-400 transition-colors">
                     <X size={16} />
                   </button>
                 )}
               </div>
-              {!endDate && (
-                <p className="text-[10px] text-dark-500 mt-1">Sin fecha = se repite indefinidamente</p>
-              )}
+              {!endDate && <p className="text-[10px] text-dark-500 mt-1">Sin fecha = se repite indefinidamente</p>}
             </div>
 
+            {/* Notes */}
             <div>
               <label className="text-xs text-dark-400 font-medium mb-1.5 block">Notas (opcional)</label>
               <textarea
@@ -326,7 +491,7 @@ export default function RecurringView({ user }: { user: User }) {
             </div>
           </div>
 
-          {/* Bottom: button + numpad */}
+          {/* Bottom: save + numpad */}
           <div className="flex-shrink-0">
             <div className="px-5 py-3">
               <button
@@ -342,12 +507,8 @@ export default function RecurringView({ user }: { user: User }) {
                 {['1','2','3','4','5','6','7','8','9','.','0','backspace'].map((key) => {
                   const isDel = key === 'backspace';
                   return (
-                    <button
-                      key={key}
-                      onClick={() => {
-                        if (isDel) handleNumpad('backspace');
-                        else handleNumpad(key);
-                      }}
+                    <button key={key}
+                      onClick={() => isDel ? handleNumpad('backspace') : handleNumpad(key)}
                       className="py-[14px] text-center text-xl font-medium border-b border-r border-dark-800 active:bg-dark-700 transition-colors bg-dark-900 text-white"
                     >
                       {isDel ? <span className="flex items-center justify-center"><Delete size={22} /></span> : key}
@@ -357,6 +518,174 @@ export default function RecurringView({ user }: { user: User }) {
               </div>
               <div className="h-[env(safe-area-inset-bottom)]" />
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Category Picker (pantalla completa, igual que AddExpense) ── */}
+      {showForm && showCategoryPicker && !showCreateCategory && (
+        <div className="fixed inset-0 bg-dark-900 z-[70] flex flex-col slide-up">
+          {/* Header */}
+          <div className="flex items-center justify-between px-4 pt-5 pb-3 flex-shrink-0">
+            <button onClick={() => { setShowCategoryPicker(false); setSearchQuery(''); }} className="p-1 text-dark-400 hover:text-white">
+              <ArrowLeft size={24} />
+            </button>
+            <h2 className="text-base font-bold">Categoría</h2>
+            <button
+              onClick={() => openCreateCategory(null)}
+              className="w-8 h-8 rounded-full bg-dark-700 flex items-center justify-center text-dark-400 hover:text-white transition-colors"
+            >
+              <Settings size={16} />
+            </button>
+          </div>
+
+          {/* Search */}
+          <div className="px-4 pb-3 flex-shrink-0">
+            <div className="flex items-center gap-2 bg-dark-800 rounded-2xl px-4 py-3">
+              <Search size={16} className="text-dark-400 flex-shrink-0" />
+              <input
+                type="text" placeholder="Buscar categorías"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="flex-1 bg-transparent text-sm placeholder:text-dark-500 focus:outline-none"
+              />
+              {searchQuery && (
+                <button onClick={() => setSearchQuery('')} className="text-dark-400"><X size={14} /></button>
+              )}
+            </div>
+          </div>
+
+          {/* List */}
+          <div className="flex-1 overflow-y-auto">
+            {searchQuery.trim() ? (
+              searchResults.length === 0 ? (
+                <div className="text-center py-10 text-dark-500 text-sm">Sin resultados</div>
+              ) : (
+                <div>
+                  {searchResults.map(({ cat, parent }) => {
+                    const isActive = categoryId === cat.id;
+                    return (
+                      <button key={cat.id} onClick={() => handleSelectCategory(cat.id)}
+                        className={`w-full flex items-center gap-3 px-5 py-3.5 border-b border-dark-800/60 transition-colors ${isActive ? 'bg-dark-800' : 'active:bg-dark-800/60'}`}>
+                        <div className="w-9 h-9 rounded-full flex items-center justify-center text-lg flex-shrink-0"
+                          style={{ backgroundColor: (cat.color || parent?.color || '#475569') + '30' }}>
+                          {cat.icon}
+                        </div>
+                        <div className="flex-1 text-left">
+                          <p className="text-sm font-medium">{cat.name}</p>
+                          {parent && <p className="text-xs text-dark-400">{parent.name}</p>}
+                        </div>
+                        {isActive && <Check size={18} className="text-brand-400 flex-shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              )
+            ) : (
+              <div className="pb-6">
+                {grouped.map(({ parent, subcats }) => (
+                  <div key={parent.id}>
+                    <div className="px-5 pt-4 pb-1">
+                      <span className="text-xs font-bold text-dark-400 uppercase tracking-wider">{parent.name}</span>
+                    </div>
+                    <button onClick={() => handleSelectCategory(parent.id)}
+                      className={`w-full flex items-center gap-3 px-5 py-3.5 border-b border-dark-800/60 transition-colors ${categoryId === parent.id ? 'bg-dark-800' : 'active:bg-dark-800/60'}`}>
+                      <div className="w-9 h-9 rounded-full flex items-center justify-center text-lg flex-shrink-0"
+                        style={{ backgroundColor: parent.color + '30' }}>
+                        {parent.icon}
+                      </div>
+                      <p className="flex-1 text-left text-sm font-medium">{parent.name}</p>
+                      {categoryId === parent.id && <Check size={18} className="text-brand-400 flex-shrink-0" />}
+                    </button>
+                    {subcats.map((sub) => {
+                      const isActive = categoryId === sub.id;
+                      return (
+                        <button key={sub.id} onClick={() => handleSelectCategory(sub.id)}
+                          className={`w-full flex items-center gap-3 pl-10 pr-5 py-3 border-b border-dark-800/40 transition-colors ${isActive ? 'bg-dark-800' : 'active:bg-dark-800/60'}`}>
+                          <div className="w-7 h-7 rounded-full flex items-center justify-center text-sm flex-shrink-0"
+                            style={{ backgroundColor: (sub.color || parent.color) + '30' }}>
+                            {sub.icon}
+                          </div>
+                          <p className="flex-1 text-left text-sm text-dark-200">{sub.name}</p>
+                          {isActive && <Check size={16} className="text-brand-400 flex-shrink-0" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Create Category ── */}
+      {showForm && showCreateCategory && (
+        <div className="fixed inset-0 bg-dark-900 z-[80] flex flex-col slide-up">
+          <div className="flex items-center justify-between px-4 pt-5 pb-3 flex-shrink-0">
+            <button onClick={() => setShowCreateCategory(false)} className="p-1 text-dark-400 hover:text-white">
+              <ArrowLeft size={24} />
+            </button>
+            <h2 className="text-base font-bold">Nueva categoría</h2>
+            <div className="w-8" />
+          </div>
+
+          {/* Parent selector */}
+          <div className="px-5 pb-2 flex-shrink-0">
+            <p className="text-xs text-dark-400 font-medium mb-2 uppercase tracking-wider">Tipo</p>
+            <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
+              <button onClick={() => setNewCatParentId(null)}
+                className={`flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${newCatParentId === null ? 'bg-brand-600 text-white' : 'bg-dark-700 text-dark-300'}`}>
+                Principal
+              </button>
+              {parentCats.map(p => (
+                <button key={p.id} onClick={() => setNewCatParentId(p.id)}
+                  className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${newCatParentId === p.id ? 'bg-brand-600 text-white' : 'bg-dark-700 text-dark-300'}`}>
+                  <span>{p.icon}</span><span>{p.name}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-5 pb-8">
+            <div className="flex items-center gap-4 py-5">
+              <div className="w-16 h-16 rounded-full flex items-center justify-center text-3xl flex-shrink-0"
+                style={{ backgroundColor: newCatColor }}>{newCatIcon}</div>
+              <input type="text" placeholder="Nombre de categoría" value={newCatName}
+                onChange={(e) => setNewCatName(e.target.value)} autoFocus
+                className="flex-1 text-lg font-semibold bg-transparent focus:outline-none border-b border-dark-700 pb-2 placeholder:text-dark-500" />
+            </div>
+
+            <div className="mb-5">
+              <p className="text-xs text-dark-400 font-medium mb-2.5 uppercase tracking-wider">Color</p>
+              <div className="flex gap-2 overflow-x-auto pb-2" style={{ scrollbarWidth: 'none' }}>
+                {CATEGORY_COLORS.map((c) => (
+                  <button key={c} onClick={() => setNewCatColor(c)}
+                    className={`w-8 h-8 rounded-full flex-shrink-0 transition-all ${newCatColor === c ? 'ring-2 ring-white ring-offset-2 ring-offset-dark-900 scale-110' : ''}`}
+                    style={{ backgroundColor: c }} />
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <p className="text-xs text-dark-400 font-medium mb-2.5 uppercase tracking-wider">Ícono</p>
+              <div className="grid grid-cols-6 gap-2">
+                {CATEGORY_ICONS.map((ic) => (
+                  <button key={ic} onClick={() => setNewCatIcon(ic)}
+                    className={`aspect-square rounded-xl flex items-center justify-center text-xl transition-all ${newCatIcon === ic ? 'bg-dark-600 ring-2 ring-brand-500' : 'bg-dark-800 hover:bg-dark-700'}`}>
+                    {ic}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="px-4 py-4 bg-dark-900 border-t border-dark-800 flex-shrink-0">
+            <button onClick={handleCreateCategory} disabled={!newCatName || savingCat}
+              className="w-full py-4 rounded-2xl font-bold text-base transition-all disabled:opacity-30"
+              style={{ backgroundColor: newCatColor, color: 'white' }}>
+              {savingCat ? 'Creando...' : 'Crear categoría'}
+            </button>
           </div>
         </div>
       )}
