@@ -39,9 +39,9 @@ interface DrillDown {
   expenses: ExpenseDetail[];
 }
 
-// ── SVG Donut with floating % labels ─────────────────────────────────────────
-function DonutChart({ cats, total }: { cats: CatSpend[]; total: number; }) {
-  const R = 70; const r = 42; const cx = 100; const cy = 100;
+// ── SVG Donut matching Wallet iOS style ──────────────────────────────────────
+function DonutChart({ cats, total, onPress }: { cats: CatSpend[]; total: number; onPress: (cat: CatSpend) => void }) {
+  const R = 85; const r = 52; const cx = 150; const cy = 150;
   let cumAngle = -90;
 
   const slices = cats.map(cat => {
@@ -66,11 +66,17 @@ function DonutChart({ cats, total }: { cats: CatSpend[]; total: number; }) {
     return `M ${s1.x} ${s1.y} A ${outerR} ${outerR} 0 ${large} 1 ${e1.x} ${e1.y} L ${s2.x} ${s2.y} A ${innerR} ${innerR} 0 ${large} 0 ${e2.x} ${e2.y} Z`;
   }
 
+  // Position icon + label outside, with connector line
+  // Use a larger radius for icons so they don't overlap
+  const ICON_R = 128;
+  const PCT_OFFSET = 18; // below icon center
+
   return (
-    <svg viewBox="-30 -30 260 260" width="100%" height={200} style={{ display: 'block', overflow: 'visible' }}>
+    <svg viewBox="0 0 300 300" width="100%" height={260} style={{ display: 'block', overflow: 'visible' }}>
+      {/* Arcs */}
       {slices.map((s, i) => {
         if (s.pct < 0.001) return null;
-        const gap = 1.5;
+        const gap = 1.2;
         return (
           <path
             key={i}
@@ -80,27 +86,39 @@ function DonutChart({ cats, total }: { cats: CatSpend[]; total: number; }) {
         );
       })}
 
-      {/* Icon circles + % labels floating outside */}
+      {/* Connector lines + icon circles + % labels */}
       {slices.map((s, i) => {
-        if (s.pct < 0.04) return null;
+        if (s.pct < 0.03) return null;
         const midAngle = s.startA + (s.endA - s.startA) / 2;
-        const iconR = R + 20;
-        const pctR = R + 36;
-        const iconPos = polarToXY(midAngle, iconR);
-        const pctPos = polarToXY(midAngle, pctR);
+        const lineStart = polarToXY(midAngle, R + 2);
+        const lineEnd = polarToXY(midAngle, ICON_R - 14);
+        const iconPos = polarToXY(midAngle, ICON_R);
+        const pctPos = polarToXY(midAngle, ICON_R + PCT_OFFSET);
+        const iconRadius = s.pct > 0.12 ? 16 : 13;
+
         return (
           <g key={i}>
+            {/* Connector line */}
+            <line
+              x1={lineStart.x} y1={lineStart.y}
+              x2={lineEnd.x} y2={lineEnd.y}
+              stroke={s.color}
+              strokeWidth={1.2}
+              opacity={0.7}
+            />
             {/* Icon circle */}
-            <circle cx={iconPos.x} cy={iconPos.y} r={11} fill={s.color} />
-            <text x={iconPos.x} y={iconPos.y} textAnchor="middle" dominantBaseline="middle" fontSize={11}>
+            <circle cx={iconPos.x} cy={iconPos.y} r={iconRadius} fill={s.color} />
+            <text
+              x={iconPos.x} y={iconPos.y}
+              textAnchor="middle" dominantBaseline="middle"
+              fontSize={iconRadius * 1.1}
+            >
               {s.icon}
             </text>
-            {/* % label */}
+            {/* % below icon */}
             <text
-              x={pctPos.x}
-              y={pctPos.y}
-              textAnchor="middle"
-              dominantBaseline="middle"
+              x={pctPos.x} y={pctPos.y}
+              textAnchor="middle" dominantBaseline="middle"
               fill={s.color}
               fontSize={9}
               fontWeight={700}
@@ -111,7 +129,16 @@ function DonutChart({ cats, total }: { cats: CatSpend[]; total: number; }) {
         );
       })}
 
-      {/* Center total */}
+      {/* Center: total */}
+      <text x={cx} y={cy - 8} textAnchor="middle" fill="white" fontSize={14} fontWeight={700}>
+        -{formatCurrency(total)}
+      </text>
+      <text x={cx} y={cy + 10} textAnchor="middle" fill="#64748b" fontSize={10}>
+        Gastos totales
+      </text>
+    </svg>
+  );
+}
       <text x={cx} y={cy - 6} textAnchor="middle" fill="white" fontSize={13} fontWeight={700}>
         -{formatCurrency(total)}
       </text>
@@ -343,8 +370,8 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
       ) : (
         <>
           {/* Donut */}
-          <div className="px-6 mb-1">
-            <DonutChart cats={catSpending} total={totalSpent} />
+          <div className="px-2 mb-2">
+            <DonutChart cats={catSpending} total={totalSpent} onPress={(cat) => openDrillDown(cat.id, cat.name, cat.icon, cat.color)} />
           </div>
 
           {/* Category list */}
