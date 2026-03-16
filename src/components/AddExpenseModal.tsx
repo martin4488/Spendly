@@ -1,12 +1,12 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { Category } from '@/types';
 import { CURRENCIES, convertCurrency, formatWithCurrency, CurrencyCode } from '@/lib/currency';
 import { CATEGORY_ICONS, CATEGORY_COLORS } from '@/lib/utils';
-import { X, Calendar, Delete, ChevronDown, Settings, Check, ArrowLeft } from 'lucide-react';
+import { X, Calendar, Delete, ChevronDown, Search, Settings, ArrowLeft, Check } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 
@@ -29,9 +29,7 @@ interface Props {
 export default function AddExpenseModal({ user, defaultCurrency, onClose, onSaved, editingExpense }: Props) {
   const [categories, setCategories] = useState<Category[]>([]);
   const [amountStr, setAmountStr] = useState(
-    editingExpense
-      ? String(editingExpense.original_amount || editingExpense.amount)
-      : ''
+    editingExpense ? String(editingExpense.original_amount || editingExpense.amount) : ''
   );
   const [description, setDescription] = useState(editingExpense?.description || '');
   const [categoryId, setCategoryId] = useState(editingExpense?.category_id || '');
@@ -44,21 +42,30 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
   const [showCurrencyPicker, setShowCurrencyPicker] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  // Create category inline
+  // Search
+  const [searchQuery, setSearchQuery] = useState('');
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  // Create category screen
   const [showCreateCategory, setShowCreateCategory] = useState(false);
   const [newCatName, setNewCatName] = useState('');
   const [newCatIcon, setNewCatIcon] = useState('📦');
   const [newCatColor, setNewCatColor] = useState(CATEGORY_COLORS[Math.floor(Math.random() * CATEGORY_COLORS.length)]);
+  const [newCatParentId, setNewCatParentId] = useState<string | null>(null);
   const [savingCat, setSavingCat] = useState(false);
 
   useEffect(() => {
-    supabase
+    loadCategories();
+  }, [user.id]);
+
+  async function loadCategories() {
+    const { data } = await supabase
       .from('categories')
       .select('*')
       .eq('user_id', user.id)
-      .order('name')
-      .then(({ data }) => setCategories(data || []));
-  }, [user.id]);
+      .order('name');
+    setCategories(data || []);
+  }
 
   const selectedCat = categories.find(c => c.id === categoryId);
   const parentCats = categories.filter(c => !c.parent_id);
@@ -71,25 +78,36 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
 
   const today = new Date().toISOString().split('T')[0];
   const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
-  const dateLabel = date === today ? 'Hoy' : date === yesterday ? 'Ayer' : format(parseISO(date), "d 'de' MMM yyyy", { locale: es });
+  const dateLabel =
+    date === today ? 'Hoy'
+    : date === yesterday ? 'Ayer'
+    : format(parseISO(date), "d 'de' MMM yyyy", { locale: es });
 
-  // Converted amount preview
   const amt = parseFloat(amountStr) || 0;
   const isOtherCurrency = currency !== defaultCurrency;
   const convertedAmount = isOtherCurrency ? convertCurrency(amt, currency, defaultCurrency) : null;
-
   const currencyInfo = CURRENCIES[currency];
-
-  // Save is only enabled if amount is valid AND a category is selected
   const canSave = !saving && !!amountStr && parseFloat(amountStr) > 0 && !!categoryId;
+
+  // Search filter — searches across all cats (parent + sub)
+  const q = searchQuery.trim().toLowerCase();
+  const searchResults: Array<{ cat: Category; parent?: Category }> = q
+    ? categories
+        .filter(c => c.name.toLowerCase().includes(q))
+        .map(c => ({
+          cat: c,
+          parent: c.parent_id ? categories.find(p => p.id === c.parent_id) : undefined,
+        }))
+    : [];
+
+  // Grouped list for normal view
+  const grouped = parentCats.map(p => ({ parent: p, subcats: getSubcats(p.id) }));
 
   function handleNumpad(key: string) {
     if (key === 'backspace') {
       setAmountStr(prev => prev.slice(0, -1));
     } else if (key === '.') {
-      if (!amountStr.includes('.')) {
-        setAmountStr(prev => (prev || '0') + '.');
-      }
+      if (!amountStr.includes('.')) setAmountStr(prev => (prev || '0') + '.');
     } else {
       if (amountStr.includes('.')) {
         const decimals = amountStr.split('.')[1];
@@ -99,31 +117,36 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
     }
   }
 
+  function handleSelectCategory(id: string) {
+    setCategoryId(id);
+    setShowCategoryPicker(false);
+    setSearchQuery('');
+  }
+
+  function openCreateCategory(parentId: string | null = null) {
+    setNewCatParentId(parentId);
+    setNewCatName('');
+    setNewCatIcon('📦');
+    setNewCatColor(CATEGORY_COLORS[Math.floor(Math.random() * CATEGORY_COLORS.length)]);
+    setShowCreateCategory(true);
+  }
+
   async function handleCreateCategory() {
     if (!newCatName) return;
     setSavingCat(true);
     try {
-      const { data } = await supabase.from('categories').insert({
-        user_id: user.id,
-        name: newCatName,
-        icon: newCatIcon,
-        color: newCatColor,
-      }).select().single();
-
+      const { data } = await supabase
+        .from('categories')
+        .insert({ user_id: user.id, name: newCatName, icon: newCatIcon, color: newCatColor, parent_id: newCatParentId })
+        .select()
+        .single();
+      await loadCategories();
       if (data) {
-        // Refresh categories and select the new one
-        const { data: cats } = await supabase
-          .from('categories')
-          .select('*')
-          .eq('user_id', user.id)
-          .order('name');
-        setCategories(cats || []);
         setCategoryId(data.id);
+        setShowCreateCategory(false);
+        setShowCategoryPicker(false);
+        setSearchQuery('');
       }
-      setShowCreateCategory(false);
-      setNewCatName('');
-      setNewCatIcon('📦');
-      setNewCatColor(CATEGORY_COLORS[Math.floor(Math.random() * CATEGORY_COLORS.length)]);
     } catch (err) {
       console.error(err);
     } finally {
@@ -136,7 +159,6 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
     if (!amt || amt <= 0 || !categoryId) return;
     setSaving(true);
 
-    // Calculate final amount in default currency
     let finalAmount = amt;
     let originalCurrency: string | null = null;
     let originalAmount: number | null = null;
@@ -178,7 +200,8 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
 
   return (
     <div className="fixed inset-0 z-[60] flex flex-col bg-dark-900">
-      {/* ===== HEADER with category color ===== */}
+
+      {/* ===== HEADER ===== */}
       <div className="pt-12 pb-5 px-5 relative flex-shrink-0" style={{ backgroundColor: headerColor }}>
         <button onClick={onClose} className="absolute top-4 left-4 p-1 text-white/80 hover:text-white">
           <X size={24} />
@@ -199,7 +222,6 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
           <div className="text-right">
             <div className="flex items-center justify-end gap-2">
               <span className="text-3xl font-extrabold text-white">-{displayAmount}</span>
-              {/* Currency selector button */}
               <button
                 onClick={() => setShowCurrencyPicker(true)}
                 className="flex items-center gap-0.5 bg-white/20 rounded-full px-2 py-1 text-white/90"
@@ -208,11 +230,8 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
                 <ChevronDown size={12} />
               </button>
             </div>
-            {/* Show conversion preview */}
             {isOtherCurrency && convertedAmount !== null && amt > 0 && (
-              <p className="text-white/50 text-xs mt-0.5">
-                ≈ {formatWithCurrency(convertedAmount, defaultCurrency)}
-              </p>
+              <p className="text-white/50 text-xs mt-0.5">≈ {formatWithCurrency(convertedAmount, defaultCurrency)}</p>
             )}
             {!isOtherCurrency && (
               <p className="text-white/60 text-xs mt-0.5">{currency}</p>
@@ -221,9 +240,8 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
         </div>
       </div>
 
-      {/* ===== FORM FIELDS (scrollable middle) ===== */}
+      {/* ===== FORM FIELDS ===== */}
       <div className="flex-1 overflow-y-auto">
-        {/* Date */}
         <button
           onClick={() => setShowDatePicker(!showDatePicker)}
           className="flex items-center gap-3 px-5 py-4 border-b border-dark-800 w-full"
@@ -251,7 +269,6 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
           </div>
         )}
 
-        {/* Description */}
         <div className="flex items-center gap-3 px-5 py-4 border-b border-dark-800">
           <span className="text-dark-400 text-lg">✏️</span>
           <input
@@ -263,7 +280,6 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
           />
         </div>
 
-        {/* Category required hint */}
         {!categoryId && (
           <button
             onClick={() => setShowCategoryPicker(true)}
@@ -276,7 +292,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
         )}
       </div>
 
-      {/* ===== BOTTOM SECTION (always visible) ===== */}
+      {/* ===== BOTTOM SECTION ===== */}
       <div className="flex-shrink-0">
         <div className="px-5 py-3">
           <button
@@ -295,10 +311,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
               return (
                 <button
                   key={key}
-                  onClick={() => {
-                    if (isDel) handleNumpad('backspace');
-                    else handleNumpad(key);
-                  }}
+                  onClick={() => isDel ? handleNumpad('backspace') : handleNumpad(key)}
                   className="py-[14px] text-center text-xl font-medium border-b border-r border-dark-800 active:bg-dark-700 transition-colors bg-dark-900 text-white"
                 >
                   {isDel ? <span className="flex items-center justify-center"><Delete size={22} /></span> : key}
@@ -349,99 +362,175 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
         </div>
       )}
 
-      {/* ===== CATEGORY PICKER OVERLAY - Grid style ===== */}
+      {/* ===== CATEGORY PICKER — estilo YNAB lista ===== */}
       {showCategoryPicker && !showCreateCategory && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-end">
-          <div className="bg-dark-800 w-full rounded-t-3xl max-h-[75vh] overflow-y-auto slide-up">
-            <div className="flex items-center justify-between p-4 border-b border-dark-700 sticky top-0 bg-dark-800 z-10">
-              <h3 className="text-base font-bold">Categoría</h3>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setShowCreateCategory(true)}
-                  className="w-8 h-8 rounded-full bg-dark-700 flex items-center justify-center text-dark-400 hover:text-white transition-colors"
-                >
-                  <Settings size={16} />
-                </button>
-                <button
-                  onClick={() => setShowCategoryPicker(false)}
-                  className="w-8 h-8 rounded-full bg-dark-700 flex items-center justify-center text-dark-400 hover:text-white transition-colors"
-                >
-                  <Check size={16} />
-                </button>
-              </div>
-            </div>
+        <div className="fixed inset-0 bg-dark-900 z-[60] flex flex-col slide-up">
 
-            <div className="p-4 grid grid-cols-4 gap-3">
-              {parentCats.map((cat) => {
-                const isActive = categoryId === cat.id;
-                return (
-                  <button
-                    key={cat.id}
-                    onClick={() => { setCategoryId(cat.id); setShowCategoryPicker(false); }}
-                    className="flex flex-col items-center gap-1.5"
-                  >
-                    <div
-                      className={`w-14 h-14 rounded-full flex items-center justify-center text-xl transition-all ${
-                        isActive ? 'ring-2 ring-brand-500 ring-offset-2 ring-offset-dark-800' : ''
-                      }`}
-                      style={{ backgroundColor: cat.color + '25' }}
-                    >
-                      {cat.icon}
+          {/* Header */}
+          <div className="flex items-center justify-between px-4 pt-5 pb-3 flex-shrink-0">
+            <button
+              onClick={() => { setShowCategoryPicker(false); setSearchQuery(''); }}
+              className="p-1 text-dark-400 hover:text-white"
+            >
+              <ArrowLeft size={24} />
+            </button>
+            <h2 className="text-base font-bold">Categoría</h2>
+            <button
+              onClick={() => openCreateCategory(null)}
+              className="w-8 h-8 rounded-full bg-dark-700 flex items-center justify-center text-dark-400 hover:text-white transition-colors"
+            >
+              <Settings size={16} />
+            </button>
+          </div>
+
+          {/* Search bar */}
+          <div className="px-4 pb-3 flex-shrink-0">
+            <div className="flex items-center gap-2 bg-dark-800 rounded-2xl px-4 py-3">
+              <Search size={16} className="text-dark-400 flex-shrink-0" />
+              <input
+                ref={searchRef}
+                type="text"
+                placeholder="Buscar categorías"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="flex-1 bg-transparent text-sm placeholder:text-dark-500 focus:outline-none"
+              />
+              {searchQuery && (
+                <button onClick={() => setSearchQuery('')} className="text-dark-400">
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* List */}
+          <div className="flex-1 overflow-y-auto">
+            {searchQuery.trim() ? (
+              // ── Search results ──
+              searchResults.length === 0 ? (
+                <div className="text-center py-10 text-dark-500 text-sm">Sin resultados</div>
+              ) : (
+                <div>
+                  {searchResults.map(({ cat, parent }) => {
+                    const isActive = categoryId === cat.id;
+                    return (
+                      <button
+                        key={cat.id}
+                        onClick={() => handleSelectCategory(cat.id)}
+                        className={`w-full flex items-center gap-3 px-5 py-3.5 border-b border-dark-800/60 transition-colors ${isActive ? 'bg-dark-800' : 'active:bg-dark-800/60'}`}
+                      >
+                        <div
+                          className="w-9 h-9 rounded-full flex items-center justify-center text-lg flex-shrink-0"
+                          style={{ backgroundColor: (cat.color || parent?.color || '#475569') + '30' }}
+                        >
+                          {cat.icon}
+                        </div>
+                        <div className="flex-1 text-left">
+                          <p className="text-sm font-medium">{cat.name}</p>
+                          {parent && <p className="text-xs text-dark-400">{parent.name}</p>}
+                        </div>
+                        {isActive && <Check size={18} className="text-brand-400 flex-shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              )
+            ) : (
+              // ── Grouped list ──
+              <div className="pb-6">
+                {grouped.map(({ parent, subcats }) => (
+                  <div key={parent.id}>
+                    {/* Section label */}
+                    <div className="px-5 pt-4 pb-1">
+                      <span className="text-xs font-bold text-dark-400 uppercase tracking-wider">{parent.name}</span>
                     </div>
-                    <span className="text-[10px] text-dark-300 text-center leading-tight truncate w-full">{cat.name}</span>
-                  </button>
-                );
-              })}
-            </div>
 
-            {/* Subcategories section */}
-            {parentCats.some(c => getSubcats(c.id).length > 0) && (
-              <div className="px-4 pb-4">
-                <p className="text-[10px] text-dark-500 uppercase tracking-wider font-semibold mb-2">Subcategorías</p>
-                <div className="grid grid-cols-4 gap-3">
-                  {parentCats.flatMap((cat) =>
-                    getSubcats(cat.id).map((sub) => {
+                    {/* Parent row */}
+                    <button
+                      onClick={() => handleSelectCategory(parent.id)}
+                      className={`w-full flex items-center gap-3 px-5 py-3.5 border-b border-dark-800/60 transition-colors ${categoryId === parent.id ? 'bg-dark-800' : 'active:bg-dark-800/60'}`}
+                    >
+                      <div
+                        className="w-9 h-9 rounded-full flex items-center justify-center text-lg flex-shrink-0"
+                        style={{ backgroundColor: parent.color + '30' }}
+                      >
+                        {parent.icon}
+                      </div>
+                      <p className="flex-1 text-left text-sm font-medium">{parent.name}</p>
+                      {categoryId === parent.id && <Check size={18} className="text-brand-400 flex-shrink-0" />}
+                    </button>
+
+                    {/* Subcats */}
+                    {subcats.map((sub) => {
                       const isActive = categoryId === sub.id;
                       return (
                         <button
                           key={sub.id}
-                          onClick={() => { setCategoryId(sub.id); setShowCategoryPicker(false); }}
-                          className="flex flex-col items-center gap-1.5"
+                          onClick={() => handleSelectCategory(sub.id)}
+                          className={`w-full flex items-center gap-3 pl-10 pr-5 py-3 border-b border-dark-800/40 transition-colors ${isActive ? 'bg-dark-800' : 'active:bg-dark-800/60'}`}
                         >
                           <div
-                            className={`w-12 h-12 rounded-full flex items-center justify-center text-lg transition-all ${
-                              isActive ? 'ring-2 ring-brand-500 ring-offset-2 ring-offset-dark-800' : ''
-                            }`}
-                            style={{ backgroundColor: (sub.color || cat.color) + '25' }}
+                            className="w-7 h-7 rounded-full flex items-center justify-center text-sm flex-shrink-0"
+                            style={{ backgroundColor: (sub.color || parent.color) + '30' }}
                           >
                             {sub.icon}
                           </div>
-                          <span className="text-[10px] text-dark-400 text-center leading-tight truncate w-full">{sub.name}</span>
+                          <p className="flex-1 text-left text-sm text-dark-200">{sub.name}</p>
+                          {isActive && <Check size={16} className="text-brand-400 flex-shrink-0" />}
                         </button>
                       );
-                    })
-                  )}
-                </div>
+                    })}
+                  </div>
+                ))}
               </div>
             )}
-            <div className="h-4" />
           </div>
         </div>
       )}
 
-      {/* ===== INLINE CREATE CATEGORY ===== */}
+      {/* ===== CREATE CATEGORY ===== */}
       {showCreateCategory && (
         <div className="fixed inset-0 bg-dark-900 z-[70] flex flex-col slide-up">
           <div className="flex items-center justify-between px-4 pt-5 pb-3 flex-shrink-0">
-            <button onClick={() => setShowCreateCategory(false)} className="p-1 text-dark-400 hover:text-white">
+            <button
+              onClick={() => setShowCreateCategory(false)}
+              className="p-1 text-dark-400 hover:text-white"
+            >
               <ArrowLeft size={24} />
             </button>
             <h2 className="text-base font-bold">Nueva categoría</h2>
             <div className="w-8" />
           </div>
 
+          {/* Parent selector */}
+          <div className="px-5 pb-2 flex-shrink-0">
+            <p className="text-xs text-dark-400 font-medium mb-2 uppercase tracking-wider">Tipo</p>
+            <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
+              <button
+                onClick={() => setNewCatParentId(null)}
+                className={`flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                  newCatParentId === null ? 'bg-brand-600 text-white' : 'bg-dark-700 text-dark-300'
+                }`}
+              >
+                Principal
+              </button>
+              {parentCats.map(p => (
+                <button
+                  key={p.id}
+                  onClick={() => setNewCatParentId(p.id)}
+                  className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                    newCatParentId === p.id ? 'bg-brand-600 text-white' : 'bg-dark-700 text-dark-300'
+                  }`}
+                >
+                  <span>{p.icon}</span>
+                  <span>{p.name}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="flex-1 overflow-y-auto px-5 pb-8">
-            {/* Preview */}
+            {/* Preview + name */}
             <div className="flex items-center gap-4 py-5">
               <div
                 className="w-16 h-16 rounded-full flex items-center justify-center text-3xl flex-shrink-0"
@@ -455,6 +544,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
                 value={newCatName}
                 onChange={(e) => setNewCatName(e.target.value)}
                 className="flex-1 text-lg font-semibold bg-transparent focus:outline-none border-b border-dark-700 pb-2 placeholder:text-dark-500"
+                autoFocus
               />
             </div>
 
@@ -484,9 +574,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
                     key={ic}
                     onClick={() => setNewCatIcon(ic)}
                     className={`aspect-square rounded-xl flex items-center justify-center text-xl transition-all ${
-                      newCatIcon === ic
-                        ? 'bg-dark-600 ring-2 ring-brand-500'
-                        : 'bg-dark-800 hover:bg-dark-700'
+                      newCatIcon === ic ? 'bg-dark-600 ring-2 ring-brand-500' : 'bg-dark-800 hover:bg-dark-700'
                     }`}
                   >
                     {ic}
