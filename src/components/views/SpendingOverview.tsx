@@ -42,13 +42,13 @@ interface DrillDown {
 // ── SVG Donut — estilo Wallet iOS ────────────────────────────────────────────
 function DonutChart({ cats, total }: { cats: CatSpend[]; total: number }) {
   // Canvas center and radii
-  const CX = 160; const CY = 160;
-  const R_OUTER = 90;   // donut outer edge
-  const R_INNER = 56;   // donut inner edge (hole)
-  const R_ICON  = 116;  // center of icon bubble
+  const CX = 185; const CY = 165;
+  const R_OUTER = 90;
+  const R_INNER = 56;
+  const R_ICON  = 116;
   const R_LINE_START = R_OUTER + 2;
   const R_LINE_END   = R_ICON - 16;
-  const R_LABEL = R_ICON + 26; // % label radius — well outside icon
+  const R_LABEL = R_ICON + 28;
 
   let cumAngle = -90;
 
@@ -85,9 +85,9 @@ function DonutChart({ cats, total }: { cats: CatSpend[]; total: number }) {
 
   return (
     <svg
-      viewBox="0 0 320 320"
+      viewBox="0 0 370 330"
       width="100%"
-      height={280}
+      height={290}
       style={{ display: 'block', overflow: 'visible' }}
     >
       {/* ── Arcs ── */}
@@ -449,6 +449,12 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
           {/* Donut */}
           <div className="px-2 mb-2">
             <DonutChart cats={catSpending} total={totalSpent} />
+          </div>
+
+          {/* Total del período */}
+          <div className="flex items-center justify-between px-4 py-3 mb-1 border-t border-b border-dark-800/60">
+            <span className="text-xs text-dark-400 font-medium uppercase tracking-wider">Total gastado</span>
+            <span className="text-base font-bold text-red-400">-{formatCurrency(totalSpent)}</span>
           </div>
 
           {/* Category list */}
