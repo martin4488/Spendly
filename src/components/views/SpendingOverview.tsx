@@ -3,691 +3,471 @@
 import { useState, useEffect, useRef } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
-import { formatCurrency, CATEGORY_ICONS, CATEGORY_COLORS } from '@/lib/utils';
-import { Category, RecurringExpense } from '@/types';
-import { Plus, X, CalendarOff, Delete, Search, Settings, ArrowLeft, Check, Trash2 } from 'lucide-react';
-import { format, parseISO } from 'date-fns';
+import { formatCurrency } from '@/lib/utils';
+import {
+  format, parseISO,
+  addMonths, subMonths, startOfMonth, endOfMonth,
+  addYears, subYears, startOfYear, endOfYear,
+  eachDayOfInterval, eachMonthOfInterval,
+} from 'date-fns';
 import { es } from 'date-fns/locale';
+import { ArrowLeft, ChevronDown, ChevronRight } from 'lucide-react';
 
-// ── Swipe-to-delete row ───────────────────────────────────────────────────────
-function SwipeableRow({
-  children,
-  onTap,
-  onDelete,
-}: {
-  children: React.ReactNode;
-  onTap: () => void;
-  onDelete: () => void;
-}) {
-  const [offset, setOffset] = useState(0);
-  const [isDragging, setIsDragging] = useState(false);
-  const startXRef = useRef<number | null>(null);
-  const DELETE_THRESHOLD = 72;
-  const SNAP_THRESHOLD = 36;
+type ViewMode = 'months' | 'years';
 
-  function onTouchStart(e: React.TouchEvent) {
-    startXRef.current = e.touches[0].clientX;
-    setIsDragging(false);
-  }
-  function onTouchMove(e: React.TouchEvent) {
-    if (startXRef.current === null) return;
-    const dx = startXRef.current - e.touches[0].clientX;
-    if (dx > 5) setIsDragging(true);
-    if (dx > 0) setOffset(Math.min(dx, DELETE_THRESHOLD));
-    else if (dx < 0 && offset > 0) setOffset(Math.max(0, offset + dx));
-  }
-  function onTouchEnd() {
-    setOffset(offset > SNAP_THRESHOLD ? DELETE_THRESHOLD : 0);
-    startXRef.current = null;
-  }
-  function handleClick() {
-    if (isDragging) return;
-    if (offset > 0) { setOffset(0); return; }
-    onTap();
+// ── Tree ──────────────────────────────────────────────────────────────────────
+interface RawCat { id: string; name: string; icon: string; color: string; parent_id: string | null; }
+interface CatNode extends RawCat { children: CatNode[]; }
+
+function buildTree(flat: RawCat[]): CatNode[] {
+  const map = new Map<string, CatNode>();
+  flat.forEach(c => map.set(c.id, { ...c, children: [] }));
+  const roots: CatNode[] = [];
+  flat.forEach(c => {
+    if (c.parent_id && map.has(c.parent_id)) map.get(c.parent_id)!.children.push(map.get(c.id)!);
+    else if (!c.parent_id) roots.push(map.get(c.id)!);
+  });
+  return roots;
+}
+
+// Collect all descendant ids including self
+function allIds(node: CatNode): string[] {
+  return [node.id, ...node.children.flatMap(allIds)];
+}
+
+// ── CatSpend (flattened for donut) ────────────────────────────────────────────
+interface CatSpend {
+  id: string; name: string; icon: string; color: string;
+  spent: number; percentage: number; transactions: number;
+  children: CatSpend[];
+  allIds: string[];
+}
+
+function buildSpend(node: CatNode, spendMap: Record<string, number>, txMap: Record<string, number>, total: number): CatSpend {
+  const childSpends = node.children.map(c => buildSpend(c, spendMap, txMap, total));
+  const directSpent = spendMap[node.id] || 0;
+  const spent = directSpent + childSpends.reduce((s, c) => s + c.spent, 0);
+  const transactions = (txMap[node.id] || 0) + childSpends.reduce((s, c) => s + c.transactions, 0);
+  return { id: node.id, name: node.name, icon: node.icon, color: node.color, spent, percentage: total > 0 ? (spent / total) * 100 : 0, transactions, children: childSpends, allIds: allIds(node) };
+}
+
+// ── DrillDown ─────────────────────────────────────────────────────────────────
+interface DrillDown { id: string; name: string; icon: string; color: string; allIds: string[]; children: CatSpend[]; }
+
+interface ExpenseDetail { id: string; date: string; description: string; amount: number; category_id?: string | null; }
+
+// ── SVG Donut ─────────────────────────────────────────────────────────────────
+function DonutChart({ cats, total }: { cats: CatSpend[]; total: number }) {
+  const CX = 185; const CY = 165;
+  const R_OUTER = 90; const R_INNER = 56; const R_ICON = 118;
+  const R_LINE_START = R_OUTER + 2;
+
+  let cumAngle = -90;
+  const slices = cats.map(cat => {
+    const pct = total > 0 ? cat.spent / total : 0;
+    const angle = pct * 360;
+    const startA = cumAngle;
+    cumAngle += angle;
+    return { ...cat, pct, startA, endA: cumAngle };
+  });
+
+  function toRad(deg: number) { return (deg * Math.PI) / 180; }
+  function polar(deg: number, r: number) { return { x: CX + r * Math.cos(toRad(deg)), y: CY + r * Math.sin(toRad(deg)) }; }
+  function arc(s: number, e: number, ro: number, ri: number) {
+    const p1 = polar(s, ro), p2 = polar(e, ro), p3 = polar(e, ri), p4 = polar(s, ri);
+    const lg = e - s > 180 ? 1 : 0;
+    return `M ${p1.x} ${p1.y} A ${ro} ${ro} 0 ${lg} 1 ${p2.x} ${p2.y} L ${p3.x} ${p3.y} A ${ri} ${ri} 0 ${lg} 0 ${p4.x} ${p4.y} Z`;
   }
 
   return (
-    <div className="relative overflow-hidden rounded-xl">
-      {/* Delete button revealed on swipe */}
-      <div
-        className="absolute right-0 top-0 bottom-0 flex items-center justify-center bg-red-500 rounded-r-xl"
-        style={{ width: DELETE_THRESHOLD }}
-      >
-        <button
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => { e.stopPropagation(); onDelete(); }}
-          className="flex flex-col items-center justify-center w-full h-full gap-1 active:bg-red-600 transition-colors"
-        >
-          <Trash2 size={16} className="text-white" />
-          <span className="text-[10px] text-white font-medium">Borrar</span>
-        </button>
+    <svg viewBox="0 0 370 330" width="100%" height={290} style={{ display: 'block', overflow: 'visible' }}>
+      {slices.map((s, i) => {
+        if (s.pct < 0.008) return null;
+        const GAP = s.pct < 0.03 ? 0.4 : 1.2;
+        return <path key={i} d={arc(s.startA + GAP / 2, s.endA - GAP / 2, R_OUTER, R_INNER)} fill={s.color} />;
+      })}
+      {slices.map((s, i) => {
+        if (s.pct < 0.008) return null;
+        const midAngle = s.startA + (s.endA - s.startA) / 2;
+        const iconR = s.pct < 0.04 ? R_ICON - 5 : R_ICON;
+        const iconCircleR = s.pct < 0.04 ? 11 : 14;
+        const lineEndPt = polar(midAngle, iconR - iconCircleR);
+        const lineStartPt = polar(midAngle, R_LINE_START);
+        const prevMid = i > 0 ? slices[i-1].startA + (slices[i-1].endA - slices[i-1].startA) / 2 : 9999;
+        const nextMid = i < slices.length-1 ? slices[i+1].startA + (slices[i+1].endA - slices[i+1].startA) / 2 : 9999;
+        const crowded = Math.abs(midAngle - prevMid) < 20 || Math.abs(midAngle - nextMid) < 20;
+        const labelR = iconR + iconCircleR + (crowded ? 16 : 12);
+        const labelPos = polar(midAngle, labelR);
+        const iconPos = polar(midAngle, iconR);
+        return (
+          <g key={i}>
+            <line x1={lineStartPt.x} y1={lineStartPt.y} x2={lineEndPt.x} y2={lineEndPt.y} stroke={s.color} strokeWidth={s.pct < 0.04 ? 1.2 : 1.8} opacity={0.9} />
+            <circle cx={iconPos.x} cy={iconPos.y} r={iconCircleR} fill={s.color} />
+            <text x={iconPos.x} y={iconPos.y} textAnchor="middle" dominantBaseline="middle" fontSize={s.pct < 0.04 ? 11 : 14}>{s.icon}</text>
+            {s.pct >= 0.025 && (
+              <text x={labelPos.x} y={labelPos.y} textAnchor="middle" dominantBaseline="middle" fill={s.color} fontSize={9.5} fontWeight={700}>
+                {`${(s.pct * 100).toFixed(1)}%`}
+              </text>
+            )}
+          </g>
+        );
+      })}
+      <text x={CX} y={CY - 9} textAnchor="middle" fill="white" fontSize={15} fontWeight={700}>-{formatCurrency(total)}</text>
+      <text x={CX} y={CY + 10} textAnchor="middle" fill="#64748b" fontSize={10}>Gastos totales</text>
+    </svg>
+  );
+}
+
+// ── Bar Chart ─────────────────────────────────────────────────────────────────
+function BarChart({ data, color, mode }: { data: { label: string; amount: number }[]; color: string; mode: ViewMode }) {
+  const W = 320; const H = 110; const PAD_L = 36; const PAD_B = 22; const PAD_T = 8; const PAD_R = 8;
+  const chartW = W - PAD_L - PAD_R; const chartH = H - PAD_B - PAD_T;
+  const max = Math.max(...data.map(d => d.amount), 1);
+  const yTicks = [0, max * 0.5, max];
+  function fmtAmt(v: number) { if (v === 0) return '0'; if (v >= 1000) return `${(v/1000).toFixed(1)}k`; return Math.round(v).toString(); }
+  const barW = Math.max(4, (chartW / data.length) * 0.55);
+  const barGap = chartW / data.length;
+  const showEvery = data.length > 20 ? 7 : data.length > 10 ? 3 : 1;
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} style={{ display: 'block' }}>
+      {yTicks.map((v, i) => {
+        const y = PAD_T + chartH - (v / max) * chartH;
+        return <g key={i}>
+          <line x1={PAD_L} y1={y} x2={W - PAD_R} y2={y} stroke="#1e293b" strokeWidth={1} strokeDasharray="3,3" />
+          <text x={PAD_L - 4} y={y} textAnchor="end" dominantBaseline="middle" fill="#475569" fontSize={8}>{fmtAmt(v)}</text>
+        </g>;
+      })}
+      {data.map((d, i) => {
+        const barH = Math.max(2, (d.amount / max) * chartH);
+        const x = PAD_L + i * barGap + barGap / 2 - barW / 2;
+        const y = PAD_T + chartH - barH;
+        return <g key={i}>
+          <rect x={x} y={y} width={barW} height={barH} fill={d.amount > 0 ? color : '#1e293b'} rx={2} opacity={i === data.length - 1 && mode === 'months' ? 0.5 : 1} />
+          {i % showEvery === 0 && <text x={PAD_L + i * barGap + barGap / 2} y={H - 6} textAnchor="middle" fill="#475569" fontSize={7.5}>{d.label}</text>}
+        </g>;
+      })}
+      <line x1={PAD_L} y1={PAD_T + chartH} x2={W - PAD_R} y2={PAD_T + chartH} stroke="#1e293b" strokeWidth={1} />
+    </svg>
+  );
+}
+
+function getRange(date: Date, mode: ViewMode) {
+  if (mode === 'months') return { start: format(startOfMonth(date), 'yyyy-MM-dd'), end: format(endOfMonth(date), 'yyyy-MM-dd') };
+  return { start: format(startOfYear(date), 'yyyy-MM-dd'), end: format(endOfYear(date), 'yyyy-MM-dd') };
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+export default function SpendingOverview({ user, onBack }: { user: User; onBack: () => void }) {
+  const now = new Date();
+  const [viewMode, setViewMode] = useState<ViewMode>('months');
+  const [currentDate, setCurrentDate] = useState(now);
+  const [catSpending, setCatSpending] = useState<CatSpend[]>([]);
+  const [totalSpent, setTotalSpent] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [drillDown, setDrillDown] = useState<DrillDown | null>(null);
+  const swipeStartX = useRef<number | null>(null);
+
+  useEffect(() => { loadData(); }, [viewMode, currentDate]);
+
+  async function loadData() {
+    setLoading(true);
+    try {
+      const range = getRange(currentDate, viewMode);
+      const [{ data: expenses }, { data: cats }] = await Promise.all([
+        supabase.from('expenses').select('id, amount, category_id, description, date').eq('user_id', user.id).gte('date', range.start).lte('date', range.end).order('date', { ascending: false }),
+        supabase.from('categories').select('*').eq('user_id', user.id).eq('deleted', false),
+      ]);
+      const allExp = expenses || [];
+      const allCats = cats || [];
+      const total = allExp.reduce((s: number, e: any) => s + Number(e.amount), 0);
+      setTotalSpent(total);
+
+      // Build spend + tx maps
+      const spendMap: Record<string, number> = {};
+      const txMap: Record<string, number> = {};
+      allExp.forEach((e: any) => {
+        if (e.category_id) {
+          spendMap[e.category_id] = (spendMap[e.category_id] || 0) + Number(e.amount);
+          txMap[e.category_id] = (txMap[e.category_id] || 0) + 1;
+        }
+      });
+
+      const tree = buildTree(allCats);
+      const spending: CatSpend[] = tree
+        .map(node => buildSpend(node, spendMap, txMap, total))
+        .filter(c => c.spent > 0)
+        .sort((a, b) => b.spent - a.spent);
+
+      // Uncategorized
+      const catIds = new Set(allCats.map((c: any) => c.id));
+      const uncat = allExp.filter((e: any) => !e.category_id || !catIds.has(e.category_id));
+      if (uncat.length > 0) {
+        const uncatSpent = uncat.reduce((s: number, e: any) => s + Number(e.amount), 0);
+        spending.push({ id: 'uncategorized', name: 'Sin categoría', icon: '📦', color: '#95A5A6', spent: uncatSpent, percentage: total > 0 ? (uncatSpent / total) * 100 : 0, transactions: uncat.length, children: [], allIds: ['uncategorized'] });
+      }
+      setCatSpending(spending);
+    } catch (err) { console.error(err); }
+    finally { setLoading(false); }
+  }
+
+  function openDrillDown(cat: CatSpend) {
+    setDrillDown({ id: cat.id, name: cat.name, icon: cat.icon, color: cat.color, allIds: cat.allIds, children: cat.children });
+  }
+
+  function navigate(dir: 1 | -1) {
+    if (viewMode === 'months') { const n = dir === 1 ? addMonths(currentDate, 1) : subMonths(currentDate, 1); if (n <= now) setCurrentDate(n); }
+    else { const n = dir === 1 ? addYears(currentDate, 1) : subYears(currentDate, 1); if (n <= now) setCurrentDate(n); }
+  }
+
+  function onTouchStart(e: React.TouchEvent) { swipeStartX.current = e.touches[0].clientX; }
+  function onTouchEnd(e: React.TouchEvent) {
+    if (swipeStartX.current === null) return;
+    const dx = swipeStartX.current - e.changedTouches[0].clientX;
+    if (Math.abs(dx) > 40) navigate(dx > 0 ? 1 : -1);
+    swipeStartX.current = null;
+  }
+
+  const periodLabel = viewMode === 'months' ? format(currentDate, 'MMMM yyyy', { locale: es }) : currentDate.getFullYear().toString();
+  const prevLabel = viewMode === 'months' ? format(subMonths(currentDate, 1), 'MMM yyyy', { locale: es }) : String(currentDate.getFullYear() - 1);
+  const isAtPresent = viewMode === 'months' ? format(currentDate, 'yyyy-MM') === format(now, 'yyyy-MM') : currentDate.getFullYear() === now.getFullYear();
+  const nextLabel = isAtPresent ? '' : viewMode === 'months' ? format(addMonths(currentDate, 1), 'MMM yyyy', { locale: es }) : String(currentDate.getFullYear() + 1);
+
+  if (drillDown) {
+    return <DrillDownView user={user} drillDown={drillDown} onBack={() => setDrillDown(null)} initialDate={currentDate} initialMode={viewMode} now={now} />;
+  }
+
+  // Recursive category list renderer
+  function renderCatList(cats: CatSpend[], depth = 0): React.ReactNode {
+    return cats.map(cat => {
+      const hasChildren = cat.children.length > 0;
+      const isExpanded = expanded.has(cat.id);
+      const indent = depth * 16;
+      return (
+        <div key={cat.id} className="border-b border-dark-800/40">
+          <div className="flex items-center gap-2.5 py-2.5" style={{ paddingLeft: `${12 + indent}px`, paddingRight: 12 }}>
+            <button onClick={() => openDrillDown(cat)}
+              className="rounded-xl flex items-center justify-center text-base flex-shrink-0 active:opacity-70"
+              style={{ width: depth === 0 ? 36 : 28, height: depth === 0 ? 36 : 28, fontSize: depth === 0 ? 16 : 13, backgroundColor: cat.color }}>
+              {cat.icon}
+            </button>
+            <button onClick={() => openDrillDown(cat)} className="flex-1 min-w-0 text-left active:opacity-70">
+              <p className={`font-semibold ${depth === 0 ? 'text-[12px]' : 'text-[11px] text-dark-200'}`}>{cat.name}</p>
+              <p className="text-[10px] text-dark-500">{cat.transactions} {cat.transactions === 1 ? 'transacción' : 'transacciones'}</p>
+            </button>
+            <span className={`font-bold text-red-400 flex-shrink-0 ${depth === 0 ? 'text-[12px]' : 'text-[11px]'}`}>-{formatCurrency(cat.spent)}</span>
+            {hasChildren && (
+              <button onClick={() => setExpanded(prev => { const n = new Set(prev); n.has(cat.id) ? n.delete(cat.id) : n.add(cat.id); return n; })} className="p-0.5 text-dark-500 ml-0.5">
+                {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+              </button>
+            )}
+          </div>
+          {hasChildren && isExpanded && (
+            <div className="border-l border-dark-700/40 ml-8">
+              {renderCatList(cat.children, depth + 1)}
+            </div>
+          )}
+        </div>
+      );
+    });
+  }
+
+  return (
+    <div className="max-w-lg mx-auto page-transition pb-6" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+      <div className="flex items-center gap-2 px-3 pt-4 pb-2">
+        <button onClick={onBack} className="p-1 text-dark-300 hover:text-white transition-colors"><ArrowLeft size={20} /></button>
+        <h1 className="text-sm font-bold flex-1 text-center pr-6">Overview</h1>
       </div>
-      {/* Row */}
-      <div
-        className="relative bg-dark-800 cursor-pointer select-none"
-        style={{
-          transform: `translateX(-${offset}px)`,
-          transition: isDragging ? 'none' : 'transform 0.2s ease',
-        }}
-        onTouchStart={onTouchStart}
-        onTouchMove={onTouchMove}
-        onTouchEnd={onTouchEnd}
-        onClick={handleClick}
-      >
-        {children}
+      <div className="flex justify-center mb-2">
+        <div className="inline-flex bg-dark-800 rounded-full p-0.5">
+          <button onClick={() => { setViewMode('months'); setCurrentDate(now); }} className={`px-3 py-1 rounded-full text-[11px] font-medium transition-all ${viewMode === 'months' ? 'bg-dark-600 text-white' : 'text-dark-400'}`}>Por meses</button>
+          <button onClick={() => { setViewMode('years'); setCurrentDate(now); }} className={`px-3 py-1 rounded-full text-[11px] font-medium transition-all ${viewMode === 'years' ? 'bg-dark-600 text-white' : 'text-dark-400'}`}>Por año</button>
+        </div>
       </div>
+      <div className="flex items-center justify-between px-4 mb-1">
+        <button onClick={() => navigate(-1)} className="text-[11px] text-dark-500 capitalize py-1 px-2 active:text-dark-300">← {prevLabel}</button>
+        <p className="text-[13px] font-semibold capitalize">{periodLabel}</p>
+        {isAtPresent ? <div className="w-20" /> : <button onClick={() => navigate(1)} className="text-[11px] text-dark-500 capitalize py-1 px-2 active:text-dark-300">{nextLabel} →</button>}
+      </div>
+      {loading ? (
+        <div className="flex items-center justify-center py-16"><div className="w-7 h-7 border-2 border-brand-500/30 border-t-brand-500 rounded-full animate-spin" /></div>
+      ) : catSpending.length === 0 ? (
+        <div className="text-center py-12"><div className="text-4xl mb-3">📊</div><p className="text-dark-300 text-sm">No hay datos para este período</p></div>
+      ) : (
+        <>
+          <div className="px-2 mb-2"><DonutChart cats={catSpending} total={totalSpent} /></div>
+          <div className="flex items-center justify-between px-4 py-3 mb-1 border-t border-b border-dark-800/60">
+            <span className="text-xs text-dark-400 font-medium uppercase tracking-wider">Total gastado</span>
+            <span className="text-base font-bold text-red-400">-{formatCurrency(totalSpent)}</span>
+          </div>
+          <div className="px-3">{renderCatList(catSpending)}</div>
+        </>
+      )}
     </div>
   );
 }
 
-// ── Category Picker (same as AddExpenseModal) ─────────────────────────────────
-function CategoryPicker({
-  categories,
-  categoryId,
-  onSelect,
-  onClose,
-}: {
-  categories: Category[];
-  categoryId: string;
-  onSelect: (id: string) => void;
-  onClose: () => void;
+// ── DrillDownView ─────────────────────────────────────────────────────────────
+function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now }: {
+  user: User; drillDown: DrillDown; onBack: () => void;
+  initialDate: Date; initialMode: ViewMode; now: Date;
 }) {
-  const [searchQuery, setSearchQuery] = useState('');
-  const [showCreateCategory, setShowCreateCategory] = useState(false);
-  const [newCatName, setNewCatName] = useState('');
-  const [newCatIcon, setNewCatIcon] = useState('📦');
-  const [newCatColor, setNewCatColor] = useState(CATEGORY_COLORS[Math.floor(Math.random() * CATEGORY_COLORS.length)]);
-  const [newCatParentId, setNewCatParentId] = useState<string | null>(null);
-  const [savingCat, setSavingCat] = useState(false);
-  const [localCats, setLocalCats] = useState<Category[]>(categories);
-  const searchRef = useRef<HTMLInputElement>(null);
-
-  const parentCats = localCats.filter(c => !c.parent_id);
-  const getSubcats = (pid: string) => localCats.filter(c => c.parent_id === pid);
-  const grouped = parentCats.map(p => ({ parent: p, subcats: getSubcats(p.id) }));
-
-  const q = searchQuery.trim().toLowerCase();
-  const searchResults: Array<{ cat: Category; parent?: Category }> = q
-    ? localCats.filter(c => c.name.toLowerCase().includes(q)).map(c => ({
-        cat: c,
-        parent: c.parent_id ? localCats.find(p => p.id === c.parent_id) : undefined,
-      }))
-    : [];
-
-  function handleSelect(id: string) {
-    onSelect(id);
-    onClose();
-  }
-
-  async function handleCreateCategory(user_id: string) {
-    if (!newCatName) return;
-    setSavingCat(true);
-    try {
-      const { data } = await supabase
-        .from('categories')
-        .insert({ user_id, name: newCatName, icon: newCatIcon, color: newCatColor, parent_id: newCatParentId })
-        .select().single();
-      if (data) {
-        const { data: cats } = await supabase.from('categories').select('*').eq('user_id', user_id).order('position').order('created_at');
-        setLocalCats(cats || []);
-        onSelect(data.id);
-        setShowCreateCategory(false);
-        onClose();
-      }
-    } catch (err) { console.error(err); }
-    finally { setSavingCat(false); }
-  }
-
-  // We need user_id for create — passed via closure from parent
-  return null; // placeholder, see usage below
-}
-
-// ── Main component ────────────────────────────────────────────────────────────
-export default function RecurringView({ user }: { user: User }) {
-  const [items, setItems] = useState<RecurringExpense[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
+  const [viewMode, setViewMode] = useState<ViewMode>(initialMode);
+  const [currentDate, setCurrentDate] = useState(initialDate);
+  const [expenses, setExpenses] = useState<ExpenseDetail[]>([]);
+  const [barData, setBarData] = useState<{ label: string; amount: number }[]>([]);
+  const [periodTotal, setPeriodTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [allCats, setAllCats] = useState<RawCat[]>([]);
+  const swipeStartX = useRef<number | null>(null);
 
-  // Form state
-  const [amount, setAmount] = useState('');
-  const [description, setDescription] = useState('');
-  const [notes, setNotes] = useState('');
-  const [categoryId, setCategoryId] = useState('');
-  const [frequency, setFrequency] = useState<'weekly' | 'monthly' | 'yearly'>('monthly');
-  const [dayOfMonth, setDayOfMonth] = useState('1');
-  const [endDate, setEndDate] = useState('');
-  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    supabase.from('categories').select('*').eq('user_id', user.id).eq('deleted', false).then(({ data }) => setAllCats(data || []));
+  }, []);
 
-  // Category picker state
-  const [showCategoryPicker, setShowCategoryPicker] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [showCreateCategory, setShowCreateCategory] = useState(false);
-  const [newCatName, setNewCatName] = useState('');
-  const [newCatIcon, setNewCatIcon] = useState('📦');
-  const [newCatColor, setNewCatColor] = useState(CATEGORY_COLORS[Math.floor(Math.random() * CATEGORY_COLORS.length)]);
-  const [newCatParentId, setNewCatParentId] = useState<string | null>(null);
-  const [savingCat, setSavingCat] = useState(false);
-
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => { loadData(); }, [viewMode, currentDate]);
 
   async function loadData() {
     setLoading(true);
-    const [{ data: rec }, { data: cats }] = await Promise.all([
-      supabase.from('recurring_expenses').select('*, category:categories(*)').eq('user_id', user.id).order('description'),
-      supabase.from('categories').select('*').eq('user_id', user.id).eq('deleted', false).order('position').order('created_at'),
-    ]);
-    setItems(rec || []);
-    setCategories(cats || []);
-    setLoading(false);
-  }
-
-  function openForm(item?: RecurringExpense) {
-    if (item) {
-      setEditingId(item.id);
-      setAmount(String(item.amount));
-      setDescription(item.description);
-      setNotes(item.notes || '');
-      setCategoryId(item.category_id || '');
-      setFrequency(item.frequency);
-      setDayOfMonth(String(item.day_of_month));
-      setEndDate(item.end_date || '');
-    } else {
-      setEditingId(null);
-      setAmount('');
-      setDescription('');
-      setNotes('');
-      setCategoryId('');
-      setFrequency('monthly');
-      setDayOfMonth('1');
-      setEndDate('');
-    }
-    setShowForm(true);
-  }
-
-  async function handleSave() {
-    if (!amount || !description) return;
-    setSaving(true);
-    const data = {
-      user_id: user.id,
-      amount: parseFloat(amount),
-      description,
-      notes: notes || null,
-      category_id: categoryId || null,
-      frequency,
-      day_of_month: parseInt(dayOfMonth),
-      end_date: endDate || null,
-      is_active: true,
-    };
     try {
-      if (editingId) {
-        await supabase.from('recurring_expenses').update(data).eq('id', editingId);
+      const range = getRange(currentDate, viewMode);
+      let list: ExpenseDetail[] = [];
+      if (drillDown.id === 'uncategorized') {
+        const { data: cats } = await supabase.from('categories').select('id').eq('user_id', user.id).eq('deleted', false);
+        const ids = new Set((cats || []).map((c: any) => c.id));
+        const { data: exp } = await supabase.from('expenses').select('id, amount, description, date, category_id').eq('user_id', user.id).gte('date', range.start).lte('date', range.end).order('date', { ascending: false });
+        list = (exp || []).filter((e: any) => !e.category_id || !ids.has(e.category_id)).map((e: any) => ({ id: e.id, date: e.date, description: e.description, amount: Number(e.amount), category_id: e.category_id }));
       } else {
-        await supabase.from('recurring_expenses').insert(data);
+        const { data: exp } = await supabase.from('expenses').select('id, amount, description, date, category_id').eq('user_id', user.id).in('category_id', drillDown.allIds).gte('date', range.start).lte('date', range.end).order('date', { ascending: false });
+        list = (exp || []).map((e: any) => ({ id: e.id, date: e.date, description: e.description, amount: Number(e.amount), category_id: e.category_id }));
       }
-      setShowForm(false);
-      loadData();
+      setExpenses(list);
+      setPeriodTotal(list.reduce((s, e) => s + e.amount, 0));
+      setBarData(buildBarData(list, currentDate, viewMode));
     } catch (err) { console.error(err); }
-    finally { setSaving(false); }
+    finally { setLoading(false); }
   }
 
-  // Soft delete: mark as deleted, keep generated expenses intact
-  async function handleDelete(id: string) {
-    await supabase.from('recurring_expenses').update({ is_active: false, end_date: new Date().toISOString().split('T')[0] }).eq('id', id);
-    // Remove from list visually but keep in DB so past expenses still reference it
-    setItems(prev => prev.filter(i => i.id !== id));
-  }
-
-  function handleNumpad(key: string) {
-    if (key === 'backspace') {
-      setAmount(prev => prev.slice(0, -1));
-    } else if (key === '.') {
-      if (!amount.includes('.')) setAmount(prev => (prev || '0') + '.');
-    } else {
-      if (amount.includes('.')) {
-        const decimals = amount.split('.')[1];
-        if (decimals && decimals.length >= 2) return;
-      }
-      setAmount(prev => prev + key);
+  function buildBarData(exp: { date: string; amount: number }[], date: Date, mode: ViewMode) {
+    if (mode === 'months') {
+      return eachDayOfInterval({ start: startOfMonth(date), end: endOfMonth(date) }).map(d => {
+        const key = format(d, 'yyyy-MM-dd');
+        return { label: format(d, 'd'), amount: exp.filter(e => e.date === key).reduce((s, e) => s + e.amount, 0) };
+      });
     }
+    return eachMonthOfInterval({ start: startOfYear(date), end: endOfYear(date) }).map(m => {
+      const mStr = format(m, 'yyyy-MM');
+      return { label: format(m, 'MMM', { locale: es }), amount: exp.filter(e => e.date.startsWith(mStr)).reduce((s, e) => s + e.amount, 0) };
+    });
   }
 
-  // Category picker helpers
-  const parentCats = categories.filter(c => !c.parent_id);
-  const getSubcats = (pid: string) => categories.filter(c => c.parent_id === pid);
-  const grouped = parentCats.map(p => ({ parent: p, subcats: getSubcats(p.id) }));
-  const q = searchQuery.trim().toLowerCase();
-  const searchResults: Array<{ cat: Category; parent?: Category }> = q
-    ? categories.filter(c => c.name.toLowerCase().includes(q)).map(c => ({
-        cat: c,
-        parent: c.parent_id ? categories.find(p => p.id === c.parent_id) : undefined,
-      }))
-    : [];
-
-  function handleSelectCategory(id: string) {
-    setCategoryId(id);
-    setShowCategoryPicker(false);
-    setSearchQuery('');
+  function navigate(dir: 1 | -1) {
+    if (viewMode === 'months') { const n = dir === 1 ? addMonths(currentDate, 1) : subMonths(currentDate, 1); if (n <= now) setCurrentDate(n); }
+    else { const n = dir === 1 ? addYears(currentDate, 1) : subYears(currentDate, 1); if (n <= now) setCurrentDate(n); }
+  }
+  function onTouchStart(e: React.TouchEvent) { swipeStartX.current = e.touches[0].clientX; }
+  function onTouchEnd(e: React.TouchEvent) {
+    if (swipeStartX.current === null) return;
+    const dx = swipeStartX.current - e.changedTouches[0].clientX;
+    if (Math.abs(dx) > 40) navigate(dx > 0 ? 1 : -1);
+    swipeStartX.current = null;
   }
 
-  function openCreateCategory(parentId: string | null = null) {
-    setNewCatParentId(parentId);
-    setNewCatName('');
-    setNewCatIcon('📦');
-    setNewCatColor(CATEGORY_COLORS[Math.floor(Math.random() * CATEGORY_COLORS.length)]);
-    setShowCreateCategory(true);
+  const isAtPresent = viewMode === 'months' ? format(currentDate, 'yyyy-MM') === format(now, 'yyyy-MM') : currentDate.getFullYear() === now.getFullYear();
+  const prevLabel = viewMode === 'months' ? format(subMonths(currentDate, 1), 'MMM yyyy', { locale: es }) : String(currentDate.getFullYear() - 1);
+  const nextLabel = isAtPresent ? '' : viewMode === 'months' ? format(addMonths(currentDate, 1), 'MMM yyyy', { locale: es }) : String(currentDate.getFullYear() + 1);
+  const periodLabel = viewMode === 'months' ? format(currentDate, 'MMMM yyyy', { locale: es }) : currentDate.getFullYear().toString();
+
+  const todayStr = format(now, 'yyyy-MM-dd');
+  const yestStr = format(new Date(now.getTime() - 86400000), 'yyyy-MM-dd');
+  const dayMap = new Map<string, ExpenseDetail[]>();
+  expenses.forEach(e => { if (!dayMap.has(e.date)) dayMap.set(e.date, []); dayMap.get(e.date)!.push(e); });
+  const grouped = Array.from(dayMap.entries())
+    .map(([dateStr, exps]) => ({ date: dateStr, label: dateStr === todayStr ? 'Hoy' : dateStr === yestStr ? 'Ayer' : format(parseISO(dateStr), "d 'de' MMMM", { locale: es }), total: exps.reduce((s, e) => s + e.amount, 0), expenses: exps }))
+    .sort((a, b) => b.date.localeCompare(a.date));
+
+  // Resolve which cat to show for each expense (could be any depth)
+  function resolveCat(categoryId: string | null | undefined): RawCat | undefined {
+    if (!categoryId) return undefined;
+    return allCats.find(c => c.id === categoryId);
   }
 
-  async function handleCreateCategory() {
-    if (!newCatName) return;
-    setSavingCat(true);
-    try {
-      const { data } = await supabase.from('categories')
-        .insert({ user_id: user.id, name: newCatName, icon: newCatIcon, color: newCatColor, parent_id: newCatParentId })
-        .select().single();
-      if (data) {
-        const { data: cats } = await supabase.from('categories').select('*').eq('user_id', user.id).eq('deleted', false).order('position').order('created_at');
-        setCategories(cats || []);
-        setCategoryId(data.id);
-        setShowCreateCategory(false);
-        setShowCategoryPicker(false);
-        setSearchQuery('');
-      }
-    } catch (err) { console.error(err); }
-    finally { setSavingCat(false); }
+  // Find all descendants flat for display resolution
+  function findInTree(nodes: CatSpend[], id: string): CatSpend | undefined {
+    for (const n of nodes) {
+      if (n.id === id) return n;
+      const found = findInTree(n.children, id);
+      if (found) return found;
+    }
+    return undefined;
   }
-
-  const selectedCat = categories.find(c => c.id === categoryId);
-
-  const totalMonthly = items.reduce((sum, i) => {
-    if (i.frequency === 'monthly') return sum + Number(i.amount);
-    if (i.frequency === 'weekly') return sum + Number(i.amount) * 4.33;
-    if (i.frequency === 'yearly') return sum + Number(i.amount) / 12;
-    return sum;
-  }, 0);
-
-  const freqLabels: Record<string, string> = { weekly: 'Semanal', monthly: 'Mensual', yearly: 'Anual' };
 
   return (
-    <div className="px-4 pt-6 pb-24 max-w-lg mx-auto page-transition">
-      <div className="flex items-center justify-between mb-5">
-        <h1 className="text-xl font-bold">Gastos fijos</h1>
-        <button
-          onClick={() => openForm()}
-          className="bg-brand-600 hover:bg-brand-500 text-white p-2.5 rounded-xl transition-colors shadow-lg shadow-brand-600/20"
-        >
-          <Plus size={18} />
-        </button>
+    <div className="max-w-lg mx-auto page-transition pb-8" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+      <div className="flex items-center gap-2 px-3 pt-4 pb-3">
+        <button onClick={onBack} className="p-1 text-dark-300 hover:text-white transition-colors"><ArrowLeft size={20} /></button>
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          <div className="w-8 h-8 rounded-xl flex items-center justify-center text-base flex-shrink-0" style={{ backgroundColor: drillDown.color }}>{drillDown.icon}</div>
+          <h1 className="text-sm font-bold truncate capitalize">{drillDown.name}</h1>
+        </div>
       </div>
 
-      {/* Summary */}
-      <div className="bg-dark-800 rounded-xl p-4 mb-5">
-        <p className="text-dark-400 text-xs">Total mensual estimado</p>
-        <p className="text-2xl font-bold mt-1">{formatCurrency(totalMonthly)}</p>
-        <p className="text-dark-500 text-xs mt-1">{items.length} gastos activos</p>
+      <div className="flex justify-center mb-2">
+        <div className="inline-flex bg-dark-800 rounded-full p-0.5">
+          <button onClick={() => { setViewMode('months'); setCurrentDate(now); }} className={`px-3 py-1 rounded-full text-[11px] font-medium transition-all ${viewMode === 'months' ? 'bg-dark-600 text-white' : 'text-dark-400'}`}>Por meses</button>
+          <button onClick={() => { setViewMode('years'); setCurrentDate(now); }} className={`px-3 py-1 rounded-full text-[11px] font-medium transition-all ${viewMode === 'years' ? 'bg-dark-600 text-white' : 'text-dark-400'}`}>Por año</button>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between px-4 mb-2">
+        <button onClick={() => navigate(-1)} className="text-[11px] text-dark-500 capitalize py-1 px-2 active:text-dark-300">← {prevLabel}</button>
+        <p className="text-[13px] font-semibold capitalize">{periodLabel}</p>
+        {isAtPresent ? <div className="w-20" /> : <button onClick={() => navigate(1)} className="text-[11px] text-dark-500 capitalize py-1 px-2 active:text-dark-300">{nextLabel} →</button>}
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-10">
-          <div className="w-7 h-7 border-2 border-brand-500/30 border-t-brand-500 rounded-full animate-spin" />
-        </div>
-      ) : items.length === 0 ? (
-        <div className="text-center py-10">
-          <div className="text-5xl mb-4">🔄</div>
-          <p className="text-dark-300 font-medium">No tenés gastos fijos</p>
-          <p className="text-dark-500 text-sm mt-1">Agregá cosas como alquiler, Netflix, gym...</p>
-          <button onClick={() => openForm()} className="mt-4 bg-brand-600 text-white text-sm font-medium px-5 py-2.5 rounded-xl">
-            Agregar gasto fijo
-          </button>
-        </div>
+        <div className="flex items-center justify-center py-12"><div className="w-7 h-7 border-2 border-brand-500/30 border-t-brand-500 rounded-full animate-spin" /></div>
       ) : (
-        <div className="space-y-2">
-          {items.map((item) => (
-            <SwipeableRow
-              key={item.id}
-              onTap={() => openForm(item)}
-              onDelete={() => handleDelete(item.id)}
-            >
-              <div className="p-3.5 flex items-center gap-3">
-                <div
-                  className="w-10 h-10 rounded-xl flex items-center justify-center text-xl flex-shrink-0"
-                  style={{ backgroundColor: (item as any).category?.color || '#475569' }}
-                >
-                  {(item as any).category?.icon || '🔄'}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold truncate">{item.description}</p>
-                  <p className="text-xs text-dark-400">
-                    {freqLabels[item.frequency]}
-                    {item.frequency !== 'weekly' && ` · Día ${item.day_of_month}`}
-                    {(item as any).category && ` · ${(item as any).category.name}`}
-                  </p>
-                  {item.end_date && (
-                    <p className="text-[10px] text-dark-500 mt-0.5">
-                      Hasta {format(parseISO(item.end_date), "d MMM yyyy", { locale: es })}
-                    </p>
-                  )}
-                </div>
-                <span className="text-sm font-bold flex-shrink-0">{formatCurrency(Number(item.amount))}</span>
-              </div>
-            </SwipeableRow>
-          ))}
-        </div>
-      )}
-
-      {/* ── Form Modal ── */}
-      {showForm && !showCategoryPicker && !showCreateCategory && (
-        <div className="fixed inset-0 bg-dark-900 z-[60] flex flex-col slide-up">
-          <div className="flex items-center justify-between px-4 pt-5 pb-3 flex-shrink-0">
-            <button onClick={() => setShowForm(false)} className="p-1 text-dark-400 hover:text-white">
-              <X size={24} />
-            </button>
-            <h2 className="text-base font-bold">{editingId ? 'Editar gasto fijo' : 'Nuevo gasto fijo'}</h2>
-            <div className="w-8" />
+        <>
+          <div className="px-3 mb-1"><BarChart data={barData} color={drillDown.color} mode={viewMode} /></div>
+          <div className="flex items-center justify-between px-4 py-3 border-t border-b border-dark-800/60 mb-1">
+            <span className="text-xs text-dark-400 font-medium uppercase tracking-wider">Total en el período</span>
+            <span className="text-base font-bold text-red-400">{periodTotal > 0 ? `-${formatCurrency(periodTotal)}` : formatCurrency(0)}</span>
           </div>
-
-          {/* Amount display */}
-          <div className="px-5 py-4 flex-shrink-0 border-b border-dark-800">
-            <p className="text-xs text-dark-400 font-medium mb-1">Monto *</p>
-            <p className="text-3xl font-extrabold text-white">{amount || '0'}</p>
-          </div>
-
-          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-            {/* Description */}
+          {grouped.length === 0 ? (
+            <div className="text-center py-10"><p className="text-dark-500 text-sm">Sin transacciones en este período</p></div>
+          ) : (
             <div>
-              <label className="text-xs text-dark-400 font-medium mb-1.5 block">Descripción *</label>
-              <input
-                type="text"
-                placeholder="Ej: Alquiler, Netflix, Gym..."
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors"
-              />
-            </div>
-
-            {/* Category — same style as AddExpense */}
-            <div>
-              <label className="text-xs text-dark-400 font-medium mb-1.5 block">Categoría</label>
-              <button
-                onClick={() => setShowCategoryPicker(true)}
-                className="w-full flex items-center gap-3 bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-left transition-colors active:bg-dark-700"
-              >
-                {selectedCat ? (
-                  <>
-                    <div className="w-7 h-7 rounded-full flex items-center justify-center text-base flex-shrink-0"
-                      style={{ backgroundColor: selectedCat.color + '30' }}>
-                      {selectedCat.icon}
-                    </div>
-                    <span className="flex-1 text-sm">{selectedCat.name}</span>
-                  </>
-                ) : (
-                  <>
-                    <div className="w-7 h-7 rounded-full bg-dark-700 flex items-center justify-center flex-shrink-0">
-                      <span className="text-dark-400 text-xs">🏷️</span>
-                    </div>
-                    <span className="flex-1 text-sm text-dark-500">Elegir categoría</span>
-                  </>
-                )}
-                <span className="text-dark-500 text-xs">›</span>
-              </button>
-            </div>
-
-            {/* Frequency + day */}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs text-dark-400 font-medium mb-1.5 block">Frecuencia</label>
-                <select
-                  value={frequency}
-                  onChange={(e) => setFrequency(e.target.value as any)}
-                  className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors appearance-none"
-                >
-                  <option value="weekly">Semanal</option>
-                  <option value="monthly">Mensual</option>
-                  <option value="yearly">Anual</option>
-                </select>
-              </div>
-              <div>
-                <label className="text-xs text-dark-400 font-medium mb-1.5 block">Día del mes</label>
-                <input
-                  type="number" min="1" max="28"
-                  value={dayOfMonth}
-                  onChange={(e) => setDayOfMonth(e.target.value)}
-                  className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors"
-                />
-              </div>
-            </div>
-
-            {/* End date */}
-            <div>
-              <label className="text-xs text-dark-400 font-medium mb-1.5 flex items-center gap-1.5">
-                <CalendarOff size={12} /> Fecha de finalización (opcional)
-              </label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="date" value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  className="flex-1 bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors"
-                />
-                {endDate && (
-                  <button onClick={() => setEndDate('')} className="p-2.5 bg-dark-800 border border-dark-700 rounded-xl text-dark-400 hover:text-red-400 transition-colors">
-                    <X size={16} />
-                  </button>
-                )}
-              </div>
-              {!endDate && <p className="text-[10px] text-dark-500 mt-1">Sin fecha = se repite indefinidamente</p>}
-            </div>
-
-            {/* Notes */}
-            <div>
-              <label className="text-xs text-dark-400 font-medium mb-1.5 block">Notas (opcional)</label>
-              <textarea
-                placeholder="Algún detalle extra..."
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                rows={2}
-                className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors resize-none"
-              />
-            </div>
-          </div>
-
-          {/* Bottom: save + numpad */}
-          <div className="flex-shrink-0">
-            <div className="px-5 py-3">
-              <button
-                onClick={handleSave}
-                disabled={saving || !amount || !description}
-                className="w-full bg-brand-600 hover:bg-brand-500 disabled:opacity-30 text-white font-bold py-4 rounded-2xl transition-all text-base"
-              >
-                {saving ? 'Guardando...' : editingId ? 'Guardar cambios' : 'Agregar gasto fijo'}
-              </button>
-            </div>
-            <div className="border-t border-dark-700">
-              <div className="grid grid-cols-3">
-                {['1','2','3','4','5','6','7','8','9','.','0','backspace'].map((key) => {
-                  const isDel = key === 'backspace';
-                  return (
-                    <button key={key}
-                      onClick={() => isDel ? handleNumpad('backspace') : handleNumpad(key)}
-                      className="py-[14px] text-center text-xl font-medium border-b border-r border-dark-800 active:bg-dark-700 transition-colors bg-dark-900 text-white"
-                    >
-                      {isDel ? <span className="flex items-center justify-center"><Delete size={22} /></span> : key}
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="h-[env(safe-area-inset-bottom)]" />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Category Picker (pantalla completa, igual que AddExpense) ── */}
-      {showForm && showCategoryPicker && !showCreateCategory && (
-        <div className="fixed inset-0 bg-dark-900 z-[70] flex flex-col slide-up">
-          {/* Header */}
-          <div className="flex items-center justify-between px-4 pt-5 pb-3 flex-shrink-0">
-            <button onClick={() => { setShowCategoryPicker(false); setSearchQuery(''); }} className="p-1 text-dark-400 hover:text-white">
-              <ArrowLeft size={24} />
-            </button>
-            <h2 className="text-base font-bold">Categoría</h2>
-            <button
-              onClick={() => openCreateCategory(null)}
-              className="w-8 h-8 rounded-full bg-dark-700 flex items-center justify-center text-dark-400 hover:text-white transition-colors"
-            >
-              <Settings size={16} />
-            </button>
-          </div>
-
-          {/* Search */}
-          <div className="px-4 pb-3 flex-shrink-0">
-            <div className="flex items-center gap-2 bg-dark-800 rounded-2xl px-4 py-3">
-              <Search size={16} className="text-dark-400 flex-shrink-0" />
-              <input
-                type="text" placeholder="Buscar categorías"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="flex-1 bg-transparent text-sm placeholder:text-dark-500 focus:outline-none"
-              />
-              {searchQuery && (
-                <button onClick={() => setSearchQuery('')} className="text-dark-400"><X size={14} /></button>
-              )}
-            </div>
-          </div>
-
-          {/* List */}
-          <div className="flex-1 overflow-y-auto">
-            {searchQuery.trim() ? (
-              searchResults.length === 0 ? (
-                <div className="text-center py-10 text-dark-500 text-sm">Sin resultados</div>
-              ) : (
-                <div>
-                  {searchResults.map(({ cat, parent }) => {
-                    const isActive = categoryId === cat.id;
+              <p className="px-4 pt-3 pb-1 text-sm font-bold">Transacciones</p>
+              {grouped.map(group => (
+                <div key={group.date}>
+                  <div className="flex items-center justify-between px-4 py-1.5 bg-dark-800/60">
+                    <span className="text-[10px] font-semibold text-dark-500 uppercase tracking-wider capitalize">{group.label}</span>
+                    <span className="text-[10px] font-semibold text-dark-500">-{formatCurrency(group.total)}</span>
+                  </div>
+                  {group.expenses.map(exp => {
+                    const cat = resolveCat(exp.category_id);
+                    const displayIcon = cat?.icon || drillDown.icon;
+                    const displayColor = cat?.color || drillDown.color;
+                    const displayName = cat?.name || drillDown.name;
                     return (
-                      <button key={cat.id} onClick={() => handleSelectCategory(cat.id)}
-                        className={`w-full flex items-center gap-3 px-5 py-3.5 border-b border-dark-800/60 transition-colors ${isActive ? 'bg-dark-800' : 'active:bg-dark-800/60'}`}>
-                        <div className="w-9 h-9 rounded-full flex items-center justify-center text-lg flex-shrink-0"
-                          style={{ backgroundColor: (cat.color || parent?.color || '#475569') + '30' }}>
-                          {cat.icon}
+                      <div key={exp.id} className="flex items-center gap-2.5 px-4 py-2.5 border-b border-dark-800/40">
+                        <div className="w-8 h-8 rounded-xl flex items-center justify-center text-base flex-shrink-0" style={{ backgroundColor: displayColor }}>{displayIcon}</div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[12px] font-semibold truncate">{displayName}</p>
+                          {exp.description && exp.description !== displayName && (
+                            <p className="text-[10px] text-dark-500 truncate">{exp.description}</p>
+                          )}
                         </div>
-                        <div className="flex-1 text-left">
-                          <p className="text-sm font-medium">{cat.name}</p>
-                          {parent && <p className="text-xs text-dark-400">{parent.name}</p>}
-                        </div>
-                        {isActive && <Check size={18} className="text-brand-400 flex-shrink-0" />}
-                      </button>
+                        <span className="text-[12px] font-bold text-red-400 flex-shrink-0">-{formatCurrency(exp.amount)}</span>
+                      </div>
                     );
                   })}
                 </div>
-              )
-            ) : (
-              <div className="pb-6">
-                {grouped.map(({ parent, subcats }) => (
-                  <div key={parent.id}>
-                    <div className="px-5 pt-4 pb-1">
-                      <span className="text-xs font-bold text-dark-400 uppercase tracking-wider">{parent.name}</span>
-                    </div>
-                    <button onClick={() => handleSelectCategory(parent.id)}
-                      className={`w-full flex items-center gap-3 px-5 py-3.5 border-b border-dark-800/60 transition-colors ${categoryId === parent.id ? 'bg-dark-800' : 'active:bg-dark-800/60'}`}>
-                      <div className="w-9 h-9 rounded-full flex items-center justify-center text-lg flex-shrink-0"
-                        style={{ backgroundColor: parent.color + '30' }}>
-                        {parent.icon}
-                      </div>
-                      <p className="flex-1 text-left text-sm font-medium">{parent.name}</p>
-                      {categoryId === parent.id && <Check size={18} className="text-brand-400 flex-shrink-0" />}
-                    </button>
-                    {subcats.map((sub) => {
-                      const isActive = categoryId === sub.id;
-                      return (
-                        <button key={sub.id} onClick={() => handleSelectCategory(sub.id)}
-                          className={`w-full flex items-center gap-3 pl-10 pr-5 py-3 border-b border-dark-800/40 transition-colors ${isActive ? 'bg-dark-800' : 'active:bg-dark-800/60'}`}>
-                          <div className="w-7 h-7 rounded-full flex items-center justify-center text-sm flex-shrink-0"
-                            style={{ backgroundColor: (sub.color || parent.color) + '30' }}>
-                            {sub.icon}
-                          </div>
-                          <p className="flex-1 text-left text-sm text-dark-200">{sub.name}</p>
-                          {isActive && <Check size={16} className="text-brand-400 flex-shrink-0" />}
-                        </button>
-                      );
-                    })}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* ── Create Category ── */}
-      {showForm && showCreateCategory && (
-        <div className="fixed inset-0 bg-dark-900 z-[80] flex flex-col slide-up">
-          <div className="flex items-center justify-between px-4 pt-5 pb-3 flex-shrink-0">
-            <button onClick={() => setShowCreateCategory(false)} className="p-1 text-dark-400 hover:text-white">
-              <ArrowLeft size={24} />
-            </button>
-            <h2 className="text-base font-bold">Nueva categoría</h2>
-            <div className="w-8" />
-          </div>
-
-          {/* Parent selector */}
-          <div className="px-5 pb-2 flex-shrink-0">
-            <p className="text-xs text-dark-400 font-medium mb-2 uppercase tracking-wider">Tipo</p>
-            <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
-              <button onClick={() => setNewCatParentId(null)}
-                className={`flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${newCatParentId === null ? 'bg-brand-600 text-white' : 'bg-dark-700 text-dark-300'}`}>
-                Principal
-              </button>
-              {parentCats.map(p => (
-                <button key={p.id} onClick={() => setNewCatParentId(p.id)}
-                  className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${newCatParentId === p.id ? 'bg-brand-600 text-white' : 'bg-dark-700 text-dark-300'}`}>
-                  <span>{p.icon}</span><span>{p.name}</span>
-                </button>
               ))}
             </div>
-          </div>
-
-          <div className="flex-1 overflow-y-auto px-5 pb-8">
-            <div className="flex items-center gap-4 py-5">
-              <div className="w-16 h-16 rounded-full flex items-center justify-center text-3xl flex-shrink-0"
-                style={{ backgroundColor: newCatColor }}>{newCatIcon}</div>
-              <input type="text" placeholder="Nombre de categoría" value={newCatName}
-                onChange={(e) => setNewCatName(e.target.value)} autoFocus
-                className="flex-1 text-lg font-semibold bg-transparent focus:outline-none border-b border-dark-700 pb-2 placeholder:text-dark-500" />
-            </div>
-
-            <div className="mb-5">
-              <p className="text-xs text-dark-400 font-medium mb-2.5 uppercase tracking-wider">Color</p>
-              <div className="flex gap-2 overflow-x-auto pb-2" style={{ scrollbarWidth: 'none' }}>
-                {CATEGORY_COLORS.map((c) => (
-                  <button key={c} onClick={() => setNewCatColor(c)}
-                    className={`w-8 h-8 rounded-full flex-shrink-0 transition-all ${newCatColor === c ? 'ring-2 ring-white ring-offset-2 ring-offset-dark-900 scale-110' : ''}`}
-                    style={{ backgroundColor: c }} />
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <p className="text-xs text-dark-400 font-medium mb-2.5 uppercase tracking-wider">Ícono</p>
-              <div className="grid grid-cols-6 gap-2">
-                {CATEGORY_ICONS.map((ic) => (
-                  <button key={ic} onClick={() => setNewCatIcon(ic)}
-                    className={`aspect-square rounded-xl flex items-center justify-center text-xl transition-all ${newCatIcon === ic ? 'bg-dark-600 ring-2 ring-brand-500' : 'bg-dark-800 hover:bg-dark-700'}`}>
-                    {ic}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="px-4 py-4 bg-dark-900 border-t border-dark-800 flex-shrink-0">
-            <button onClick={handleCreateCategory} disabled={!newCatName || savingCat}
-              className="w-full py-4 rounded-2xl font-bold text-base transition-all disabled:opacity-30"
-              style={{ backgroundColor: newCatColor, color: 'white' }}>
-              {savingCat ? 'Creando...' : 'Crear categoría'}
-            </button>
-          </div>
-        </div>
+          )}
+        </>
       )}
     </div>
   );
