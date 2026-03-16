@@ -4,7 +4,12 @@ import { useState, useEffect, useRef } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/utils';
-import { format, parseISO, addMonths, subMonths, startOfMonth, endOfMonth, startOfYear, endOfYear } from 'date-fns';
+import {
+  format, parseISO,
+  addMonths, subMonths, startOfMonth, endOfMonth,
+  addYears, subYears, startOfYear, endOfYear,
+  eachDayOfInterval, eachMonthOfInterval,
+} from 'date-fns';
 import { es } from 'date-fns/locale';
 import { ArrowLeft, ChevronDown, ChevronRight } from 'lucide-react';
 
@@ -26,9 +31,6 @@ interface ExpenseDetail {
   date: string;
   description: string;
   amount: number;
-  categoryName?: string;
-  categoryIcon?: string;
-  categoryColor?: string;
 }
 
 interface DrillDown {
@@ -36,22 +38,19 @@ interface DrillDown {
   name: string;
   icon: string;
   color: string;
-  expenses: ExpenseDetail[];
+  allIds: string[]; // cat + subcats
 }
 
-// ── SVG Donut — estilo Wallet iOS ────────────────────────────────────────────
+// ── SVG Donut ────────────────────────────────────────────────────────────────
 function DonutChart({ cats, total }: { cats: CatSpend[]; total: number }) {
-  // Canvas center and radii
   const CX = 185; const CY = 165;
   const R_OUTER = 90;
   const R_INNER = 56;
-  const R_ICON  = 116;
+  const R_ICON  = 118;
   const R_LINE_START = R_OUTER + 2;
-  const R_LINE_END   = R_ICON - 16;
   const R_LABEL = R_ICON + 28;
 
   let cumAngle = -90;
-
   const slices = cats.map(cat => {
     const pct = total > 0 ? cat.spent / total : 0;
     const angle = pct * 360;
@@ -61,113 +60,64 @@ function DonutChart({ cats, total }: { cats: CatSpend[]; total: number }) {
   });
 
   function toRad(deg: number) { return (deg * Math.PI) / 180; }
-
-  function polar(angleDeg: number, r: number) {
-    return {
-      x: CX + r * Math.cos(toRad(angleDeg)),
-      y: CY + r * Math.sin(toRad(angleDeg)),
-    };
+  function polar(deg: number, r: number) {
+    return { x: CX + r * Math.cos(toRad(deg)), y: CY + r * Math.sin(toRad(deg)) };
   }
-
-  function arc(startDeg: number, endDeg: number, ro: number, ri: number) {
-    const s1 = polar(startDeg, ro);
-    const e1 = polar(endDeg, ro);
-    const s2 = polar(endDeg, ri);
-    const e2 = polar(startDeg, ri);
-    const large = endDeg - startDeg > 180 ? 1 : 0;
-    return `M ${s1.x} ${s1.y} A ${ro} ${ro} 0 ${large} 1 ${e1.x} ${e1.y} L ${s2.x} ${s2.y} A ${ri} ${ri} 0 ${large} 0 ${e2.x} ${e2.y} Z`;
+  function arc(s: number, e: number, ro: number, ri: number) {
+    const p1 = polar(s, ro), p2 = polar(e, ro);
+    const p3 = polar(e, ri), p4 = polar(s, ri);
+    const lg = e - s > 180 ? 1 : 0;
+    return `M ${p1.x} ${p1.y} A ${ro} ${ro} 0 ${lg} 1 ${p2.x} ${p2.y} L ${p3.x} ${p3.y} A ${ri} ${ri} 0 ${lg} 0 ${p4.x} ${p4.y} Z`;
   }
-
-  // Small slices (< 2%) get a tiny icon radius so they don't overlap each other
-  // but we still show them — just smaller icon + no label if too tiny
-  const SHOW_LABEL_THRESHOLD = 0.025; // 2.5%
-  const SHOW_ICON_THRESHOLD  = 0.008; // 0.8% — below this skip entirely
 
   return (
-    <svg
-      viewBox="0 0 370 330"
-      width="100%"
-      height={290}
-      style={{ display: 'block', overflow: 'visible' }}
-    >
-      {/* ── Arcs ── */}
+    <svg viewBox="0 0 370 330" width="100%" height={290} style={{ display: 'block', overflow: 'visible' }}>
+      {/* Arcs */}
       {slices.map((s, i) => {
-        if (s.pct < SHOW_ICON_THRESHOLD) return null;
+        if (s.pct < 0.008) return null;
         const GAP = s.pct < 0.03 ? 0.4 : 1.2;
-        return (
-          <path
-            key={i}
-            d={arc(s.startA + GAP / 2, s.endA - GAP / 2, R_OUTER, R_INNER)}
-            fill={s.color}
-          />
-        );
+        return <path key={i} d={arc(s.startA + GAP / 2, s.endA - GAP / 2, R_OUTER, R_INNER)} fill={s.color} />;
       })}
 
-      {/* ── Connectors + icons + labels ── */}
+      {/* Connectors + icons + labels */}
       {slices.map((s, i) => {
-        if (s.pct < SHOW_ICON_THRESHOLD) return null;
-
+        if (s.pct < 0.008) return null;
         const midAngle = s.startA + (s.endA - s.startA) / 2;
+        const iconR = s.pct < 0.04 ? R_ICON - 5 : R_ICON;
+        const iconCircleR = s.pct < 0.04 ? 11 : 14;
+        const iconFontSize = s.pct < 0.04 ? 11 : 14;
 
-        // For very small slices, pull icon closer to avoid crowding
-        const iconR   = s.pct < 0.04 ? R_ICON - 6 : R_ICON;
-        const lineEndR = iconR - 16;
-        const labelR  = iconR + (s.pct < 0.04 ? 22 : 28);
+        // Line goes from donut edge all the way to the icon circle edge — unbroken
+        const lineStartPt = polar(midAngle, R_LINE_START);
+        const lineEndPt   = polar(midAngle, iconR - iconCircleR); // touch the icon circle
 
-        const lineStart = polar(midAngle, R_LINE_START);
-        const lineEnd   = polar(midAngle, lineEndR);
-        const iconPos   = polar(midAngle, iconR);
-
-        // Anti-overlap: nudge label perpendicular if adjacent slice is close
-        const prevSlice = i > 0 ? slices[i - 1] : null;
-        const nextSlice = i < slices.length - 1 ? slices[i + 1] : null;
-        const angularGapPrev = prevSlice ? Math.abs(midAngle - (prevSlice.startA + (prevSlice.endA - prevSlice.startA) / 2)) : 999;
-        const angularGapNext = nextSlice ? Math.abs(midAngle - (nextSlice.startA + (nextSlice.endA - nextSlice.startA) / 2)) : 999;
-        const isCrowded = angularGapPrev < 18 || angularGapNext < 18;
-        // If crowded, push label further out radially
-        const effectiveLabelR = isCrowded ? labelR + 10 : labelR;
-        const labelPos  = polar(midAngle, effectiveLabelR);
-
-        const iconSize  = s.pct < 0.04 ? 11 : 14;
-        const iconR_circle = s.pct < 0.04 ? 11 : 14;
-        const showLabel = s.pct >= SHOW_LABEL_THRESHOLD;
+        // Label: pushed further out to avoid overlapping icon
+        const prevMid = i > 0 ? slices[i-1].startA + (slices[i-1].endA - slices[i-1].startA) / 2 : 9999;
+        const nextMid = i < slices.length-1 ? slices[i+1].startA + (slices[i+1].endA - slices[i+1].startA) / 2 : 9999;
+        const crowded = Math.abs(midAngle - prevMid) < 20 || Math.abs(midAngle - nextMid) < 20;
+        const labelR = iconR + iconCircleR + (crowded ? 16 : 12);
+        const labelPos = polar(midAngle, labelR);
+        const iconPos  = polar(midAngle, iconR);
 
         return (
           <g key={i}>
-            {/* Connector line — thick and visible */}
+            {/* Continuous connector line from donut to icon bubble edge */}
             <line
-              x1={lineStart.x} y1={lineStart.y}
-              x2={lineEnd.x}   y2={lineEnd.y}
+              x1={lineStartPt.x} y1={lineStartPt.y}
+              x2={lineEndPt.x}   y2={lineEndPt.y}
               stroke={s.color}
               strokeWidth={s.pct < 0.04 ? 1.2 : 1.8}
-              opacity={0.85}
+              opacity={0.9}
             />
-
             {/* Icon bubble */}
-            <circle
-              cx={iconPos.x} cy={iconPos.y}
-              r={iconR_circle}
-              fill={s.color}
-            />
-            <text
-              x={iconPos.x} y={iconPos.y}
-              textAnchor="middle"
-              dominantBaseline="middle"
-              fontSize={iconSize}
-            >
+            <circle cx={iconPos.x} cy={iconPos.y} r={iconCircleR} fill={s.color} />
+            <text x={iconPos.x} y={iconPos.y} textAnchor="middle" dominantBaseline="middle" fontSize={iconFontSize}>
               {s.icon}
             </text>
-
-            {/* % label — only for slices big enough */}
-            {showLabel && (
-              <text
-                x={labelPos.x} y={labelPos.y}
-                textAnchor="middle"
-                dominantBaseline="middle"
-                fill={s.color}
-                fontSize={9.5}
-                fontWeight={700}
-              >
+            {/* % label */}
+            {s.pct >= 0.025 && (
+              <text x={labelPos.x} y={labelPos.y} textAnchor="middle" dominantBaseline="middle"
+                fill={s.color} fontSize={9.5} fontWeight={700}>
                 {`${(s.pct * 100).toFixed(1)}%`}
               </text>
             )}
@@ -175,42 +125,90 @@ function DonutChart({ cats, total }: { cats: CatSpend[]; total: number }) {
         );
       })}
 
-      {/* ── Center total ── */}
-      <text
-        x={CX} y={CY - 9}
-        textAnchor="middle"
-        fill="white"
-        fontSize={15}
-        fontWeight={700}
-      >
+      {/* Center */}
+      <text x={CX} y={CY - 9} textAnchor="middle" fill="white" fontSize={15} fontWeight={700}>
         -{formatCurrency(total)}
       </text>
-      <text
-        x={CX} y={CY + 10}
-        textAnchor="middle"
-        fill="#64748b"
-        fontSize={10}
-      >
+      <text x={CX} y={CY + 10} textAnchor="middle" fill="#64748b" fontSize={10}>
         Gastos totales
       </text>
     </svg>
   );
 }
-// ─────────────────────────────────────────────────────────────────────────────
 
-function getRange(date: Date, mode: ViewMode) {
-  if (mode === 'months') {
-    return {
-      start: format(startOfMonth(date), 'yyyy-MM-dd'),
-      end: format(endOfMonth(date), 'yyyy-MM-dd'),
-    };
+// ── Bar Chart para drill-down ────────────────────────────────────────────────
+function BarChart({ data, color, mode }: { data: { label: string; amount: number }[]; color: string; mode: ViewMode }) {
+  const W = 320; const H = 110;
+  const PAD_L = 36; const PAD_B = 22; const PAD_T = 8; const PAD_R = 8;
+  const chartW = W - PAD_L - PAD_R;
+  const chartH = H - PAD_B - PAD_T;
+  const max = Math.max(...data.map(d => d.amount), 1);
+
+  // Y axis labels
+  const yTicks = [0, max * 0.5, max];
+
+  function formatAmt(v: number) {
+    if (v === 0) return '0';
+    if (v >= 1000) return `${(v / 1000).toFixed(1)}k`;
+    return Math.round(v).toString();
   }
-  return {
-    start: format(startOfYear(date), 'yyyy-MM-dd'),
-    end: format(endOfYear(date), 'yyyy-MM-dd'),
-  };
+
+  const barW = Math.max(4, (chartW / data.length) * 0.55);
+  const barGap = chartW / data.length;
+
+  // Show fewer x labels if many bars
+  const showEvery = data.length > 20 ? 7 : data.length > 10 ? 3 : 1;
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} style={{ display: 'block' }}>
+      {/* Y gridlines */}
+      {yTicks.map((v, i) => {
+        const y = PAD_T + chartH - (v / max) * chartH;
+        return (
+          <g key={i}>
+            <line x1={PAD_L} y1={y} x2={W - PAD_R} y2={y} stroke="#1e293b" strokeWidth={1} strokeDasharray="3,3" />
+            <text x={PAD_L - 4} y={y} textAnchor="end" dominantBaseline="middle" fill="#475569" fontSize={8}>
+              {formatAmt(v)}
+            </text>
+          </g>
+        );
+      })}
+
+      {/* Bars */}
+      {data.map((d, i) => {
+        const barH = Math.max(2, (d.amount / max) * chartH);
+        const x = PAD_L + i * barGap + barGap / 2 - barW / 2;
+        const y = PAD_T + chartH - barH;
+        const isToday = i === data.length - 1 && mode === 'months';
+        return (
+          <g key={i}>
+            <rect x={x} y={y} width={barW} height={barH} fill={d.amount > 0 ? color : '#1e293b'} rx={2}
+              opacity={isToday ? 0.5 : 1} />
+            {i % showEvery === 0 && (
+              <text x={PAD_L + i * barGap + barGap / 2} y={H - 6}
+                textAnchor="middle" fill="#475569" fontSize={7.5}>
+                {d.label}
+              </text>
+            )}
+          </g>
+        );
+      })}
+
+      {/* X axis line */}
+      <line x1={PAD_L} y1={PAD_T + chartH} x2={W - PAD_R} y2={PAD_T + chartH} stroke="#1e293b" strokeWidth={1} />
+    </svg>
+  );
 }
 
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function getRange(date: Date, mode: ViewMode) {
+  if (mode === 'months') {
+    return { start: format(startOfMonth(date), 'yyyy-MM-dd'), end: format(endOfMonth(date), 'yyyy-MM-dd') };
+  }
+  return { start: format(startOfYear(date), 'yyyy-MM-dd'), end: format(endOfYear(date), 'yyyy-MM-dd') };
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
 export default function SpendingOverview({ user, onBack }: { user: User; onBack: () => void }) {
   const now = new Date();
   const [viewMode, setViewMode] = useState<ViewMode>('months');
@@ -220,7 +218,6 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [drillDown, setDrillDown] = useState<DrillDown | null>(null);
-
   const swipeStartX = useRef<number | null>(null);
 
   useEffect(() => { loadData(); }, [viewMode, currentDate]);
@@ -248,33 +245,20 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
         const subSpending: CatSpend[] = children.map((sub: any) => {
           const subExp = allExpenses.filter((e: any) => e.category_id === sub.id);
           const subSpent = subExp.reduce((s: number, e: any) => s + Number(e.amount), 0);
-          return {
-            id: sub.id, name: sub.name, icon: sub.icon, color: sub.color || cat.color,
-            spent: subSpent, percentage: total > 0 ? (subSpent / total) * 100 : 0,
-            transactions: subExp.length, subcategories: [],
-          };
+          return { id: sub.id, name: sub.name, icon: sub.icon, color: sub.color || cat.color, spent: subSpent, percentage: total > 0 ? (subSpent / total) * 100 : 0, transactions: subExp.length, subcategories: [] };
         }).filter((s: CatSpend) => s.spent > 0).sort((a: CatSpend, b: CatSpend) => b.spent - a.spent);
 
         const directExp = allExpenses.filter((e: any) => e.category_id === cat.id);
         const directSpent = directExp.reduce((s: number, e: any) => s + Number(e.amount), 0);
         const totalCatSpent = directSpent + subSpending.reduce((s, sc) => s + sc.spent, 0);
-        return {
-          id: cat.id, name: cat.name, icon: cat.icon, color: cat.color,
-          spent: totalCatSpent, percentage: total > 0 ? (totalCatSpent / total) * 100 : 0,
-          transactions: directExp.length + subSpending.reduce((s, sc) => s + sc.transactions, 0),
-          subcategories: subSpending,
-        };
+        return { id: cat.id, name: cat.name, icon: cat.icon, color: cat.color, spent: totalCatSpent, percentage: total > 0 ? (totalCatSpent / total) * 100 : 0, transactions: directExp.length + subSpending.reduce((s, sc) => s + sc.transactions, 0), subcategories: subSpending };
       }).filter((c: CatSpend) => c.spent > 0).sort((a: CatSpend, b: CatSpend) => b.spent - a.spent);
 
       const catIds = allCats.map((c: any) => c.id);
       const uncat = allExpenses.filter((e: any) => !e.category_id || !catIds.includes(e.category_id));
       if (uncat.length > 0) {
         const uncatSpent = uncat.reduce((s: number, e: any) => s + Number(e.amount), 0);
-        spending.push({
-          id: 'uncategorized', name: 'Sin categoría', icon: '📦', color: '#95A5A6',
-          spent: uncatSpent, percentage: total > 0 ? (uncatSpent / total) * 100 : 0,
-          transactions: uncat.length, subcategories: [],
-        });
+        spending.push({ id: 'uncategorized', name: 'Sin categoría', icon: '📦', color: '#95A5A6', spent: uncatSpent, percentage: total > 0 ? (uncatSpent / total) * 100 : 0, transactions: uncat.length, subcategories: [] });
       }
 
       setCatSpending(spending);
@@ -282,28 +266,11 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
     finally { setLoading(false); }
   }
 
-  async function openDrillDown(catId: string, name: string, icon: string, color: string) {
-    const range = getRange(currentDate, viewMode);
-    if (catId === 'uncategorized') {
-      const [{ data: allCats }, { data: exp }] = await Promise.all([
-        supabase.from('categories').select('id').eq('user_id', user.id),
-        supabase.from('expenses').select('id, amount, description, date').eq('user_id', user.id)
-          .gte('date', range.start).lte('date', range.end).order('date', { ascending: false }),
-      ]);
-      const ids = (allCats || []).map((c: any) => c.id);
-      const filtered = (exp || []).filter((e: any) => !e.category_id || !ids.includes(e.category_id));
-      setDrillDown({ id: catId, name, icon, color, expenses: filtered.map((e: any) => ({ id: e.id, date: e.date, description: e.description, amount: Number(e.amount) })) });
-    } else {
-      const parentCat = catSpending.find(c => c.id === catId);
-      const subIds = parentCat ? parentCat.subcategories.map(s => s.id) : [];
-      const allIds = [catId, ...subIds];
-      const { data: exp } = await supabase.from('expenses')
-        .select('id, amount, description, date, category_id')
-        .eq('user_id', user.id).in('category_id', allIds)
-        .gte('date', range.start).lte('date', range.end)
-        .order('date', { ascending: false });
-      setDrillDown({ id: catId, name, icon, color, expenses: (exp || []).map((e: any) => ({ id: e.id, date: e.date, description: e.description, amount: Number(e.amount) })) });
-    }
+  function openDrillDown(cat: CatSpend) {
+    const allIds = cat.id === 'uncategorized'
+      ? ['uncategorized']
+      : [cat.id, ...cat.subcategories.map(s => s.id)];
+    setDrillDown({ id: cat.id, name: cat.name, icon: cat.icon, color: cat.color, allIds });
   }
 
   function navigate(dir: 1 | -1) {
@@ -311,8 +278,8 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
       const next = dir === 1 ? addMonths(currentDate, 1) : subMonths(currentDate, 1);
       if (next <= now) setCurrentDate(next);
     } else {
-      const nextYear = currentDate.getFullYear() + dir;
-      if (nextYear <= now.getFullYear()) setCurrentDate(new Date(nextYear, 0, 1));
+      const next = dir === 1 ? addYears(currentDate, 1) : subYears(currentDate, 1);
+      if (next <= now) setCurrentDate(next);
     }
   }
 
@@ -342,62 +309,21 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
 
   // ── Drill-down view ──────────────────────────────────────────────────────────
   if (drillDown) {
-    const today = format(now, 'yyyy-MM-dd');
-    const yesterday = format(new Date(now.getTime() - 86400000), 'yyyy-MM-dd');
-    const dayMap = new Map<string, ExpenseDetail[]>();
-    drillDown.expenses.forEach(e => {
-      if (!dayMap.has(e.date)) dayMap.set(e.date, []);
-      dayMap.get(e.date)!.push(e);
-    });
-    const grouped = Array.from(dayMap.entries())
-      .map(([dateStr, exps]) => ({
-        date: dateStr,
-        label: dateStr === today ? 'Hoy' : dateStr === yesterday ? 'Ayer' : format(parseISO(dateStr), "d 'de' MMMM", { locale: es }),
-        total: exps.reduce((s, e) => s + e.amount, 0),
-        expenses: exps,
-      }))
-      .sort((a, b) => b.date.localeCompare(a.date));
-
     return (
-      <div className="max-w-lg mx-auto page-transition pb-6">
-        <div className="flex items-center gap-2 px-3 pt-4 pb-3">
-          <button onClick={() => setDrillDown(null)} className="p-1 text-dark-300 hover:text-white transition-colors">
-            <ArrowLeft size={20} />
-          </button>
-          <div className="flex items-center gap-2 flex-1 min-w-0">
-            <div className="w-8 h-8 rounded-xl flex items-center justify-center text-base flex-shrink-0" style={{ backgroundColor: drillDown.color }}>{drillDown.icon}</div>
-            <h1 className="text-sm font-bold truncate">{drillDown.name}</h1>
-          </div>
-          <span className="text-sm font-bold text-red-400 flex-shrink-0">-{formatCurrency(drillDown.expenses.reduce((s, e) => s + e.amount, 0))}</span>
-        </div>
-        {grouped.map(group => (
-          <div key={group.date}>
-            <div className="flex items-center justify-between px-3 py-1 bg-dark-800/60">
-              <span className="text-[10px] font-semibold text-dark-500 uppercase tracking-wider capitalize">{group.label}</span>
-              <span className="text-[10px] font-semibold text-dark-500">-{formatCurrency(group.total)}</span>
-            </div>
-            {group.expenses.map(exp => (
-              <div key={exp.id} className="flex items-center gap-2.5 px-3 py-2 border-b border-dark-800/40">
-                <div className="w-8 h-8 rounded-xl flex items-center justify-center text-base flex-shrink-0" style={{ backgroundColor: drillDown.color }}>{drillDown.icon}</div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-[12px] font-semibold truncate">{drillDown.name}</p>
-                  {exp.description && exp.description !== drillDown.name && (
-                    <p className="text-[10px] text-dark-500 truncate">{exp.description}</p>
-                  )}
-                </div>
-                <span className="text-[12px] font-bold text-red-400 flex-shrink-0">-{formatCurrency(exp.amount)}</span>
-              </div>
-            ))}
-          </div>
-        ))}
-      </div>
+      <DrillDownView
+        user={user}
+        drillDown={drillDown}
+        onBack={() => setDrillDown(null)}
+        initialDate={currentDate}
+        initialMode={viewMode}
+        now={now}
+      />
     );
   }
 
   // ── Main view ────────────────────────────────────────────────────────────────
   return (
     <div className="max-w-lg mx-auto page-transition pb-6" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
-      {/* Header */}
       <div className="flex items-center gap-2 px-3 pt-4 pb-2">
         <button onClick={onBack} className="p-1 text-dark-300 hover:text-white transition-colors">
           <ArrowLeft size={20} />
@@ -405,34 +331,25 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
         <h1 className="text-sm font-bold flex-1 text-center pr-6">Overview</h1>
       </div>
 
-      {/* Toggle */}
       <div className="flex justify-center mb-2">
         <div className="inline-flex bg-dark-800 rounded-full p-0.5">
-          <button
-            onClick={() => { setViewMode('months'); setCurrentDate(now); }}
-            className={`px-3 py-1 rounded-full text-[11px] font-medium transition-all ${viewMode === 'months' ? 'bg-dark-600 text-white' : 'text-dark-400'}`}
-          >
+          <button onClick={() => { setViewMode('months'); setCurrentDate(now); }}
+            className={`px-3 py-1 rounded-full text-[11px] font-medium transition-all ${viewMode === 'months' ? 'bg-dark-600 text-white' : 'text-dark-400'}`}>
             Por meses
           </button>
-          <button
-            onClick={() => { setViewMode('years'); setCurrentDate(now); }}
-            className={`px-3 py-1 rounded-full text-[11px] font-medium transition-all ${viewMode === 'years' ? 'bg-dark-600 text-white' : 'text-dark-400'}`}
-          >
+          <button onClick={() => { setViewMode('years'); setCurrentDate(now); }}
+            className={`px-3 py-1 rounded-full text-[11px] font-medium transition-all ${viewMode === 'years' ? 'bg-dark-600 text-white' : 'text-dark-400'}`}>
             Por año
           </button>
         </div>
       </div>
 
-      {/* Period navigation */}
       <div className="flex items-center justify-between px-4 mb-1">
-        <button onClick={() => navigate(-1)} className="text-[11px] text-dark-500 capitalize py-1 px-2 active:text-dark-300">
-          ← {prevLabel}
-        </button>
+        <button onClick={() => navigate(-1)} className="text-[11px] text-dark-500 capitalize py-1 px-2 active:text-dark-300">← {prevLabel}</button>
         <p className="text-[13px] font-semibold capitalize">{periodLabel}</p>
         {isAtPresent
           ? <div className="w-20" />
-          : <button onClick={() => navigate(1)} className="text-[11px] text-dark-500 capitalize py-1 px-2 active:text-dark-300">{nextLabel} →</button>
-        }
+          : <button onClick={() => navigate(1)} className="text-[11px] text-dark-500 capitalize py-1 px-2 active:text-dark-300">{nextLabel} →</button>}
       </div>
 
       {loading ? (
@@ -446,18 +363,15 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
         </div>
       ) : (
         <>
-          {/* Donut */}
           <div className="px-2 mb-2">
             <DonutChart cats={catSpending} total={totalSpent} />
           </div>
 
-          {/* Total del período */}
           <div className="flex items-center justify-between px-4 py-3 mb-1 border-t border-b border-dark-800/60">
             <span className="text-xs text-dark-400 font-medium uppercase tracking-wider">Total gastado</span>
             <span className="text-base font-bold text-red-400">-{formatCurrency(totalSpent)}</span>
           </div>
 
-          {/* Category list */}
           <div className="px-3">
             {catSpending.map((cat) => {
               const hasSubs = cat.subcategories.length > 0;
@@ -465,23 +379,19 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
               return (
                 <div key={cat.id} className="border-b border-dark-800/40">
                   <div className="flex items-center gap-2.5 py-2.5">
-                    <button
-                      onClick={() => openDrillDown(cat.id, cat.name, cat.icon, cat.color)}
+                    <button onClick={() => openDrillDown(cat)}
                       className="w-9 h-9 rounded-xl flex items-center justify-center text-base flex-shrink-0 active:opacity-70"
-                      style={{ backgroundColor: cat.color }}
-                    >
+                      style={{ backgroundColor: cat.color }}>
                       {cat.icon}
                     </button>
-                    <button onClick={() => openDrillDown(cat.id, cat.name, cat.icon, cat.color)} className="flex-1 min-w-0 text-left active:opacity-70">
+                    <button onClick={() => openDrillDown(cat)} className="flex-1 min-w-0 text-left active:opacity-70">
                       <p className="text-[12px] font-semibold">{cat.name}</p>
                       <p className="text-[10px] text-dark-500">{cat.transactions} {cat.transactions === 1 ? 'transacción' : 'transacciones'}</p>
                     </button>
                     <span className="text-[12px] font-bold text-red-400 flex-shrink-0">-{formatCurrency(cat.spent)}</span>
                     {hasSubs && (
-                      <button
-                        onClick={() => setExpanded(prev => { const n = new Set(prev); n.has(cat.id) ? n.delete(cat.id) : n.add(cat.id); return n; })}
-                        className="p-0.5 text-dark-500 ml-0.5"
-                      >
+                      <button onClick={() => setExpanded(prev => { const n = new Set(prev); n.has(cat.id) ? n.delete(cat.id) : n.add(cat.id); return n; })}
+                        className="p-0.5 text-dark-500 ml-0.5">
                         {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
                       </button>
                     )}
@@ -489,11 +399,8 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
                   {hasSubs && isExpanded && (
                     <div className="pb-1">
                       {cat.subcategories.map((sub, idx) => (
-                        <button
-                          key={sub.id}
-                          onClick={() => openDrillDown(sub.id, sub.name, sub.icon, sub.color)}
-                          className={`w-full flex items-center gap-2 pl-4 pr-1 py-2 active:bg-dark-800/40 ${idx < cat.subcategories.length - 1 ? 'border-b border-dark-800/20' : ''}`}
-                        >
+                        <button key={sub.id} onClick={() => openDrillDown(sub)}
+                          className={`w-full flex items-center gap-2 pl-4 pr-1 py-2 active:bg-dark-800/40 ${idx < cat.subcategories.length - 1 ? 'border-b border-dark-800/20' : ''}`}>
                           <span className="text-dark-600 text-xs">└</span>
                           <div className="w-7 h-7 rounded-lg flex items-center justify-center text-sm flex-shrink-0" style={{ backgroundColor: sub.color }}>{sub.icon}</div>
                           <div className="flex-1 min-w-0 text-left">
@@ -509,6 +416,226 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
               );
             })}
           </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── DrillDownView — chart de columnas + transacciones ───────────────────────
+function DrillDownView({
+  user, drillDown, onBack, initialDate, initialMode, now,
+}: {
+  user: User;
+  drillDown: DrillDown;
+  onBack: () => void;
+  initialDate: Date;
+  initialMode: ViewMode;
+  now: Date;
+}) {
+  const [viewMode, setViewMode] = useState<ViewMode>(initialMode);
+  const [currentDate, setCurrentDate] = useState(initialDate);
+  const [expenses, setExpenses] = useState<ExpenseDetail[]>([]);
+  const [barData, setBarData] = useState<{ label: string; amount: number }[]>([]);
+  const [periodTotal, setPeriodTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const swipeStartX = useRef<number | null>(null);
+
+  useEffect(() => { loadData(); }, [viewMode, currentDate]);
+
+  async function loadData() {
+    setLoading(true);
+    try {
+      const range = getRange(currentDate, viewMode);
+
+      let query = supabase.from('expenses')
+        .select('id, amount, description, date, category_id')
+        .eq('user_id', user.id)
+        .gte('date', range.start)
+        .lte('date', range.end)
+        .order('date', { ascending: false });
+
+      if (drillDown.id === 'uncategorized') {
+        const { data: allCats } = await supabase.from('categories').select('id').eq('user_id', user.id);
+        const ids = (allCats || []).map((c: any) => c.id);
+        const { data: exp } = await supabase.from('expenses')
+          .select('id, amount, description, date, category_id')
+          .eq('user_id', user.id).gte('date', range.start).lte('date', range.end)
+          .order('date', { ascending: false });
+        const filtered = (exp || []).filter((e: any) => !e.category_id || !ids.includes(e.category_id));
+        setExpenses(filtered.map((e: any) => ({ id: e.id, date: e.date, description: e.description, amount: Number(e.amount) })));
+        const total = filtered.reduce((s: number, e: any) => s + Number(e.amount), 0);
+        setPeriodTotal(total);
+        setBarData(buildBarData(filtered, currentDate, viewMode));
+      } else {
+        const { data: exp } = await query.in('category_id', drillDown.allIds);
+        const list = (exp || []).map((e: any) => ({ id: e.id, date: e.date, description: e.description, amount: Number(e.amount) }));
+        setExpenses(list);
+        const total = list.reduce((s, e) => s + e.amount, 0);
+        setPeriodTotal(total);
+        setBarData(buildBarData(list, currentDate, viewMode));
+      }
+    } catch (err) { console.error(err); }
+    finally { setLoading(false); }
+  }
+
+  function buildBarData(exp: { date: string; amount: number }[], date: Date, mode: ViewMode) {
+    if (mode === 'months') {
+      const days = eachDayOfInterval({ start: startOfMonth(date), end: endOfMonth(date) });
+      return days.map(d => {
+        const key = format(d, 'yyyy-MM-dd');
+        const amount = exp.filter(e => e.date === key).reduce((s, e) => s + e.amount, 0);
+        return { label: format(d, 'd'), amount };
+      });
+    } else {
+      const months = eachMonthOfInterval({ start: startOfYear(date), end: endOfYear(date) });
+      return months.map(m => {
+        const mStr = format(m, 'yyyy-MM');
+        const amount = exp.filter(e => e.date.startsWith(mStr)).reduce((s, e) => s + e.amount, 0);
+        return { label: format(m, 'MMM', { locale: es }), amount };
+      });
+    }
+  }
+
+  function navigate(dir: 1 | -1) {
+    if (viewMode === 'months') {
+      const next = dir === 1 ? addMonths(currentDate, 1) : subMonths(currentDate, 1);
+      if (next <= now) setCurrentDate(next);
+    } else {
+      const next = dir === 1 ? addYears(currentDate, 1) : subYears(currentDate, 1);
+      if (next <= now) setCurrentDate(next);
+    }
+  }
+
+  function onTouchStart(e: React.TouchEvent) { swipeStartX.current = e.touches[0].clientX; }
+  function onTouchEnd(e: React.TouchEvent) {
+    if (swipeStartX.current === null) return;
+    const dx = swipeStartX.current - e.changedTouches[0].clientX;
+    if (Math.abs(dx) > 40) navigate(dx > 0 ? 1 : -1);
+    swipeStartX.current = null;
+  }
+
+  const isAtPresent = viewMode === 'months'
+    ? format(currentDate, 'yyyy-MM') === format(now, 'yyyy-MM')
+    : currentDate.getFullYear() === now.getFullYear();
+
+  const prevLabel = viewMode === 'months'
+    ? format(subMonths(currentDate, 1), 'MMM yyyy', { locale: es })
+    : String(currentDate.getFullYear() - 1);
+
+  const nextLabel = isAtPresent ? '' : viewMode === 'months'
+    ? format(addMonths(currentDate, 1), 'MMM yyyy', { locale: es })
+    : String(currentDate.getFullYear() + 1);
+
+  const periodLabel = viewMode === 'months'
+    ? format(currentDate, 'MMMM yyyy', { locale: es })
+    : currentDate.getFullYear().toString();
+
+  // Group expenses by date for list
+  const todayStr = format(now, 'yyyy-MM-dd');
+  const yestStr  = format(new Date(now.getTime() - 86400000), 'yyyy-MM-dd');
+  const dayMap = new Map<string, ExpenseDetail[]>();
+  expenses.forEach(e => {
+    if (!dayMap.has(e.date)) dayMap.set(e.date, []);
+    dayMap.get(e.date)!.push(e);
+  });
+  const grouped = Array.from(dayMap.entries())
+    .map(([dateStr, exps]) => ({
+      date: dateStr,
+      label: dateStr === todayStr ? 'Hoy' : dateStr === yestStr ? 'Ayer'
+        : format(parseISO(dateStr), "d 'de' MMMM", { locale: es }),
+      total: exps.reduce((s, e) => s + e.amount, 0),
+      expenses: exps,
+    }))
+    .sort((a, b) => b.date.localeCompare(a.date));
+
+  return (
+    <div className="max-w-lg mx-auto page-transition pb-8" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+      {/* Header */}
+      <div className="flex items-center gap-2 px-3 pt-4 pb-3">
+        <button onClick={onBack} className="p-1 text-dark-300 hover:text-white transition-colors">
+          <ArrowLeft size={20} />
+        </button>
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          <div className="w-8 h-8 rounded-xl flex items-center justify-center text-base flex-shrink-0"
+            style={{ backgroundColor: drillDown.color }}>{drillDown.icon}</div>
+          <h1 className="text-sm font-bold truncate capitalize">{drillDown.name}</h1>
+        </div>
+      </div>
+
+      {/* Mode toggle */}
+      <div className="flex justify-center mb-2">
+        <div className="inline-flex bg-dark-800 rounded-full p-0.5">
+          <button onClick={() => { setViewMode('months'); setCurrentDate(now); }}
+            className={`px-3 py-1 rounded-full text-[11px] font-medium transition-all ${viewMode === 'months' ? 'bg-dark-600 text-white' : 'text-dark-400'}`}>
+            Por meses
+          </button>
+          <button onClick={() => { setViewMode('years'); setCurrentDate(now); }}
+            className={`px-3 py-1 rounded-full text-[11px] font-medium transition-all ${viewMode === 'years' ? 'bg-dark-600 text-white' : 'text-dark-400'}`}>
+            Por año
+          </button>
+        </div>
+      </div>
+
+      {/* Period nav */}
+      <div className="flex items-center justify-between px-4 mb-2">
+        <button onClick={() => navigate(-1)} className="text-[11px] text-dark-500 capitalize py-1 px-2 active:text-dark-300">← {prevLabel}</button>
+        <p className="text-[13px] font-semibold capitalize">{periodLabel}</p>
+        {isAtPresent
+          ? <div className="w-20" />
+          : <button onClick={() => navigate(1)} className="text-[11px] text-dark-500 capitalize py-1 px-2 active:text-dark-300">{nextLabel} →</button>}
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-12">
+          <div className="w-7 h-7 border-2 border-brand-500/30 border-t-brand-500 rounded-full animate-spin" />
+        </div>
+      ) : (
+        <>
+          {/* Bar chart */}
+          <div className="px-3 mb-1">
+            <BarChart data={barData} color={drillDown.color} mode={viewMode} />
+          </div>
+
+          {/* Period total */}
+          <div className="flex items-center justify-between px-4 py-3 border-t border-b border-dark-800/60 mb-1">
+            <span className="text-xs text-dark-400 font-medium uppercase tracking-wider">Total en el período</span>
+            <span className="text-base font-bold text-red-400">
+              {periodTotal > 0 ? `-${formatCurrency(periodTotal)}` : formatCurrency(0)}
+            </span>
+          </div>
+
+          {/* Transactions */}
+          {grouped.length === 0 ? (
+            <div className="text-center py-10">
+              <p className="text-dark-500 text-sm">Sin transacciones en este período</p>
+            </div>
+          ) : (
+            <div>
+              <p className="px-4 pt-3 pb-1 text-sm font-bold">Transacciones</p>
+              {grouped.map(group => (
+                <div key={group.date}>
+                  <div className="flex items-center justify-between px-4 py-1.5 bg-dark-800/60">
+                    <span className="text-[10px] font-semibold text-dark-500 uppercase tracking-wider capitalize">{group.label}</span>
+                    <span className="text-[10px] font-semibold text-dark-500">-{formatCurrency(group.total)}</span>
+                  </div>
+                  {group.expenses.map(exp => (
+                    <div key={exp.id} className="flex items-center gap-2.5 px-4 py-2.5 border-b border-dark-800/40">
+                      <div className="w-8 h-8 rounded-xl flex items-center justify-center text-base flex-shrink-0"
+                        style={{ backgroundColor: drillDown.color }}>{drillDown.icon}</div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[12px] font-semibold truncate">{drillDown.name}</p>
+                        {exp.description && exp.description !== drillDown.name && (
+                          <p className="text-[10px] text-dark-500 truncate">{exp.description}</p>
+                        )}
+                      </div>
+                      <span className="text-[12px] font-bold text-red-400 flex-shrink-0">-{formatCurrency(exp.amount)}</span>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
         </>
       )}
     </div>
