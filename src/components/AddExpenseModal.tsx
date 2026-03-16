@@ -77,7 +77,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
   useEffect(() => { loadCategories(); }, [user.id]);
 
   async function loadCategories() {
-    const { data } = await supabase.from('categories').select('*').eq('user_id', user.id).order('position').order('created_at');
+    const { data } = await supabase.from('categories').select('*').eq('user_id', user.id).eq('deleted', false).order('position').order('created_at');
     const flat = data || [];
     setCategories(flat);
     setRoots(buildTree(flat));
