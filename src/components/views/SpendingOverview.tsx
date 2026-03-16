@@ -139,15 +139,6 @@ function DonutChart({ cats, total, onPress }: { cats: CatSpend[]; total: number;
     </svg>
   );
 }
-      <text x={cx} y={cy - 6} textAnchor="middle" fill="white" fontSize={13} fontWeight={700}>
-        -{formatCurrency(total)}
-      </text>
-      <text x={cx} y={cy + 9} textAnchor="middle" fill="#64748b" fontSize={9}>
-        Gastos totales
-      </text>
-    </svg>
-  );
-}
 // ─────────────────────────────────────────────────────────────────────────────
 
 function getRange(date: Date, mode: ViewMode) {
