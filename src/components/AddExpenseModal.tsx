@@ -47,8 +47,8 @@ function hslToHex(h: number, s: number, l: number): string {
 }
 function deriveChildColor(parentHex: string, siblingCount: number): string {
   const [h,s,l] = hexToHsl(parentHex);
-  const newL = Math.min(78, l + 18 + siblingCount * 14);
-  const newS = Math.max(18, s * 0.45 - siblingCount * 4);
+  const newL = Math.min(88, l + 4 + siblingCount * 7);
+  const newS = Math.max(15, s - 4 - siblingCount * 7);
   return hslToHex(h, newS, newL);
 }
 
