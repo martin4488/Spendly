@@ -132,9 +132,9 @@ function hslToHex(h: number, s: number, l: number): string {
 
 function deriveChildColor(parentHex: string, siblingCount: number): string {
   const [h, s, l] = hexToHsl(parentHex);
-  // Pastel: moderate lightness bump, significant saturation drop, spread siblings apart
-  const newL = Math.min(78, l + 18 + siblingCount * 14);
-  const newS = Math.max(18, s * 0.45 - siblingCount * 4);
+  // First child very close to parent, each sibling gets progressively lighter + less saturated
+  const newL = Math.min(88, l + 4 + siblingCount * 7);
+  const newS = Math.max(15, s - 4 - siblingCount * 7);
   return hslToHex(h, newS, newL);
 }
 
@@ -250,7 +250,15 @@ export default function CategoriesView({ user }: { user: User }) {
     const data = { user_id: user.id, name, icon, color, parent_id: parentId };
     try {
       if (editingId) {
+        const prevCat = flatCats.find(c => c.id === editingId);
+        const colorChanged = prevCat && prevCat.color !== color;
+
         await supabase.from('categories').update(data).eq('id', editingId);
+
+        // If color changed, cascade new colors to all descendants regardless of depth
+        if (colorChanged) {
+          await cascadeColors(editingId, color, flatCats);
+        }
       } else {
         await supabase.from('categories').insert({ ...data, position: 999 });
       }
@@ -258,6 +266,19 @@ export default function CategoriesView({ user }: { user: User }) {
       loadData();
     } catch (err) { console.error(err); }
     finally { setSaving(false); }
+  }
+
+  // Recursively update descendant colors based on new parent color
+  async function cascadeColors(parentId: string, parentColor: string, allCats: Category[]) {
+    const children = allCats.filter(c => c.parent_id === parentId && !c.deleted);
+    await Promise.all(
+      children.map(async (child, idx) => {
+        const newColor = deriveChildColor(parentColor, idx);
+        await supabase.from('categories').update({ color: newColor }).eq('id', child.id);
+        // Recurse into grandchildren using the child's new color
+        await cascadeColors(child.id, newColor, allCats);
+      })
+    );
   }
 
   async function handleDelete(id: string) {
