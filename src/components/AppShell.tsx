@@ -28,6 +28,7 @@ const tabs: { id: Tab; label: string; icon: typeof LayoutDashboard }[] = [
 export default function AppShell({ user }: { user: User }) {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [selectedBudget, setSelectedBudget] = useState<Budget | null>(null);
+  const [selectedPeriodId, setSelectedPeriodId] = useState<string>('');
   const [defaultCurrency, setDefaultCurrency] = useState<CurrencyCode>('EUR');
   const [settingsLoaded, setSettingsLoaded] = useState(false);
 
@@ -54,10 +55,11 @@ export default function AppShell({ user }: { user: User }) {
     init();
   }, [user.id]);
 
-  function openBudget(budget: Budget) {
-    setSelectedBudget(budget);
-    setActiveTab('budget-detail');
-  }
+  function openBudget(budget: Budget, periodId: string = '') {
+  setSelectedBudget(budget);
+  setSelectedPeriodId(periodId);       // ← nuevo
+  setActiveTab('budget-detail');
+}
 
   function backFromBudgetDetail() {
     setSelectedBudget(null);
@@ -89,14 +91,12 @@ export default function AppShell({ user }: { user: User }) {
         {activeTab === 'budgets' && <BudgetsView user={user} onOpenBudget={openBudget} />}
         {activeTab === 'budget-detail' && selectedBudget && (
           <BudgetDetailView
-            user={user}
-            budget={selectedBudget}
-            onBack={backFromBudgetDetail}
-            onRefresh={() => {
-              setActiveTab('budgets');
-              setTimeout(() => setActiveTab('budget-detail'), 50);
-            }}
-          />
+  user={user}
+  budget={selectedBudget}
+  initialPeriodId={selectedPeriodId}
+  onBack={backFromBudgetDetail}
+  onRefresh={...}
+/>
         )}
         {activeTab === 'recurring' && <RecurringView user={user} />}
         {activeTab === 'settings' && (
