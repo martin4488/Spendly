@@ -51,7 +51,7 @@ export default function AppShell({ user }: AppShellProps) {
   const [defaultCurrency, setDefaultCurrency] = useState<CurrencyCode>('EUR');
   const [settingsLoaded, setSettingsLoaded] = useState(false);
 
-  // Load user settings + prefetch exchange rates on mount
+  // Cargar configuración del usuario + precargar tasas de cambio al montar
   useEffect(() => {
     async function init() {
       const [_, { data }] = await Promise.all([
@@ -62,7 +62,7 @@ export default function AppShell({ user }: AppShellProps) {
       if (data) {
         setDefaultCurrency(data.default_currency as CurrencyCode);
       } else {
-        // Create default settings if none exist
+        // Crear configuración por defecto si no existe
         await supabase.from('user_settings').insert({
           user_id: user.id,
           default_currency: 'EUR',
@@ -83,7 +83,7 @@ export default function AppShell({ user }: AppShellProps) {
 
   const backFromBudgetDetail = () => {
     setSelectedBudget(null);
-    setSelectedPeriodId(''); // también limpiamos el período seleccionado
+    setSelectedPeriodId('');
     setActiveTab('budgets');
   };
 
@@ -129,8 +129,9 @@ export default function AppShell({ user }: AppShellProps) {
             onBack={backFromBudgetDetail}
             onRefresh={() => {
               setActiveTab('budgets');
-              // Pequeño retraso para que la transición sea más suave
-              setTimeout(() => setActiveTab('budget-detail'), 50);
+              setTimeout(() => {
+                setActiveTab('budget-detail');
+              }, 50);
             }}
           />
         )}
