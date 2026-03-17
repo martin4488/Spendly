@@ -6,12 +6,22 @@ import { supabase } from '@/lib/supabase';
 import { formatCurrency, getBudgetPeriodRange } from '@/lib/utils';
 import { Budget, Category } from '@/types';
 import { Plus, X, ChevronRight, Delete, ArrowLeft, Search, Check } from 'lucide-react';
-import { format } from 'date-fns';
+import {
+  format, addMonths, addYears, startOfMonth, endOfMonth,
+  startOfYear, endOfYear, parseISO, isBefore, isAfter
+} from 'date-fns';
 import { es } from 'date-fns/locale';
 
 interface Props {
   user: User;
-  onOpenBudget: (budget: Budget) => void;
+  onOpenBudget: (budget: Budget, periodId: string) => void;
+}
+
+export interface BudgetPeriod {
+  id: string;
+  budget_id: string;
+  period_start: string;
+  period_end: string;
 }
 
 // ── Tree ──────────────────────────────────────────────────────────────────────
@@ -33,9 +43,48 @@ function flattenTree(nodes: CatNode[], ancestors: CatNode[] = []): FlatEntry[] {
   return nodes.flatMap(n => [{ cat: n, ancestors }, ...flattenTree(n.children, [...ancestors, n])]);
 }
 
-// Get all descendant ids including self
 function allDescendantIds(node: CatNode): string[] {
   return [node.id, ...node.children.flatMap(allDescendantIds)];
+}
+
+// ── Period generation ─────────────────────────────────────────────────────────
+function getPeriodBounds(startDate: string, recurrence: 'monthly' | 'yearly', offset: number = 0): { start: string; end: string } {
+  const base = parseISO(startDate);
+  let periodStart: Date;
+  let periodEnd: Date;
+
+  if (recurrence === 'monthly') {
+    periodStart = startOfMonth(addMonths(base, offset));
+    periodEnd = endOfMonth(addMonths(base, offset));
+  } else {
+    periodStart = startOfYear(addYears(base, offset));
+    periodEnd = endOfYear(addYears(base, offset));
+  }
+
+  return {
+    start: format(periodStart, 'yyyy-MM-dd'),
+    end: format(periodEnd, 'yyyy-MM-dd'),
+  };
+}
+
+// Generate all period ranges from budget start_date up to today
+function generateMissingPeriods(budget: Budget, existingPeriods: BudgetPeriod[]): { start: string; end: string }[] {
+  const today = format(new Date(), 'yyyy-MM-dd');
+  const missing: { start: string; end: string }[] = [];
+  let offset = 0;
+
+  while (true) {
+    const bounds = getPeriodBounds(budget.start_date, budget.recurrence as 'monthly' | 'yearly', offset);
+    if (bounds.start > today) break;
+
+    const exists = existingPeriods.some(p => p.period_start === bounds.start && p.budget_id === budget.id);
+    if (!exists) missing.push(bounds);
+
+    offset++;
+    if (offset > 120) break; // safety cap: 10 years
+  }
+
+  return missing;
 }
 
 export default function BudgetsView({ user, onOpenBudget }: Props) {
@@ -45,6 +94,7 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingBudget, setEditingBudget] = useState<Budget | null>(null);
+  const [currentPeriods, setCurrentPeriods] = useState<Record<string, BudgetPeriod>>({});
 
   // Form state
   const [name, setName] = useState('');
@@ -70,23 +120,50 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
   async function loadData() {
     setLoading(true);
     try {
-      const [{ data: budgetsData }, { data: catsData }, { data: bcData }] = await Promise.all([
+      const today = format(new Date(), 'yyyy-MM-dd');
+
+      const [{ data: budgetsData }, { data: catsData }, { data: bcData }, { data: periodsData }] = await Promise.all([
         supabase.from('budgets').select('*').eq('user_id', user.id).order('name'),
         supabase.from('categories').select('*').eq('user_id', user.id).eq('deleted', false).order('position').order('created_at'),
         supabase.from('budget_categories').select('*'),
+        supabase.from('budget_periods').select('*'),
       ]);
 
       const allCats = catsData || [];
+      const allPeriods = periodsData || [];
       setCategories(allCats);
       setRoots(buildTree(allCats));
 
+      const tree = buildTree(allCats);
+
+      // Ensure all periods exist for all budgets
+      const allBudgets = budgetsData || [];
+      for (const b of allBudgets) {
+        const bPeriods = allPeriods.filter((p: BudgetPeriod) => p.budget_id === b.id);
+        const missing = generateMissingPeriods(b as Budget, bPeriods);
+        if (missing.length > 0) {
+          const { data: newPeriods } = await supabase.from('budget_periods').insert(
+            missing.map(m => ({ budget_id: b.id, period_start: m.start, period_end: m.end }))
+          ).select();
+          if (newPeriods) allPeriods.push(...newPeriods);
+        }
+      }
+
+      // Find current period for each budget
+      const curPeriods: Record<string, BudgetPeriod> = {};
+      for (const b of allBudgets) {
+        const bPeriods = allPeriods.filter((p: BudgetPeriod) => p.budget_id === b.id);
+        const current = bPeriods.find((p: BudgetPeriod) => p.period_start <= today && p.period_end >= today);
+        if (current) curPeriods[b.id] = current;
+      }
+      setCurrentPeriods(curPeriods);
+
       const enriched: Budget[] = [];
-      for (const b of (budgetsData || [])) {
+      for (const b of allBudgets) {
         const catIds = (bcData || []).filter((bc: any) => bc.budget_id === b.id).map((bc: any) => bc.category_id);
         const bCats = allCats.filter(c => catIds.includes(c.id));
 
-        // Include all descendants of selected cats
-        const tree = buildTree(allCats);
+        // Expand to all descendants
         const allCatIds = [...catIds];
         const addDescendants = (nodes: CatNode[]) => {
           nodes.forEach(n => {
@@ -98,14 +175,16 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
         };
         addDescendants(tree);
 
-        const range = getBudgetPeriodRange(b.start_date, b.recurrence);
+        // Use current period range
+        const curPeriod = curPeriods[b.id];
         let spent = 0;
-        if (allCatIds.length > 0) {
+        if (allCatIds.length > 0 && curPeriod) {
           const { data: expenses } = await supabase.from('expenses').select('amount')
             .eq('user_id', user.id).in('category_id', allCatIds)
-            .gte('date', range.start).lte('date', range.end);
+            .gte('date', curPeriod.period_start).lte('date', curPeriod.period_end);
           spent = (expenses || []).reduce((sum: number, e: any) => sum + Number(e.amount), 0);
         }
+
         enriched.push({ ...b, category_ids: catIds, categories: bCats, spent });
       }
       setBudgets(enriched);
@@ -116,12 +195,12 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
   function openForm(budget?: Budget) {
     if (budget) {
       setEditingBudget(budget); setName(budget.name); setAmount(String(budget.amount));
-      setRecurrence(budget.recurrence); setStartDate(budget.start_date);
+      setRecurrence(budget.recurrence as 'monthly' | 'yearly'); setStartDate(budget.start_date);
       setSelectedCatIds(budget.category_ids || []);
     } else {
       setEditingBudget(null); setName(''); setAmount('');
       setRecurrence('monthly');
-      setStartDate(format(new Date(new Date().getFullYear(), new Date().getMonth(), 1), 'yyyy-MM-dd'));
+      setStartDate(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
       setSelectedCatIds([]);
     }
     setShowForm(true);
@@ -142,7 +221,9 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
         budgetId = data.id;
       }
       if (selectedCatIds.length > 0) {
-        await supabase.from('budget_categories').insert(selectedCatIds.map(cid => ({ budget_id: budgetId, category_id: cid })));
+        await supabase.from('budget_categories').insert(
+          selectedCatIds.map(cid => ({ budget_id: budgetId, category_id: cid }))
+        );
       }
       setShowForm(false);
       loadData();
@@ -157,15 +238,12 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
     }
   }
 
-  // ── Selection helpers ─────────────────────────────────────────────────────
-  // Toggle a single leaf node
   function toggleLeaf(catId: string) {
     setSelectedCatIds(prev => prev.includes(catId) ? prev.filter(id => id !== catId) : [...prev, catId]);
   }
 
-  // Toggle entire root group (root + all descendants)
   function toggleRoot(root: CatNode) {
-    const ids = allDescendantIds(root); // includes root itself
+    const ids = allDescendantIds(root);
     const allSelected = ids.every(id => selectedCatIds.includes(id));
     if (allSelected) {
       setSelectedCatIds(prev => prev.filter(id => !ids.includes(id)));
@@ -182,21 +260,12 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
     return ids.some(id => selectedCatIds.includes(id)) && !ids.every(id => selectedCatIds.includes(id));
   }
 
-  // Search
   const allEntries = flattenTree(roots);
   const q = searchQuery.trim().toLowerCase();
   const searchResults = q ? allEntries.filter(e => e.cat.name.toLowerCase().includes(q)) : [];
 
-  // Selected display labels
-  const selectedRoots = roots.filter(r => {
-    const ids = allDescendantIds(r);
-    return ids.every(id => selectedCatIds.includes(id));
-  });
-  const selectedLeaves = categories.filter(c => selectedCatIds.includes(c.id) && !selectedRoots.some(r => allDescendantIds(r).includes(c.id)));
-
   const recurrenceLabels: Record<string, string> = { monthly: 'Mensual', yearly: 'Anual' };
 
-  // Build display string for selected cats
   function buildSelectedLabel(): string {
     if (selectedCatIds.length === 0) return '';
     const parts: string[] = [];
@@ -234,7 +303,7 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
           <p className="text-dark-300 font-medium">No tenés presupuestos</p>
           <p className="text-dark-500 text-sm mt-1">Creá uno para controlar tus gastos</p>
           <button onClick={() => openForm()}
-            className="mt-5 bg-brand-600/15 text-brand-400 text-sm font-semibold px-6 py-3 rounded-2xl border border-brand-600/20 hover:bg-brand-600/25 transition-colors">
+            className="mt-5 bg-brand-600/15 text-brand-400 text-sm font-semibold px-6 py-3 rounded-2xl border border-brand-600/20">
             Crear presupuesto
           </button>
         </div>
@@ -244,15 +313,22 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
             const spent = budget.spent || 0;
             const left = Math.max(budget.amount - spent, 0);
             const pct = budget.amount > 0 ? (spent / budget.amount) * 100 : 0;
-            const range = getBudgetPeriodRange(budget.start_date, budget.recurrence);
-            const startLabel = format(new Date(range.start + 'T00:00'), "MMM d, yyyy", { locale: es });
-            const endLabel = format(new Date(range.end + 'T00:00'), "MMM d, yyyy", { locale: es });
+            const curPeriod = currentPeriods[budget.id];
+            const startLabel = curPeriod ? format(parseISO(curPeriod.period_start), "MMM d", { locale: es }) : '';
+            const endLabel = curPeriod ? format(parseISO(curPeriod.period_end), "MMM d, yyyy", { locale: es }) : '';
+
             return (
-              <button key={budget.id} onClick={() => onOpenBudget(budget)}
-                className="w-full bg-dark-800 rounded-2xl p-4 text-left hover:bg-dark-750 transition-colors">
+              <button key={budget.id}
+                onClick={() => curPeriod && onOpenBudget(budget, curPeriod.id)}
+                className="w-full bg-dark-800 rounded-2xl p-4 text-left transition-colors">
                 <div className="flex items-center justify-between mb-1">
                   <h3 className="text-sm font-bold">{budget.name}</h3>
-                  <ChevronRight size={16} className="text-dark-500" />
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-dark-500 capitalize">
+                      {budget.recurrence === 'monthly' ? 'Mensual' : 'Anual'}
+                    </span>
+                    <ChevronRight size={16} className="text-dark-500" />
+                  </div>
                 </div>
                 <div className="flex items-baseline gap-1.5 mb-2">
                   <span className={`text-lg font-extrabold ${pct >= 100 ? 'text-red-400' : 'text-brand-400'}`}>{formatCurrency(left)}</span>
@@ -282,7 +358,7 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
             <button onClick={() => setShowForm(false)} className="p-1 text-dark-400 hover:text-white"><X size={24} /></button>
             <h2 className="text-base font-bold">{editingBudget ? 'Editar presupuesto' : 'Nuevo presupuesto'}</h2>
             {editingBudget ? (
-              <button onClick={() => { handleDelete(editingBudget.id); setShowForm(false); }} className="p-1 text-red-400 hover:text-red-300">🗑️</button>
+              <button onClick={() => { handleDelete(editingBudget.id); setShowForm(false); }} className="p-1 text-red-400">🗑️</button>
             ) : <div className="w-8" />}
           </div>
 
@@ -322,10 +398,10 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
 
             <div>
               <label className="text-xs text-dark-400 font-medium mb-1.5 block uppercase tracking-wider">
-                Categorías incluidas {selectedCatIds.length > 0 && `(${selectedCatIds.length})`}
+                Categorías {selectedCatIds.length > 0 && `(${selectedCatIds.length})`}
               </label>
               <button onClick={() => setShowCatPicker(true)}
-                className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3.5 px-4 text-sm text-left flex items-center justify-between hover:border-dark-600 transition-colors">
+                className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3.5 px-4 text-sm text-left flex items-center justify-between">
                 <span className={`flex-1 min-w-0 truncate ${selectedCatIds.length > 0 ? 'text-white' : 'text-dark-500'}`}>
                   {selectedCatIds.length > 0 ? buildSelectedLabel() : 'Seleccionar categorías...'}
                 </span>
@@ -337,7 +413,7 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
           <div className="flex-shrink-0">
             <div className="px-5 py-3">
               <button onClick={handleSave} disabled={saving || !name || !amount}
-                className="w-full bg-brand-600 hover:bg-brand-500 disabled:opacity-30 text-white font-bold py-4 rounded-2xl transition-all text-base">
+                className="w-full bg-brand-600 disabled:opacity-30 text-white font-bold py-4 rounded-2xl text-base">
                 {saving ? 'Guardando...' : editingBudget ? 'Guardar cambios' : 'Crear presupuesto'}
               </button>
             </div>
@@ -359,21 +435,19 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
         </div>
       )}
 
-      {/* ── CATEGORY PICKER — grilla estilo AddExpense + selección de padre ── */}
+      {/* ── CATEGORY PICKER ── */}
       {showForm && showCatPicker && (
         <div className="fixed inset-0 bg-dark-900 z-[70] flex flex-col slide-up">
-          {/* Header */}
           <div className="flex items-center justify-between px-4 pt-5 pb-3 flex-shrink-0">
             <button onClick={() => { setShowCatPicker(false); setSearchQuery(''); }} className="p-1 text-dark-400 hover:text-white">
               <ArrowLeft size={24} />
             </button>
             <h2 className="text-base font-bold">Categorías del presupuesto</h2>
-            <button onClick={() => { setShowCatPicker(false); setSearchQuery(''); }} className="text-xs text-brand-400 hover:text-brand-300 font-medium">
+            <button onClick={() => { setShowCatPicker(false); setSearchQuery(''); }} className="text-xs text-brand-400 font-medium">
               Confirmar
             </button>
           </div>
 
-          {/* Search */}
           <div className="px-4 pb-3 flex-shrink-0">
             <div className="flex items-center gap-2 bg-dark-800 rounded-2xl px-4 py-3">
               <Search size={16} className="text-dark-400 flex-shrink-0" />
@@ -386,7 +460,6 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
 
           <div className="flex-1 overflow-y-auto pb-8">
             {q ? (
-              // ── Search results ──
               searchResults.length === 0 ? (
                 <div className="text-center py-10 text-dark-500 text-sm">Sin resultados</div>
               ) : (
@@ -396,8 +469,7 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
                     return (
                       <button key={cat.id} onClick={() => toggleLeaf(cat.id)}
                         className={`w-full flex items-center gap-3 px-5 py-3.5 border-b border-dark-800/60 transition-colors ${isSelected ? 'bg-dark-800' : 'active:bg-dark-800/60'}`}>
-                        <div className="w-9 h-9 rounded-full flex items-center justify-center text-lg flex-shrink-0"
-                          style={{ backgroundColor: cat.color }}>{cat.icon}</div>
+                        <div className="w-9 h-9 rounded-full flex items-center justify-center text-lg flex-shrink-0" style={{ backgroundColor: cat.color }}>{cat.icon}</div>
                         <div className="flex-1 text-left">
                           <p className="text-sm font-medium">{cat.name}</p>
                           {ancestors.length > 0 && <p className="text-xs text-dark-400">{ancestors.map(a => a.name).join(' › ')}</p>}
@@ -409,31 +481,23 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
                 </div>
               )
             ) : (
-              // ── Grid view — sección por root ──
               roots.map(root => {
                 const childEntries = flattenTree(root.children, [root]);
                 const fullySelected = isRootFullySelected(root);
                 const partiallySelected = isRootPartiallySelected(root);
-
                 return (
                   <div key={root.id} className="mb-6">
-                    {/* Section header con toggle de todo el grupo */}
-                    <button
-                      onClick={() => toggleRoot(root)}
-                      className="w-full flex items-center justify-between px-4 pt-4 pb-2 active:opacity-70 transition-opacity"
-                    >
+                    <button onClick={() => toggleRoot(root)}
+                      className="w-full flex items-center justify-between px-4 pt-4 pb-2 active:opacity-70">
                       <span className="text-xs font-bold text-dark-400 uppercase tracking-wider">{root.name}</span>
                       <div className={`w-5 h-5 rounded flex items-center justify-center border transition-all ${
                         fullySelected ? 'bg-brand-500 border-brand-500' :
-                        partiallySelected ? 'bg-brand-500/30 border-brand-500/50' :
-                        'border-dark-600'
+                        partiallySelected ? 'bg-brand-500/30 border-brand-500/50' : 'border-dark-600'
                       }`}>
                         {fullySelected && <Check size={12} className="text-white" />}
                         {partiallySelected && !fullySelected && <div className="w-2 h-2 rounded-sm bg-brand-400" />}
                       </div>
                     </button>
-
-                    {/* Grid de hijos */}
                     {childEntries.length > 0 && (
                       <div className="grid grid-cols-4 gap-x-2 gap-y-4 px-4">
                         {childEntries.map(({ cat, ancestors }) => {
@@ -442,16 +506,11 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
                           const iconSize = depth === 0 ? 52 : depth === 1 ? 46 : 40;
                           return (
                             <button key={cat.id} onClick={() => toggleLeaf(cat.id)}
-                              className="flex flex-col items-center gap-1.5 active:opacity-70 transition-opacity">
+                              className="flex flex-col items-center gap-1.5 active:opacity-70">
                               <div className="rounded-full flex items-center justify-center flex-shrink-0 relative"
-                                style={{
-                                  width: iconSize, height: iconSize,
-                                  backgroundColor: cat.color,
-                                  fontSize: depth === 0 ? 24 : depth === 1 ? 20 : 17,
-                                  boxShadow: isSelected ? `0 0 0 3px white, 0 0 0 5px ${cat.color}` : undefined,
-                                }}>
+                                style={{ width: iconSize, height: iconSize, backgroundColor: cat.color, fontSize: depth === 0 ? 24 : depth === 1 ? 20 : 17,
+                                  boxShadow: isSelected ? `0 0 0 3px white, 0 0 0 5px ${cat.color}` : undefined }}>
                                 {cat.icon}
-                                {/* Checkmark overlay */}
                                 {isSelected && (
                                   <div className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-brand-500 flex items-center justify-center">
                                     <Check size={9} className="text-white" strokeWidth={3} />
@@ -459,14 +518,7 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
                                 )}
                               </div>
                               <span className="text-center leading-tight text-dark-200 w-full"
-                                style={{
-                                  fontSize: 11,
-                                  display: '-webkit-box',
-                                  WebkitLineClamp: 2,
-                                  WebkitBoxOrient: 'vertical' as any,
-                                  overflow: 'hidden',
-                                  wordBreak: 'break-word',
-                                }}>
+                                style={{ fontSize: 11, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as any, overflow: 'hidden', wordBreak: 'break-word' }}>
                                 {cat.name}
                               </span>
                             </button>
