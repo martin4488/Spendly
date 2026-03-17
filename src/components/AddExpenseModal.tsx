@@ -47,7 +47,9 @@ function hslToHex(h: number, s: number, l: number): string {
 }
 function deriveChildColor(parentHex: string, siblingCount: number): string {
   const [h,s,l] = hexToHsl(parentHex);
-  return hslToHex(h, Math.max(20, s-5-siblingCount*3), Math.min(85, l+12+siblingCount*8));
+  const newL = Math.min(78, l + 18 + siblingCount * 14);
+  const newS = Math.max(18, s * 0.45 - siblingCount * 4);
+  return hslToHex(h, newS, newL);
 }
 
 // ── Tree node ─────────────────────────────────────────────────────────────────
