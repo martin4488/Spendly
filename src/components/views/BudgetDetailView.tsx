@@ -146,7 +146,7 @@ export default function BudgetDetailView({
 
       // Expandir categorías a descendientes
       const tree = buildTree(categories);
-      const allCatIds = [...new Set(catIds)];
+      const allCatIds: string[] = Array.from(new Set(catIds));
       const addDescendants = (nodes: CatNode[]) => {
         nodes.forEach((n) => {
           if (catIds.includes(n.id)) {
