@@ -22,6 +22,7 @@ export interface BudgetPeriod {
   budget_id: string;
   period_start: string;
   period_end: string;
+  amount?: number;
 }
 
 // ── Tree ──────────────────────────────────────────────────────────────────────
