@@ -170,7 +170,7 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
     if (allSelected) {
       setSelectedCatIds(prev => prev.filter(id => !ids.includes(id)));
     } else {
-      setSelectedCatIds(prev => [...new Set([...prev, ...ids])]);
+      setSelectedCatIds(prev => Array.from(new Set([...prev, ...ids])));
     }
   }
 
