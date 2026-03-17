@@ -368,8 +368,8 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
               <ArrowLeft size={24} />
             </button>
             <h2 className="text-base font-bold">Categorías del presupuesto</h2>
-            <button onClick={() => { setSelectedCatIds([]); }} className="text-xs text-dark-400 hover:text-white font-medium">
-              Limpiar
+            <button onClick={() => { setShowCatPicker(false); setSearchQuery(''); }} className="text-xs text-brand-400 hover:text-brand-300 font-medium">
+              Confirmar
             </button>
           </div>
 
