@@ -132,9 +132,9 @@ function hslToHex(h: number, s: number, l: number): string {
 
 function deriveChildColor(parentHex: string, siblingCount: number): string {
   const [h, s, l] = hexToHsl(parentHex);
-  // Each sibling: +12% lightness, -5% saturation, capped
-  const newL = Math.min(85, l + 12 + siblingCount * 8);
-  const newS = Math.max(20, s - 5 - siblingCount * 3);
+  // Pastel: moderate lightness bump, significant saturation drop, spread siblings apart
+  const newL = Math.min(78, l + 18 + siblingCount * 14);
+  const newS = Math.max(18, s * 0.45 - siblingCount * 4);
   return hslToHex(h, newS, newL);
 }
 
