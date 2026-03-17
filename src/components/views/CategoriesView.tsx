@@ -88,6 +88,56 @@ interface DragState {
   itemHeight: number;
 }
 
+// ── Derive child color: same hue, higher lightness, slightly lower saturation ─
+function hexToHsl(hex: string): [number, number, number] {
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h = 0, s = 0;
+  const l = (max + min) / 2;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break;
+      case g: h = ((b - r) / d + 2) / 6; break;
+      case b: h = ((r - g) / d + 4) / 6; break;
+    }
+  }
+  return [Math.round(h * 360), Math.round(s * 100), Math.round(l * 100)];
+}
+
+function hslToHex(h: number, s: number, l: number): string {
+  const hNorm = h / 360, sNorm = s / 100, lNorm = l / 100;
+  const hue2rgb = (p: number, q: number, t: number) => {
+    if (t < 0) t += 1; if (t > 1) t -= 1;
+    if (t < 1/6) return p + (q - p) * 6 * t;
+    if (t < 1/2) return q;
+    if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+    return p;
+  };
+  let r, g, b;
+  if (sNorm === 0) { r = g = b = lNorm; }
+  else {
+    const q = lNorm < 0.5 ? lNorm * (1 + sNorm) : lNorm + sNorm - lNorm * sNorm;
+    const p = 2 * lNorm - q;
+    r = hue2rgb(p, q, hNorm + 1/3);
+    g = hue2rgb(p, q, hNorm);
+    b = hue2rgb(p, q, hNorm - 1/3);
+  }
+  const toHex = (x: number) => Math.round(x * 255).toString(16).padStart(2, '0');
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+function deriveChildColor(parentHex: string, siblingCount: number): string {
+  const [h, s, l] = hexToHsl(parentHex);
+  // Each sibling: +12% lightness, -5% saturation, capped
+  const newL = Math.min(85, l + 12 + siblingCount * 8);
+  const newS = Math.max(20, s - 5 - siblingCount * 3);
+  return hslToHex(h, newS, newL);
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 export default function CategoriesView({ user }: { user: User }) {
   const [flatCats, setFlatCats] = useState<Category[]>([]);
@@ -179,9 +229,17 @@ export default function CategoriesView({ user }: { user: User }) {
     if (category) {
       setEditingId(category.id); setName(category.name); setIcon(category.icon); setColor(category.color); setParentId(category.parent_id ?? null);
     } else {
-      setEditingId(null); setName(''); setIcon('📦');
-      setColor(CATEGORY_COLORS[Math.floor(Math.random() * CATEGORY_COLORS.length)]);
-      setParentId(asChildOf || null);
+      setEditingId(null); setName(''); setParentId(asChildOf || null);
+      if (asChildOf) {
+        // Inherit parent icon, derive color
+        const parent = flatCats.find(c => c.id === asChildOf);
+        setIcon(parent?.icon || '📦');
+        const siblingCount = flatCats.filter(c => c.parent_id === asChildOf).length;
+        setColor(parent ? deriveChildColor(parent.color, siblingCount) : CATEGORY_COLORS[0]);
+      } else {
+        setIcon('📦');
+        setColor(CATEGORY_COLORS[Math.floor(Math.random() * CATEGORY_COLORS.length)]);
+      }
     }
     setShowForm(true);
   }
@@ -348,14 +406,24 @@ export default function CategoriesView({ user }: { user: User }) {
             </div>
 
             <div className="mb-5">
-              <p className="text-xs text-dark-400 font-medium mb-2.5 uppercase tracking-wider">Color</p>
-              <div className="flex gap-2 overflow-x-auto pb-2 -mx-5 px-5" style={{ scrollbarWidth: 'none' }}>
-                {CATEGORY_COLORS.map((c) => (
-                  <button key={c} onClick={() => setColor(c)}
-                    className={`w-8 h-8 rounded-full flex-shrink-0 transition-all ${color === c ? 'ring-2 ring-white ring-offset-2 ring-offset-dark-900 scale-110' : ''}`}
-                    style={{ backgroundColor: c }} />
-                ))}
-              </div>
+              {parentId ? (
+                // Child: show color preview only, not editable
+                <div className="flex items-center gap-3 py-2">
+                  <div className="w-8 h-8 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
+                  <span className="text-xs text-dark-500">Color heredado del grupo</span>
+                </div>
+              ) : (
+                <>
+                  <p className="text-xs text-dark-400 font-medium mb-2.5 uppercase tracking-wider">Color</p>
+                  <div className="flex gap-2 overflow-x-auto pb-2 -mx-5 px-5" style={{ scrollbarWidth: 'none' }}>
+                    {CATEGORY_COLORS.map((c) => (
+                      <button key={c} onClick={() => setColor(c)}
+                        className={`w-8 h-8 rounded-full flex-shrink-0 transition-all ${color === c ? 'ring-2 ring-white ring-offset-2 ring-offset-dark-900 scale-110' : ''}`}
+                        style={{ backgroundColor: c }} />
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
 
             <div>
