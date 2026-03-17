@@ -26,6 +26,30 @@ interface Props {
   } | null;
 }
 
+// ── Color derivation ──────────────────────────────────────────────────────────
+function hexToHsl(hex: string): [number, number, number] {
+  const r = parseInt(hex.slice(1,3),16)/255, g = parseInt(hex.slice(3,5),16)/255, b = parseInt(hex.slice(5,7),16)/255;
+  const max = Math.max(r,g,b), min = Math.min(r,g,b);
+  let h = 0, s = 0; const l = (max+min)/2;
+  if (max !== min) {
+    const d = max-min; s = l>0.5 ? d/(2-max-min) : d/(max+min);
+    switch(max) { case r: h=((g-b)/d+(g<b?6:0))/6; break; case g: h=((b-r)/d+2)/6; break; case b: h=((r-g)/d+4)/6; break; }
+  }
+  return [Math.round(h*360), Math.round(s*100), Math.round(l*100)];
+}
+function hslToHex(h: number, s: number, l: number): string {
+  const hn=h/360,sn=s/100,ln=l/100;
+  const hue2rgb=(p:number,q:number,t:number)=>{if(t<0)t+=1;if(t>1)t-=1;if(t<1/6)return p+(q-p)*6*t;if(t<1/2)return q;if(t<2/3)return p+(q-p)*(2/3-t)*6;return p;};
+  let r,g,b;
+  if(sn===0){r=g=b=ln;}else{const q=ln<0.5?ln*(1+sn):ln+sn-ln*sn;const p=2*ln-q;r=hue2rgb(p,q,hn+1/3);g=hue2rgb(p,q,hn);b=hue2rgb(p,q,hn-1/3);}
+  const th=(x:number)=>Math.round(x*255).toString(16).padStart(2,'0');
+  return `#${th(r)}${th(g)}${th(b)}`;
+}
+function deriveChildColor(parentHex: string, siblingCount: number): string {
+  const [h,s,l] = hexToHsl(parentHex);
+  return hslToHex(h, Math.max(20, s-5-siblingCount*3), Math.min(85, l+12+siblingCount*8));
+}
+
 // ── Tree node ─────────────────────────────────────────────────────────────────
 interface CatNode extends Category {
   children: CatNode[];
@@ -125,8 +149,15 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
   function openCreateCategory(parentId: string | null = null) {
     setNewCatParentId(parentId);
     setNewCatName('');
-    setNewCatIcon('📦');
-    setNewCatColor(CATEGORY_COLORS[Math.floor(Math.random() * CATEGORY_COLORS.length)]);
+    if (parentId) {
+      const parent = categories.find(c => c.id === parentId);
+      setNewCatIcon(parent?.icon || '📦');
+      const siblingCount = categories.filter(c => c.parent_id === parentId).length;
+      setNewCatColor(parent ? deriveChildColor(parent.color, siblingCount) : CATEGORY_COLORS[0]);
+    } else {
+      setNewCatIcon('📦');
+      setNewCatColor(CATEGORY_COLORS[Math.floor(Math.random() * CATEGORY_COLORS.length)]);
+    }
     setShowCreateCategory(true);
   }
 
@@ -334,8 +365,9 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
               // ── Grid view — grilla 4 cols, agrupada por padre ──
               <div className="pb-8">
                 {roots.map(root => {
-                  // Flatten root + all descendants for this section
-                  const entries = flattenTree([root]);
+                  // Only children are selectable — flatten children only (not root itself)
+                  const entries = flattenTree(root.children, [root]);
+                  if (entries.length === 0) return null; // skip roots with no children
                   return (
                     <div key={root.id} className="mb-6">
                       {/* Section header = nombre del padre */}
@@ -345,8 +377,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
                       <div className="grid grid-cols-4 gap-x-2 gap-y-4 px-4">
                         {entries.map(({ cat, ancestors }) => {
                           const isActive = categoryId === cat.id;
-                          const depth = ancestors.length;
-                          // Icon size shrinks slightly for deeper levels
+                          const depth = ancestors.length - 1; // depth relative to root's children
                           const iconSize = depth === 0 ? 52 : depth === 1 ? 46 : 40;
                           return (
                             <button
@@ -407,13 +438,17 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
           <div className="px-5 pb-2 flex-shrink-0">
             <p className="text-xs text-dark-400 font-medium mb-2 uppercase tracking-wider">Tipo</p>
             <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
-              <button onClick={() => setNewCatParentId(null)}
+              <button onClick={() => { setNewCatParentId(null); setNewCatIcon('📦'); setNewCatColor(CATEGORY_COLORS[Math.floor(Math.random() * CATEGORY_COLORS.length)]); }}
                 className={`flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${newCatParentId === null ? 'bg-brand-600 text-white' : 'bg-dark-700 text-dark-300'}`}>
                 Principal
               </button>
-              {/* Show all cats as potential parents (they can be sub or sub-sub) */}
               {allEntries.map(({ cat, ancestors }) => (
-                <button key={cat.id} onClick={() => setNewCatParentId(cat.id)}
+                <button key={cat.id} onClick={() => {
+                  setNewCatParentId(cat.id);
+                  setNewCatIcon(cat.icon);
+                  const siblings = categories.filter(c => c.parent_id === cat.id).length;
+                  setNewCatColor(deriveChildColor(cat.color, siblings));
+                }}
                   className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${newCatParentId === cat.id ? 'bg-brand-600 text-white' : 'bg-dark-700 text-dark-300'}`}>
                   <span>{cat.icon}</span>
                   <span>{ancestors.length > 0 ? `${ancestors.map(a => a.name).join(' › ')} › ${cat.name}` : cat.name}</span>
@@ -431,14 +466,23 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
                 className="flex-1 text-lg font-semibold bg-transparent focus:outline-none border-b border-dark-700 pb-2 placeholder:text-dark-500" />
             </div>
             <div className="mb-5">
-              <p className="text-xs text-dark-400 font-medium mb-2.5 uppercase tracking-wider">Color</p>
-              <div className="flex gap-2 overflow-x-auto pb-2" style={{ scrollbarWidth: 'none' }}>
-                {CATEGORY_COLORS.map((c) => (
-                  <button key={c} onClick={() => setNewCatColor(c)}
-                    className={`w-8 h-8 rounded-full flex-shrink-0 transition-all ${newCatColor === c ? 'ring-2 ring-white ring-offset-2 ring-offset-dark-900 scale-110' : ''}`}
-                    style={{ backgroundColor: c }} />
-                ))}
-              </div>
+              {newCatParentId ? (
+                <div className="flex items-center gap-3 py-2">
+                  <div className="w-8 h-8 rounded-full flex-shrink-0" style={{ backgroundColor: newCatColor }} />
+                  <span className="text-xs text-dark-500">Color heredado del grupo</span>
+                </div>
+              ) : (
+                <>
+                  <p className="text-xs text-dark-400 font-medium mb-2.5 uppercase tracking-wider">Color</p>
+                  <div className="flex gap-2 overflow-x-auto pb-2" style={{ scrollbarWidth: 'none' }}>
+                    {CATEGORY_COLORS.map((c) => (
+                      <button key={c} onClick={() => setNewCatColor(c)}
+                        className={`w-8 h-8 rounded-full flex-shrink-0 transition-all ${newCatColor === c ? 'ring-2 ring-white ring-offset-2 ring-offset-dark-900 scale-110' : ''}`}
+                        style={{ backgroundColor: c }} />
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
             <div>
               <p className="text-xs text-dark-400 font-medium mb-2.5 uppercase tracking-wider">Ícono</p>
