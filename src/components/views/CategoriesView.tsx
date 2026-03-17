@@ -270,7 +270,7 @@ export default function CategoriesView({ user }: { user: User }) {
 
   // Recursively update descendant colors based on new parent color
   async function cascadeColors(parentId: string, parentColor: string, allCats: Category[]) {
-    const children = allCats.filter(c => c.parent_id === parentId && !c.deleted);
+    const children = allCats.filter(c => c.parent_id === parentId);
     await Promise.all(
       children.map(async (child, idx) => {
         const newColor = deriveChildColor(parentColor, idx);
