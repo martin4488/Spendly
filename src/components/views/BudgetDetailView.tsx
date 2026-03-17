@@ -1,27 +1,29 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
-import { formatCurrency, getBudgetPeriodRange } from '@/lib/utils';
-import { Budget, Category, Expense } from '@/types';
-import { ArrowLeft, MoreHorizontal, Edit3, Trash2, X, ChevronRight, Delete } from 'lucide-react';
+import { formatCurrency } from '@/lib/utils';
+import { Budget, Category } from '@/types';
+import { ArrowLeft, ChevronLeft, ChevronRight, Edit3, Trash2, X, Delete } from 'lucide-react';
 import { format, parseISO, differenceInDays } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
-
-const DONUT_COLORS = [
-  '#3b82f6', '#f97316', '#22c55e', '#eab308', '#8b5cf6',
-  '#ec4899', '#14b8a6', '#ef4444', '#06b6d4', '#a855f7',
-];
-
-type SubView = 'detail' | 'overview';
+import type { BudgetPeriod } from './BudgetsView';
 
 interface Props {
   user: User;
   budget: Budget;
+  initialPeriodId: string;
   onBack: () => void;
   onRefresh: () => void;
+}
+
+interface ExpenseRow {
+  id: string;
+  date: string;
+  description: string;
+  amount: number;
+  category_id: string | null;
 }
 
 interface CatSpend {
@@ -30,146 +32,153 @@ interface CatSpend {
   icon: string;
   color: string;
   spent: number;
-  percentage: number;
   transactions: number;
 }
 
-export default function BudgetDetailView({ user, budget, onBack, onRefresh }: Props) {
-  const [subView, setSubView] = useState<SubView>('detail');
+// ── Tree helpers (same as BudgetsView) ───────────────────────────────────────
+interface CatNode extends Category { children: CatNode[] }
+function buildTree(flat: Category[]): CatNode[] {
+  const map = new Map<string, CatNode>();
+  flat.forEach(c => map.set(c.id, { ...c, children: [] }));
+  const roots: CatNode[] = [];
+  flat.forEach(c => {
+    if (c.parent_id && map.has(c.parent_id)) map.get(c.parent_id)!.children.push(map.get(c.id)!);
+    else if (!c.parent_id) roots.push(map.get(c.id)!);
+  });
+  return roots;
+}
+function allDescendantIds(node: CatNode): string[] {
+  return [node.id, ...node.children.flatMap(allDescendantIds)];
+}
+
+export default function BudgetDetailView({ user, budget, initialPeriodId, onBack, onRefresh }: Props) {
+  const [periods, setPeriods] = useState<BudgetPeriod[]>([]);
+  const [currentPeriodIndex, setCurrentPeriodIndex] = useState(0);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [expenses, setExpenses] = useState<ExpenseRow[]>([]);
   const [catSpending, setCatSpending] = useState<CatSpend[]>([]);
   const [totalSpent, setTotalSpent] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [showMenu, setShowMenu] = useState(false);
 
   // Edit form
   const [showEditForm, setShowEditForm] = useState(false);
-  const [editName, setEditName] = useState(budget.name);
   const [editAmount, setEditAmount] = useState(String(budget.amount));
-  const [editRecurrence, setEditRecurrence] = useState(budget.recurrence);
-  const [editStartDate, setEditStartDate] = useState(budget.start_date);
-  const [editCatIds, setEditCatIds] = useState<string[]>(budget.category_ids || []);
-  const [showCatPicker, setShowCatPicker] = useState(false);
-  const [allCategories, setAllCategories] = useState<Category[]>([]);
   const [saving, setSaving] = useState(false);
 
+  // Swipe
+  const swipeStartX = useRef<number | null>(null);
+  const now = new Date();
+
+  useEffect(() => { init(); }, []);
+  useEffect(() => { if (periods.length > 0) loadPeriodData(); }, [currentPeriodIndex, periods]);
+
+  async function init() {
+    const [{ data: periodsData }, { data: catsData }, { data: bcData }] = await Promise.all([
+      supabase.from('budget_periods').select('*').eq('budget_id', budget.id).order('period_start', { ascending: false }),
+      supabase.from('categories').select('*').eq('user_id', user.id).eq('deleted', false),
+      supabase.from('budget_categories').select('*').eq('budget_id', budget.id),
+    ]);
+
+    const allPeriods = periodsData || [];
+    const allCats = catsData || [];
+    const catIds = (bcData || []).map((bc: any) => bc.category_id);
+
+    setPeriods(allPeriods);
+    setCategories(allCats);
+
+    // Find initial period index
+    const idx = allPeriods.findIndex((p: BudgetPeriod) => p.id === initialPeriodId);
+    setCurrentPeriodIndex(idx >= 0 ? idx : 0);
+  }
+
+  async function loadPeriodData() {
+    if (periods.length === 0) return;
+    setLoading(true);
+    try {
+      const period = periods[currentPeriodIndex];
+      const { data: bcData } = await supabase.from('budget_categories').select('*').eq('budget_id', budget.id);
+      const catIds = (bcData || []).map((bc: any) => bc.category_id);
+
+      // Expand to all descendants
+      const tree = buildTree(categories);
+      const allCatIds = [...catIds];
+      const addDesc = (nodes: CatNode[]) => {
+        nodes.forEach(n => {
+          if (catIds.includes(n.id)) {
+            allDescendantIds(n).forEach(id => { if (!allCatIds.includes(id)) allCatIds.push(id); });
+          }
+          addDesc(n.children);
+        });
+      };
+      addDesc(tree);
+
+      if (allCatIds.length === 0) { setExpenses([]); setCatSpending([]); setTotalSpent(0); setLoading(false); return; }
+
+      const { data: expData } = await supabase.from('expenses')
+        .select('id, amount, description, date, category_id')
+        .eq('user_id', user.id)
+        .in('category_id', allCatIds)
+        .gte('date', period.period_start)
+        .lte('date', period.period_end)
+        .order('date', { ascending: false });
+
+      const exps = (expData || []).map((e: any) => ({ id: e.id, date: e.date, description: e.description, amount: Number(e.amount), category_id: e.category_id }));
+      setExpenses(exps);
+
+      const total = exps.reduce((s, e) => s + e.amount, 0);
+      setTotalSpent(total);
+
+      // Per-category spending
+      const spendByCat: Record<string, number> = {};
+      const txByCat: Record<string, number> = {};
+      exps.forEach(e => {
+        if (e.category_id) {
+          spendByCat[e.category_id] = (spendByCat[e.category_id] || 0) + e.amount;
+          txByCat[e.category_id] = (txByCat[e.category_id] || 0) + 1;
+        }
+      });
+
+      const catSpends: CatSpend[] = categories
+        .filter(c => allCatIds.includes(c.id) && spendByCat[c.id] > 0)
+        .map(c => ({ id: c.id, name: c.name, icon: c.icon, color: c.color, spent: spendByCat[c.id] || 0, transactions: txByCat[c.id] || 0 }))
+        .sort((a, b) => b.spent - a.spent);
+
+      setCatSpending(catSpends);
+    } catch (err) { console.error(err); }
+    finally { setLoading(false); }
+  }
+
+  function navigatePeriod(dir: 1 | -1) {
+    const next = currentPeriodIndex + dir;
+    if (next >= 0 && next < periods.length) setCurrentPeriodIndex(next);
+  }
+
+  function onTouchStart(e: React.TouchEvent) { swipeStartX.current = e.touches[0].clientX; }
+  function onTouchEnd(e: React.TouchEvent) {
+    if (swipeStartX.current === null) return;
+    const dx = swipeStartX.current - e.changedTouches[0].clientX;
+    if (Math.abs(dx) > 50) navigatePeriod(dx > 0 ? 1 : -1); // swipe left = older, swipe right = newer
+    swipeStartX.current = null;
+  }
+
   function handleNumpad(key: string) {
-    if (key === 'backspace') {
-      setEditAmount(prev => prev.slice(0, -1));
-    } else if (key === '.') {
-      if (!editAmount.includes('.')) {
-        setEditAmount(prev => (prev || '0') + '.');
-      }
-    } else {
-      if (editAmount.includes('.')) {
-        const decimals = editAmount.split('.')[1];
-        if (decimals && decimals.length >= 2) return;
-      }
+    if (key === 'backspace') { setEditAmount(prev => prev.slice(0, -1)); }
+    else if (key === '.') { if (!editAmount.includes('.')) setEditAmount(prev => (prev || '0') + '.'); }
+    else {
+      if (editAmount.includes('.')) { const d = editAmount.split('.')[1]; if (d && d.length >= 2) return; }
       setEditAmount(prev => prev + key);
     }
   }
 
-  const range = getBudgetPeriodRange(budget.start_date, budget.recurrence);
-
-  useEffect(() => { loadData(); }, []);
-
-  async function loadData() {
-    setLoading(true);
-    try {
-      const [{ data: catsData }, { data: bcData }] = await Promise.all([
-        supabase.from('categories').select('*').eq('user_id', user.id).order('name'),
-        supabase.from('budget_categories').select('*').eq('budget_id', budget.id),
-      ]);
-
-      const allCats = catsData || [];
-      setAllCategories(allCats);
-
-      const catIds = (bcData || []).map(bc => bc.category_id);
-      setEditCatIds(catIds);
-
-      // Include subcategory IDs
-      const allCatIds = [...catIds];
-      allCats.forEach(c => {
-        if (c.parent_id && catIds.includes(c.parent_id) && !allCatIds.includes(c.id)) {
-          allCatIds.push(c.id);
-        }
-      });
-
-      const budgetCats = allCats.filter(c => allCatIds.includes(c.id));
-      setCategories(budgetCats);
-
-      // Fetch expenses
-      let expensesData: Expense[] = [];
-      if (allCatIds.length > 0) {
-        const { data: exp } = await supabase
-          .from('expenses')
-          .select('*, category:categories(*)')
-          .eq('user_id', user.id)
-          .in('category_id', allCatIds)
-          .gte('date', range.start)
-          .lte('date', range.end)
-          .order('date', { ascending: false });
-        expensesData = exp || [];
-      }
-
-      setExpenses(expensesData);
-
-      const total = expensesData.reduce((sum, e) => sum + Number(e.amount), 0);
-      setTotalSpent(total);
-
-      // Category spending breakdown (parent-level)
-      const parentCats = allCats.filter(c => catIds.includes(c.id) && !c.parent_id);
-      const spending: CatSpend[] = parentCats.map((cat, idx) => {
-        const subIds = allCats.filter(sc => sc.parent_id === cat.id).map(sc => sc.id);
-        const catExpIds = [cat.id, ...subIds];
-        const catExps = expensesData.filter(e => e.category_id && catExpIds.includes(e.category_id));
-        const spent = catExps.reduce((sum, e) => sum + Number(e.amount), 0);
-        return {
-          id: cat.id,
-          name: cat.name,
-          icon: cat.icon,
-          color: DONUT_COLORS[idx % DONUT_COLORS.length],
-          spent,
-          percentage: total > 0 ? (spent / total) * 100 : 0,
-          transactions: catExps.length,
-        };
-      }).filter(c => c.spent > 0)
-        .sort((a, b) => b.spent - a.spent);
-
-      setCatSpending(spending);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleSaveEdit() {
+  async function handleSaveAmount() {
+    if (!editAmount) return;
     setSaving(true);
     try {
-      await supabase.from('budgets').update({
-        name: editName,
-        amount: parseFloat(editAmount),
-        recurrence: editRecurrence,
-        start_date: editStartDate,
-      }).eq('id', budget.id);
-
-      await supabase.from('budget_categories').delete().eq('budget_id', budget.id);
-      if (editCatIds.length > 0) {
-        await supabase.from('budget_categories').insert(
-          editCatIds.map(cid => ({ budget_id: budget.id, category_id: cid }))
-        );
-      }
-
+      await supabase.from('budgets').update({ amount: parseFloat(editAmount) }).eq('id', budget.id);
       setShowEditForm(false);
       onRefresh();
-      loadData();
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setSaving(false);
-    }
+    } catch (err) { console.error(err); }
+    finally { setSaving(false); }
   }
 
   async function handleDelete() {
@@ -179,411 +188,217 @@ export default function BudgetDetailView({ user, budget, onBack, onRefresh }: Pr
     }
   }
 
-  function toggleCat(catId: string) {
-    setEditCatIds(prev =>
-      prev.includes(catId) ? prev.filter(id => id !== catId) : [...prev, catId]
-    );
-  }
+  if (periods.length === 0) return null;
 
-  const left = Math.max(budget.amount - totalSpent, 0);
+  const period = periods[currentPeriodIndex];
+  const isCurrentPeriod = currentPeriodIndex === 0;
+  const hasPrev = currentPeriodIndex < periods.length - 1; // older
+  const hasNext = currentPeriodIndex > 0; // newer
+
   const pct = budget.amount > 0 ? (totalSpent / budget.amount) * 100 : 0;
-  const today = new Date();
-  const endDate = new Date(range.end + 'T00:00');
-  const daysLeft = Math.max(differenceInDays(endDate, today), 1);
-  const perDay = left / daysLeft;
+  const left = Math.max(budget.amount - totalSpent, 0);
 
-  const startLabel = format(new Date(range.start + 'T00:00'), "MMMM d, yyyy", { locale: es });
-  const endLabel = format(new Date(range.end + 'T00:00'), "MMMM d, yyyy", { locale: es });
+  const periodStart = parseISO(period.period_start);
+  const periodEnd = parseISO(period.period_end);
+  const totalDays = differenceInDays(periodEnd, periodStart) + 1;
+  const daysPassed = isCurrentPeriod ? Math.min(differenceInDays(now, periodStart) + 1, totalDays) : totalDays;
+  const daysLeft = Math.max(differenceInDays(periodEnd, now), 0);
+  const perDay = daysLeft > 0 ? left / daysLeft : 0;
+  const timeProgress = (daysPassed / totalDays) * 100;
 
-  // Progress bar position for "Today"
-  const totalDays = differenceInDays(endDate, new Date(range.start + 'T00:00'));
-  const daysPassed = differenceInDays(today, new Date(range.start + 'T00:00'));
-  const timeProgress = totalDays > 0 ? Math.min(Math.max((daysPassed / totalDays) * 100, 0), 100) : 0;
+  const periodLabel = format(periodStart, budget.recurrence === 'monthly' ? 'MMMM yyyy' : 'yyyy', { locale: es });
 
-  const donutData = catSpending.map(c => ({ name: c.name, value: c.spent, color: c.color }));
-
-  // Group expenses by day for transactions list
-  const dayMap = new Map<string, Expense[]>();
-  expenses.forEach(exp => {
-    if (!dayMap.has(exp.date)) dayMap.set(exp.date, []);
-    dayMap.get(exp.date)!.push(exp);
-  });
-  const todayStr = format(today, 'yyyy-MM-dd');
-  const yesterdayStr = format(new Date(today.getTime() - 86400000), 'yyyy-MM-dd');
-
-  const groupedByDay = Array.from(dayMap.entries())
+  // Group expenses by date
+  const todayStr = format(now, 'yyyy-MM-dd');
+  const yestStr = format(new Date(now.getTime() - 86400000), 'yyyy-MM-dd');
+  const dayMap = new Map<string, ExpenseRow[]>();
+  expenses.forEach(e => { if (!dayMap.has(e.date)) dayMap.set(e.date, []); dayMap.get(e.date)!.push(e); });
+  const grouped = Array.from(dayMap.entries())
     .map(([dateStr, exps]) => ({
       date: dateStr,
-      label: dateStr === todayStr ? 'Hoy' : dateStr === yesterdayStr ? 'Ayer' : format(parseISO(dateStr), "MMMM d", { locale: es }),
-      total: exps.reduce((sum, e) => sum + Number(e.amount), 0),
+      label: dateStr === todayStr ? 'Hoy' : dateStr === yestStr ? 'Ayer' : format(parseISO(dateStr), "d 'de' MMMM", { locale: es }),
+      total: exps.reduce((s, e) => s + e.amount, 0),
       expenses: exps,
     }))
     .sort((a, b) => b.date.localeCompare(a.date));
 
-  const parentCatsForPicker = allCategories.filter(c => !c.parent_id);
-  const getSubcatsForPicker = (pid: string) => allCategories.filter(c => c.parent_id === pid);
-  const recurrenceLabels: Record<string, string> = { monthly: 'Mensual', yearly: 'Anual' };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="w-8 h-8 border-3 border-brand-500/30 border-t-brand-500 rounded-full animate-spin" />
-      </div>
-    );
-  }
-
   return (
-    <div className="max-w-lg mx-auto page-transition pb-24">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 pt-5 pb-2">
-        <button onClick={onBack} className="p-1 text-dark-300 hover:text-white transition-colors">
-          <ArrowLeft size={22} />
+    <div className="max-w-lg mx-auto pb-8 page-transition" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+
+      {/* ── HEADER ── */}
+      <div className="flex items-center justify-between px-4 pt-5 pb-3">
+        <button onClick={onBack} className="p-1 text-dark-300"><ArrowLeft size={20} /></button>
+        <h1 className="text-sm font-bold truncate flex-1 text-center px-2">{budget.name}</h1>
+        <div className="flex items-center gap-1">
+          <button onClick={() => setShowEditForm(true)} className="p-1.5 text-dark-400 hover:text-white"><Edit3 size={16} /></button>
+          <button onClick={handleDelete} className="p-1.5 text-dark-400 hover:text-red-400"><Trash2 size={16} /></button>
+        </div>
+      </div>
+
+      {/* ── PERIOD NAVIGATOR ── */}
+      <div className="flex items-center justify-between px-4 mb-4">
+        <button onClick={() => navigatePeriod(1)} disabled={!hasPrev}
+          className={`p-1.5 rounded-full transition-colors ${hasPrev ? 'text-dark-300 active:bg-dark-800' : 'text-dark-700'}`}>
+          <ChevronLeft size={20} />
         </button>
         <div className="text-center">
-          <h1 className="text-lg font-bold">{budget.name}</h1>
-          <p className="text-[10px] text-dark-500 capitalize">{startLabel} - {endLabel}</p>
-        </div>
-        <button onClick={() => setShowMenu(!showMenu)} className="p-1 text-dark-400 hover:text-white relative">
-          <MoreHorizontal size={22} />
-          {showMenu && (
-            <div className="absolute right-0 top-8 bg-dark-800 border border-dark-700 rounded-xl shadow-xl z-10 w-44 overflow-hidden">
-              <button
-                onClick={() => { setShowMenu(false); setShowEditForm(true); }}
-                className="w-full flex items-center gap-2 px-4 py-3 text-sm hover:bg-dark-700 transition-colors"
-              >
-                <Edit3 size={14} /> Editar
-              </button>
-              <button
-                onClick={() => { setShowMenu(false); handleDelete(); }}
-                className="w-full flex items-center gap-2 px-4 py-3 text-sm text-red-400 hover:bg-dark-700 transition-colors"
-              >
-                <Trash2 size={14} /> Eliminar
-              </button>
-            </div>
+          <p className="text-base font-bold capitalize">{periodLabel}</p>
+          {!isCurrentPeriod && (
+            <span className="text-[10px] text-dark-500 bg-dark-800 px-2 py-0.5 rounded-full">Histórico</span>
           )}
+        </div>
+        <button onClick={() => navigatePeriod(-1)} disabled={!hasNext}
+          className={`p-1.5 rounded-full transition-colors ${hasNext ? 'text-dark-300 active:bg-dark-800' : 'text-dark-700'}`}>
+          <ChevronRight size={20} />
         </button>
       </div>
 
-      {/* Sub-navigation */}
-      <div className="flex justify-center mb-4 mt-1">
-        <div className="inline-flex bg-dark-800 rounded-full p-0.5">
-          <button
-            onClick={() => setSubView('detail')}
-            className={`px-5 py-1.5 rounded-full text-xs font-medium transition-all ${
-              subView === 'detail' ? 'bg-dark-600 text-white shadow-sm' : 'text-dark-400'
-            }`}
-          >
-            Detalle
-          </button>
-          <button
-            onClick={() => setSubView('overview')}
-            className={`px-5 py-1.5 rounded-full text-xs font-medium transition-all ${
-              subView === 'overview' ? 'bg-dark-600 text-white shadow-sm' : 'text-dark-400'
-            }`}
-          >
-            Overview
-          </button>
-        </div>
-      </div>
-
-      {subView === 'detail' ? (
-        /* ======= DETAIL VIEW ======= */
-        <div className="px-4">
-          {/* Big amount */}
-          <div className="text-center mb-4">
-            <p className={`text-3xl font-extrabold ${pct >= 100 ? 'text-red-400' : 'text-brand-400'}`}>
-              {formatCurrency(left)}
-            </p>
+      {loading ? (
+        <div className="flex justify-center py-16"><div className="w-7 h-7 border-2 border-brand-500/30 border-t-brand-500 rounded-full animate-spin" /></div>
+      ) : (
+        <>
+          {/* ── AMOUNT ── */}
+          <div className="text-center px-4 mb-4">
+            <p className={`text-4xl font-extrabold ${pct >= 100 ? 'text-red-400' : 'text-brand-400'}`}>{formatCurrency(left)}</p>
             <p className="text-dark-500 text-sm mt-0.5">restante de {formatCurrency(budget.amount)}</p>
           </div>
 
-          {/* Daily spend advice */}
-          <div className="bg-brand-500/8 border border-brand-500/15 rounded-2xl px-4 py-3.5 mb-5">
-            <p className="text-sm text-dark-200">
-              {pct >= 100
-                ? '¡Ya superaste el presupuesto!'
-                : <>Podés gastar <span className="font-bold text-brand-400">{formatCurrency(perDay)}</span> por día durante los próximos {daysLeft} días.</>
-              }
-            </p>
-          </div>
+          {/* ── DAILY ADVICE (current only) ── */}
+          {isCurrentPeriod && (
+            <div className="mx-4 mb-4 bg-brand-500/8 border border-brand-500/15 rounded-2xl px-4 py-3">
+              <p className="text-sm text-dark-200">
+                {pct >= 100
+                  ? '¡Ya superaste el presupuesto!'
+                  : <>{daysLeft > 0 ? <>Podés gastar <span className="font-bold text-brand-400">{formatCurrency(perDay)}</span>/día durante {daysLeft} días más.</> : 'Último día del período.'}</>
+                }
+              </p>
+            </div>
+          )}
 
-          {/* Timeline progress */}
-          <div className="mb-5">
-            <div className="relative">
-              {/* Today marker */}
-              <div
-                className="absolute -top-5 flex flex-col items-center"
-                style={{ left: `${timeProgress}%`, transform: 'translateX(-50%)' }}
-              >
-                <span className="text-[9px] font-bold bg-dark-700 text-white px-1.5 py-0.5 rounded">Hoy</span>
-                <div className="w-px h-2 bg-dark-500" />
+          {/* ── PROGRESS BAR ── */}
+          <div className="px-4 mb-5">
+            {isCurrentPeriod && (
+              <div className="relative mb-1">
+                <div className="absolute -top-5 flex flex-col items-center"
+                  style={{ left: `${Math.min(timeProgress, 98)}%`, transform: 'translateX(-50%)' }}>
+                  <span className="text-[9px] font-bold bg-dark-700 text-white px-1.5 py-0.5 rounded">Hoy</span>
+                  <div className="w-px h-2 bg-dark-500" />
+                </div>
               </div>
-              {/* Bar */}
-              <div className="w-full bg-dark-700 rounded-full h-2.5">
-                <div
-                  className="h-2.5 rounded-full transition-all duration-500"
-                  style={{
-                    width: `${Math.min(pct, 100)}%`,
-                    backgroundColor: pct >= 100 ? '#ef4444' : pct >= 80 ? '#f59e0b' : '#22c55e',
-                  }}
-                />
-              </div>
+            )}
+            <div className="w-full bg-dark-700 rounded-full h-2.5 mt-6">
+              <div className="h-2.5 rounded-full transition-all duration-500"
+                style={{ width: `${Math.min(pct, 100)}%`, backgroundColor: pct >= 100 ? '#ef4444' : pct >= 80 ? '#f59e0b' : '#22c55e' }} />
             </div>
             <div className="flex justify-between mt-1.5">
-              <span className="text-[10px] text-dark-500 capitalize">
-                {format(new Date(range.start + 'T00:00'), "MMM d", { locale: es })}
-              </span>
-              <span
-                className={`text-[10px] font-bold ${pct >= 100 ? 'text-red-400' : 'text-brand-400'}`}
-              >
-                {pct.toFixed(1)}%
-              </span>
-              <span className="text-[10px] text-dark-500 capitalize">
-                {format(new Date(range.end + 'T00:00'), "MMM d", { locale: es })}
-              </span>
+              <span className="text-[10px] text-dark-500">{format(periodStart, "MMM d", { locale: es })}</span>
+              <span className={`text-[10px] font-bold ${pct >= 100 ? 'text-red-400' : 'text-brand-400'}`}>{pct.toFixed(1)}%</span>
+              <span className="text-[10px] text-dark-500">{format(periodEnd, "MMM d", { locale: es })}</span>
             </div>
           </div>
 
-          {/* Quick stats */}
-          <div className="grid grid-cols-3 gap-2 mb-4">
-            <div className="bg-dark-800 rounded-xl p-3 text-center">
-              <p className="text-[10px] text-dark-500 mb-0.5">Gastado</p>
-              <p className="text-sm font-bold text-red-400">{formatCurrency(totalSpent)}</p>
+          {/* ── PERIOD DOTS ── */}
+          {periods.length > 1 && (
+            <div className="flex justify-center gap-1.5 mb-5">
+              {periods.slice(0, Math.min(periods.length, 12)).map((_, i) => (
+                <button key={i} onClick={() => setCurrentPeriodIndex(i)}
+                  className={`rounded-full transition-all ${i === currentPeriodIndex ? 'w-4 h-2 bg-brand-400' : 'w-2 h-2 bg-dark-600'}`} />
+              ))}
+              {periods.length > 12 && <span className="text-[10px] text-dark-600">+{periods.length - 12}</span>}
             </div>
-            <div className="bg-dark-800 rounded-xl p-3 text-center">
-              <p className="text-[10px] text-dark-500 mb-0.5">Transacciones</p>
-              <p className="text-sm font-bold">{expenses.length}</p>
-            </div>
-            <div className="bg-dark-800 rounded-xl p-3 text-center">
-              <p className="text-[10px] text-dark-500 mb-0.5">Categorías</p>
-              <p className="text-sm font-bold">{catSpending.length}</p>
-            </div>
-          </div>
+          )}
 
-          {/* Budget Overview link */}
-          <button
-            onClick={() => setSubView('overview')}
-            className="w-full flex items-center justify-center gap-2 py-3 text-dark-300 hover:text-dark-100 transition-colors mb-2"
-          >
-            <span className="text-lg">📊</span>
-            <span className="text-sm font-medium">Budget Overview</span>
-            <ChevronRight size={14} className="text-dark-500" />
-          </button>
-        </div>
-      ) : (
-        /* ======= OVERVIEW VIEW ======= */
-        <div>
-          {/* Period label */}
-          <p className="text-center text-sm text-dark-400 capitalize mb-3">
-            {format(new Date(range.start + 'T00:00'), "MMMM d", { locale: es })} – {format(new Date(range.end + 'T00:00'), "MMMM d, yyyy", { locale: es })}
-          </p>
-
-          {/* ===== CATEGORIES SECTION ===== */}
-          <div className="px-4 mb-3">
-            <h2 className="text-lg font-bold mb-3">Categorías</h2>
-          </div>
-
-          {/* Donut chart */}
+          {/* ── CATEGORY BREAKDOWN ── */}
           {catSpending.length > 0 && (
-            <div className="px-4 mb-2">
-              <div className="relative">
-                <ResponsiveContainer width="100%" height={220}>
-                  <PieChart>
-                    <Pie
-                      data={donutData}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={55}
-                      outerRadius={90}
-                      paddingAngle={2}
-                      dataKey="value"
-                      stroke="none"
-                    >
-                      {donutData.map((entry, i) => (
-                        <Cell key={i} fill={entry.color} />
-                      ))}
-                    </Pie>
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-
-              {/* Legend */}
-              <div className="flex flex-wrap justify-center gap-x-4 gap-y-1.5 mt-1">
-                {catSpending.map(cat => (
-                  <div key={cat.id} className="flex items-center gap-1.5">
-                    <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: cat.color }} />
-                    <span className="text-[10px] text-dark-300">{cat.name} {cat.percentage.toFixed(1)}%</span>
-                  </div>
-                ))}
+            <div className="px-4 mb-5">
+              <p className="text-xs text-dark-500 font-medium uppercase tracking-wider mb-3">Por categoría</p>
+              <div className="space-y-2">
+                {catSpending.map(cat => {
+                  const catPct = totalSpent > 0 ? (cat.spent / totalSpent) * 100 : 0;
+                  return (
+                    <div key={cat.id} className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-xl flex items-center justify-center text-sm flex-shrink-0" style={{ backgroundColor: cat.color }}>
+                        {cat.icon}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex justify-between mb-0.5">
+                          <span className="text-xs font-medium truncate">{cat.name}</span>
+                          <span className="text-xs text-dark-400 flex-shrink-0 ml-2">{formatCurrency(cat.spent)}</span>
+                        </div>
+                        <div className="w-full bg-dark-700 rounded-full h-1.5">
+                          <div className="h-1.5 rounded-full" style={{ width: `${catPct}%`, backgroundColor: cat.color }} />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
 
-          {/* Category list */}
-          <div className="px-4 mb-5">
-            {catSpending.map((cat) => (
-              <div
-                key={cat.id}
-                className="flex items-center gap-3.5 py-3.5 border-b border-dark-800/50"
-              >
-                <div
-                  className="w-11 h-11 rounded-full flex items-center justify-center text-lg flex-shrink-0"
-                  style={{ backgroundColor: cat.color + '30' }}
-                >
-                  {cat.icon}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-[13px] font-semibold">{cat.name}</p>
-                  <p className="text-[11px] text-dark-500 mt-0.5">
-                    {cat.transactions} {cat.transactions === 1 ? 'transacción' : 'transacciones'}
-                  </p>
-                </div>
-                <span className="text-[13px] font-bold text-red-400 flex-shrink-0">
-                  -{formatCurrency(cat.spent)}
-                </span>
-              </div>
-            ))}
-            {catSpending.length === 0 && (
-              <div className="text-center py-8">
-                <p className="text-dark-500 text-sm">Sin gastos en este período</p>
-              </div>
-            )}
+          {/* ── TOTAL PERIOD ── */}
+          <div className="flex items-center justify-between px-4 py-3 border-t border-b border-dark-800/60 mb-1">
+            <span className="text-xs text-dark-400 font-medium uppercase tracking-wider">Total gastado</span>
+            <span className="text-base font-bold text-red-400">-{formatCurrency(totalSpent)}</span>
           </div>
 
-          {/* ===== TRANSACTIONS SECTION ===== */}
-          <div className="px-4 mb-2">
-            <h2 className="text-lg font-bold">Transacciones</h2>
-          </div>
-
-          <div className="min-h-[120px]">
-            {groupedByDay.length === 0 ? (
-              <div className="text-center py-8 px-4">
-                <p className="text-dark-500 text-sm">No hay transacciones</p>
-              </div>
-            ) : (
-              groupedByDay.map((group) => (
+          {/* ── TRANSACTIONS ── */}
+          {grouped.length === 0 ? (
+            <div className="text-center py-10">
+              <p className="text-dark-500 text-sm">Sin gastos en este período</p>
+            </div>
+          ) : (
+            <div>
+              <p className="px-4 pt-3 pb-1 text-sm font-bold">Transacciones</p>
+              {grouped.map(group => (
                 <div key={group.date}>
-                  <div className="flex items-center justify-between px-4 py-2 bg-dark-900/60 border-t border-dark-800/80">
-                    <span className="text-xs font-semibold text-dark-400 uppercase tracking-wide capitalize">{group.label}</span>
-                    <span className="text-xs font-bold text-red-400">-{formatCurrency(group.total)}</span>
+                  <div className="flex items-center justify-between px-4 py-1.5 bg-dark-800/60">
+                    <span className="text-[10px] font-semibold text-dark-500 uppercase tracking-wider capitalize">{group.label}</span>
+                    <span className="text-[10px] font-semibold text-dark-500">-{formatCurrency(group.total)}</span>
                   </div>
-                  {group.expenses.map((expense) => {
-                    const cat = (expense as any).category;
+                  {group.expenses.map(exp => {
+                    const cat = categories.find(c => c.id === exp.category_id);
                     return (
-                      <div
-                        key={expense.id}
-                        className="flex items-center gap-3.5 px-4 py-3 border-b border-dark-800/40"
-                      >
-                        <div
-                          className="w-10 h-10 rounded-full flex items-center justify-center text-base flex-shrink-0"
-                          style={{ backgroundColor: cat?.color ? cat.color + '30' : '#47556930' }}
-                        >
-                          {cat?.icon || '💵'}
+                      <div key={exp.id} className="flex items-center gap-2.5 px-4 py-2.5 border-b border-dark-800/40">
+                        <div className="w-8 h-8 rounded-xl flex items-center justify-center text-base flex-shrink-0"
+                          style={{ backgroundColor: cat?.color || '#475569' }}>
+                          {cat?.icon || '💸'}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="text-[13px] font-semibold truncate">{expense.description}</p>
-                          <p className="text-[11px] text-dark-500 mt-0.5">
-                            {cat?.name || 'Sin categoría'}
-                          </p>
+                          <p className="text-[12px] font-semibold truncate">{cat?.name || 'Sin categoría'}</p>
+                          {exp.description && exp.description !== cat?.name && (
+                            <p className="text-[10px] text-dark-500 truncate">{exp.description}</p>
+                          )}
                         </div>
-                        <span className="text-[13px] font-bold text-red-400 flex-shrink-0">
-                          -{formatCurrency(Number(expense.amount))}
-                        </span>
+                        <span className="text-[12px] font-bold text-red-400 flex-shrink-0">-{formatCurrency(exp.amount)}</span>
                       </div>
                     );
                   })}
                 </div>
-              ))
-            )}
-          </div>
-        </div>
+              ))}
+            </div>
+          )}
+        </>
       )}
 
-      {/* ===== EDIT FORM ===== */}
+      {/* ── EDIT AMOUNT FORM ── */}
       {showEditForm && (
         <div className="fixed inset-0 bg-dark-900 z-[60] flex flex-col slide-up">
           <div className="flex items-center justify-between px-4 pt-5 pb-3 flex-shrink-0">
-            <button onClick={() => setShowEditForm(false)} className="p-1 text-dark-400 hover:text-white">
-              <X size={24} />
-            </button>
+            <button onClick={() => setShowEditForm(false)} className="p-1 text-dark-400"><X size={24} /></button>
             <h2 className="text-base font-bold">Editar presupuesto</h2>
-            <button onClick={handleDelete} className="p-1 text-red-400 hover:text-red-300">
-              🗑️
-            </button>
+            <div className="w-8" />
           </div>
-
-          {/* Amount display */}
-          <div className="px-5 py-4 flex-shrink-0 border-b border-dark-800">
-            <p className="text-xs text-dark-400 font-medium mb-1 uppercase tracking-wider">Monto</p>
-            <p className="text-3xl font-extrabold text-white">{editAmount || '0'}</p>
+          <div className="px-5 py-6 flex-shrink-0 border-b border-dark-800 text-center">
+            <p className="text-xs text-dark-400 mb-1">Nuevo monto</p>
+            <p className="text-4xl font-extrabold">{editAmount || '0'}</p>
           </div>
-
-          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
-            <div>
-              <label className="text-xs text-dark-400 font-medium mb-1.5 block uppercase tracking-wider">Nombre</label>
-              <input
-                type="text"
-                value={editName}
-                onChange={(e) => setEditName(e.target.value)}
-                className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3.5 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors"
-              />
-            </div>
-
-            <div>
-              <label className="text-xs text-dark-400 font-medium mb-1.5 block uppercase tracking-wider">Recurrencia</label>
-              <div className="flex bg-dark-800 rounded-xl p-1 border border-dark-700">
-                {(['monthly', 'yearly'] as const).map((r) => (
-                  <button
-                    key={r}
-                    onClick={() => setEditRecurrence(r)}
-                    className={`flex-1 py-2.5 rounded-lg text-xs font-medium transition-all ${
-                      editRecurrence === r ? 'bg-brand-600 text-white shadow-lg' : 'text-dark-400'
-                    }`}
-                  >
-                    {recurrenceLabels[r]}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <label className="text-xs text-dark-400 font-medium mb-1.5 block uppercase tracking-wider">Fecha inicio</label>
-              <input
-                type="date"
-                value={editStartDate}
-                onChange={(e) => setEditStartDate(e.target.value)}
-                className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors"
-              />
-            </div>
-
-            <div>
-              <label className="text-xs text-dark-400 font-medium mb-1.5 block uppercase tracking-wider">
-                Categorías ({editCatIds.length})
-              </label>
-              <button
-                onClick={() => setShowCatPicker(true)}
-                className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3.5 px-4 text-sm text-left flex items-center justify-between"
-              >
-                <span className={editCatIds.length > 0 ? 'text-white' : 'text-dark-500'}>
-                  {editCatIds.length > 0
-                    ? allCategories.filter(c => editCatIds.includes(c.id)).map(c => `${c.icon} ${c.name}`).join(', ')
-                    : 'Seleccionar categorías...'
-                  }
-                </span>
-                <ChevronRight size={16} className="text-dark-500" />
-              </button>
-            </div>
-          </div>
-
-          {/* Bottom: button + numpad */}
+          <div className="flex-1" />
           <div className="flex-shrink-0">
             <div className="px-5 py-3">
-              <button
-                onClick={handleSaveEdit}
-                disabled={saving || !editName || !editAmount}
-                className="w-full bg-brand-600 hover:bg-brand-500 disabled:opacity-30 text-white font-bold py-4 rounded-2xl transition-all text-base"
-              >
-                {saving ? 'Guardando...' : 'Guardar cambios'}
+              <button onClick={handleSaveAmount} disabled={saving || !editAmount}
+                className="w-full bg-brand-600 disabled:opacity-30 text-white font-bold py-4 rounded-2xl text-base">
+                {saving ? 'Guardando...' : 'Guardar'}
               </button>
             </div>
             <div className="border-t border-dark-700">
@@ -591,14 +406,8 @@ export default function BudgetDetailView({ user, budget, onBack, onRefresh }: Pr
                 {['1','2','3','4','5','6','7','8','9','.','0','backspace'].map((key) => {
                   const isDel = key === 'backspace';
                   return (
-                    <button
-                      key={key}
-                      onClick={() => {
-                        if (isDel) handleNumpad('backspace');
-                        else handleNumpad(key);
-                      }}
-                      className="py-[14px] text-center text-xl font-medium border-b border-r border-dark-800 active:bg-dark-700 transition-colors bg-dark-900 text-white"
-                    >
+                    <button key={key} onClick={() => isDel ? handleNumpad('backspace') : handleNumpad(key)}
+                      className="py-[14px] text-center text-xl font-medium border-b border-r border-dark-800 active:bg-dark-700 transition-colors bg-dark-900 text-white">
                       {isDel ? <span className="flex items-center justify-center"><Delete size={22} /></span> : key}
                     </button>
                   );
@@ -606,92 +415,6 @@ export default function BudgetDetailView({ user, budget, onBack, onRefresh }: Pr
               </div>
               <div className="h-[env(safe-area-inset-bottom)]" />
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* ===== CATEGORY PICKER (edit form) ===== */}
-      {showCatPicker && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[70] flex items-end">
-          <div className="bg-dark-800 w-full rounded-t-3xl max-h-[75vh] overflow-y-auto slide-up">
-            <div className="flex items-center justify-between p-4 border-b border-dark-700 sticky top-0 bg-dark-800 z-10">
-              <button onClick={() => setShowCatPicker(false)} className="p-1 text-dark-400">
-                <X size={20} />
-              </button>
-              <h3 className="text-base font-bold">Categorías del presupuesto</h3>
-              <button
-                onClick={() => {
-                  const allIds = allCategories.map(c => c.id);
-                  if (editCatIds.length === allIds.length) {
-                    setEditCatIds([]);
-                  } else {
-                    setEditCatIds(allIds);
-                  }
-                }}
-                className="text-xs text-brand-400 font-medium"
-              >
-                {editCatIds.length === allCategories.length ? 'Ninguna' : 'Todas'}
-              </button>
-            </div>
-
-            {parentCatsForPicker.map((cat) => {
-              const isSelected = editCatIds.includes(cat.id);
-              const subs = getSubcatsForPicker(cat.id);
-              return (
-                <div key={cat.id}>
-                  <button
-                    onClick={() => toggleCat(cat.id)}
-                    className="w-full flex items-center gap-3 px-4 py-4 border-b border-dark-700/30 active:bg-dark-700/50"
-                  >
-                    <div
-                      className="w-10 h-10 rounded-full flex items-center justify-center text-lg"
-                      style={{ backgroundColor: cat.color + '25' }}
-                    >
-                      {cat.icon}
-                    </div>
-                    <span className="text-sm font-medium flex-1 text-left">{cat.name}</span>
-                    <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${
-                      isSelected ? 'bg-brand-500 border-brand-500' : 'border-dark-600'
-                    }`}>
-                      {isSelected && (
-                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                          <path d="M2.5 6L5 8.5L9.5 3.5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                        </svg>
-                      )}
-                    </div>
-                  </button>
-                  {subs.map((sub) => {
-                    const subSelected = editCatIds.includes(sub.id);
-                    return (
-                      <button
-                        key={sub.id}
-                        onClick={() => toggleCat(sub.id)}
-                        className="w-full flex items-center gap-3 pl-10 pr-4 py-3 border-b border-dark-700/20 active:bg-dark-700/50"
-                      >
-                        <span className="text-dark-500 text-xs">└</span>
-                        <div
-                          className="w-8 h-8 rounded-full flex items-center justify-center text-sm"
-                          style={{ backgroundColor: (sub.color || cat.color) + '25' }}
-                        >
-                          {sub.icon}
-                        </div>
-                        <span className="text-sm text-dark-200 flex-1 text-left">{sub.name}</span>
-                        <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${
-                          subSelected ? 'bg-brand-500 border-brand-500' : 'border-dark-600'
-                        }`}>
-                          {subSelected && (
-                            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                              <path d="M2.5 6L5 8.5L9.5 3.5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                            </svg>
-                          )}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              );
-            })}
-            <div className="h-8" />
           </div>
         </div>
       )}
