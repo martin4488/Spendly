@@ -252,13 +252,12 @@ export default function CategoriesView({ user }: { user: User }) {
       if (editingId) {
         const prevCat = flatCats.find(c => c.id === editingId);
         const colorChanged = prevCat && prevCat.color !== color;
+        const iconChanged = prevCat && prevCat.icon !== icon;
 
         await supabase.from('categories').update(data).eq('id', editingId);
 
-        // If color changed, cascade new colors to all descendants regardless of depth
-        if (colorChanged) {
-          await cascadeColors(editingId, color, flatCats);
-        }
+        if (colorChanged) await cascadeColors(editingId, color, flatCats);
+        if (iconChanged) await cascadeIcons(editingId, icon, flatCats);
       } else {
         await supabase.from('categories').insert({ ...data, position: 999 });
       }
@@ -275,8 +274,17 @@ export default function CategoriesView({ user }: { user: User }) {
       children.map(async (child, idx) => {
         const newColor = deriveChildColor(parentColor, idx);
         await supabase.from('categories').update({ color: newColor }).eq('id', child.id);
-        // Recurse into grandchildren using the child's new color
         await cascadeColors(child.id, newColor, allCats);
+      })
+    );
+  }
+
+  async function cascadeIcons(parentId: string, icon: string, allCats: Category[]) {
+    const children = allCats.filter(c => c.parent_id === parentId);
+    await Promise.all(
+      children.map(async (child) => {
+        await supabase.from('categories').update({ icon }).eq('id', child.id);
+        await cascadeIcons(child.id, icon, allCats);
       })
     );
   }
