@@ -1,10 +1,18 @@
 import { format, startOfMonth, endOfMonth, startOfYear, endOfYear, addMonths, addYears, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 
-export function formatCurrency(amount: number): string {
+// Global default currency — set once at boot via setDefaultCurrency()
+let _defaultCurrency: string = 'USD';
+
+export function setDefaultCurrency(code: string) {
+  _defaultCurrency = code;
+}
+
+export function formatCurrency(amount: number, currency?: string): string {
+  const code = currency || _defaultCurrency;
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
-    currency: 'USD',
+    currency: code,
     minimumFractionDigits: 2,
   }).format(amount);
 }
