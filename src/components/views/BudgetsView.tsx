@@ -159,35 +159,55 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
       }
       setCurrentPeriods(curPeriods);
 
-      const enriched: Budget[] = [];
+      // Build per-budget expanded cat IDs (in memory, no extra queries)
+      const budgetCatMap: Record<string, string[]> = {};
       for (const b of allBudgets) {
         const catIds = (bcData || []).filter((bc: any) => bc.budget_id === b.id).map((bc: any) => bc.category_id);
-        const bCats = allCats.filter(c => catIds.includes(c.id));
-
-        // Expand to all descendants
-        const allCatIds = [...catIds];
-        const addDescendants = (nodes: CatNode[]) => {
+        const expanded = [...catIds];
+        const addDesc = (nodes: CatNode[]) => {
           nodes.forEach(n => {
             if (catIds.includes(n.id)) {
-              allDescendantIds(n).forEach(id => { if (!allCatIds.includes(id)) allCatIds.push(id); });
+              allDescendantIds(n).forEach(id => { if (!expanded.includes(id)) expanded.push(id); });
             }
-            addDescendants(n.children);
+            addDesc(n.children);
           });
         };
-        addDescendants(tree);
+        addDesc(tree);
+        budgetCatMap[b.id] = expanded;
+      }
 
-        // Use current period range
+      // Single bulk query for ALL expenses across ALL current periods
+      const allExpandedCatIds = Array.from(new Set(Object.values(budgetCatMap).flat()));
+      const periodStarts = Object.values(curPeriods).map(p => p.period_start);
+      const periodEnds = Object.values(curPeriods).map(p => p.period_end);
+      const minDate = periodStarts.length > 0 ? periodStarts.reduce((a, b) => a < b ? a : b) : today;
+      const maxDate = periodEnds.length > 0 ? periodEnds.reduce((a, b) => a > b ? a : b) : today;
+
+      let allExpenses: { category_id: string; amount: number; date: string }[] = [];
+      if (allExpandedCatIds.length > 0) {
+        const { data: expData } = await supabase
+          .from('expenses')
+          .select('category_id, amount, date')
+          .eq('user_id', user.id)
+          .in('category_id', allExpandedCatIds)
+          .gte('date', minDate)
+          .lte('date', maxDate);
+        allExpenses = (expData || []).map((e: any) => ({ category_id: e.category_id, amount: Number(e.amount), date: e.date }));
+      }
+
+      const enriched: Budget[] = allBudgets.map(b => {
+        const catIds = (bcData || []).filter((bc: any) => bc.budget_id === b.id).map((bc: any) => bc.category_id);
+        const bCats = allCats.filter(c => catIds.includes(c.id));
+        const expanded = budgetCatMap[b.id] || [];
         const curPeriod = curPeriods[b.id];
         let spent = 0;
-        if (allCatIds.length > 0 && curPeriod) {
-          const { data: expenses } = await supabase.from('expenses').select('amount')
-            .eq('user_id', user.id).in('category_id', allCatIds)
-            .gte('date', curPeriod.period_start).lte('date', curPeriod.period_end);
-          spent = (expenses || []).reduce((sum: number, e: any) => sum + Number(e.amount), 0);
+        if (curPeriod && expanded.length > 0) {
+          spent = allExpenses
+            .filter(e => expanded.includes(e.category_id) && e.date >= curPeriod.period_start && e.date <= curPeriod.period_end)
+            .reduce((sum, e) => sum + e.amount, 0);
         }
-
-        enriched.push({ ...b, category_ids: catIds, categories: bCats, spent });
-      }
+        return { ...b, category_ids: catIds, categories: bCats, spent };
+      });
       setBudgets(enriched);
     } catch (err) { console.error(err); }
     finally { setLoading(false); }
