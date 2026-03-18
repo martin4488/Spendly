@@ -24,8 +24,12 @@ function buildTree(flat: RawCat[]): CatNode[] {
   flat.forEach(c => map.set(c.id, { ...c, children: [] }));
   const roots: CatNode[] = [];
   flat.forEach(c => {
-    if (c.parent_id && map.has(c.parent_id)) map.get(c.parent_id)!.children.push(map.get(c.id)!);
-    else if (!c.parent_id) roots.push(map.get(c.id)!);
+    if (c.parent_id && map.has(c.parent_id)) {
+      map.get(c.parent_id)!.children.push(map.get(c.id)!);
+    } else {
+      // No parent_id, or parent not found (orphan subcategory) → treat as root so it's never lost
+      roots.push(map.get(c.id)!);
+    }
   });
   return roots;
 }
@@ -176,7 +180,7 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
       const range = getRange(currentDate, viewMode);
       const [{ data: expenses }, { data: cats }] = await Promise.all([
         supabase.from('expenses').select('id, amount, category_id, description, date').eq('user_id', user.id).gte('date', range.start).lte('date', range.end).order('date', { ascending: false }),
-        supabase.from('categories').select('*').eq('user_id', user.id),
+        supabase.from('categories').select('*').eq('user_id', user.id).neq('deleted', true),
       ]);
       const allExp = expenses || [];
       const allCats = cats || [];
@@ -193,7 +197,7 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
         }
       });
 
-      const activeCats = allCats.filter((c: any) => !c.deleted);
+      const activeCats = allCats.filter((c: any) => c.deleted !== true);
       const tree = buildTree(activeCats);
       const spending: CatSpend[] = tree
         .map(node => buildSpend(node, spendMap, txMap, total))
@@ -201,7 +205,7 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
         .sort((a, b) => b.spent - a.spent);
 
       // Uncategorized: expenses with no category_id, OR category_id not found in ANY cat (active or deleted)
-      const allCatIds = new Set(allCats.map((c: any) => c.id));
+      const allCatIds = new Set(allCats.filter((c: any) => c.deleted !== true).map((c: any) => c.id));
       const uncat = allExp.filter((e: any) => !e.category_id || !allCatIds.has(e.category_id));
       if (uncat.length > 0) {
         const uncatSpent = uncat.reduce((s: number, e: any) => s + Number(e.amount), 0);
@@ -323,7 +327,7 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
   const swipeStartX = useRef<number | null>(null);
 
   useEffect(() => {
-    supabase.from('categories').select('*').eq('user_id', user.id).then(({ data }) => setAllCats(data || []));
+    supabase.from('categories').select('*').eq('user_id', user.id).neq('deleted', true).then(({ data }) => setAllCats(data || []));
   }, []);
 
   useEffect(() => { loadData(); }, [viewMode, currentDate]);
@@ -334,7 +338,7 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
       const range = getRange(currentDate, viewMode);
       let list: ExpenseDetail[] = [];
       if (drillDown.id === 'uncategorized') {
-        const { data: cats } = await supabase.from('categories').select('id').eq('user_id', user.id);
+        const { data: cats } = await supabase.from('categories').select('id').eq('user_id', user.id).neq('deleted', true);
         const ids = new Set((cats || []).map((c: any) => c.id));
         const { data: exp } = await supabase.from('expenses').select('id, amount, description, date, category_id').eq('user_id', user.id).gte('date', range.start).lte('date', range.end).order('date', { ascending: false });
         list = (exp || []).filter((e: any) => !e.category_id || !ids.has(e.category_id)).map((e: any) => ({ id: e.id, date: e.date, description: e.description, amount: Number(e.amount), category_id: e.category_id }));
