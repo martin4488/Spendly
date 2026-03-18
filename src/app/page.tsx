@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { prefetchRates } from '@/lib/currency';
+import { setDefaultCurrency } from '@/lib/utils';
 import { User } from '@supabase/supabase-js';
 import AuthPage from '@/app/auth/AuthPage';
 import AppShell from '@/components/AppShell';
@@ -50,6 +51,7 @@ export default function Home() {
         supabase.from('user_settings').insert({ user_id: user.id, default_currency: 'EUR' }).then(() => {});
       }
 
+      setDefaultCurrency(currency);
       setBootData({ user, currency });
     }
 
