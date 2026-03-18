@@ -157,6 +157,7 @@ export default function RecurringView({ user }: { user: User }) {
   const [categoryId, setCategoryId] = useState('');
   const [frequency, setFrequency] = useState<'weekly' | 'monthly' | 'yearly'>('monthly');
   const [dayOfMonth, setDayOfMonth] = useState('1');
+  const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -192,6 +193,7 @@ export default function RecurringView({ user }: { user: User }) {
       setCategoryId(item.category_id || '');
       setFrequency(item.frequency);
       setDayOfMonth(String(item.day_of_month));
+      setStartDate((item as any).start_date || '');
       setEndDate(item.end_date || '');
     } else {
       setEditingId(null);
@@ -201,6 +203,7 @@ export default function RecurringView({ user }: { user: User }) {
       setCategoryId('');
       setFrequency('monthly');
       setDayOfMonth('1');
+      setStartDate(new Date().toISOString().split('T')[0]);
       setEndDate('');
     }
     setShowForm(true);
@@ -209,6 +212,8 @@ export default function RecurringView({ user }: { user: User }) {
   async function handleSave() {
     if (!amount || !description) return;
     setSaving(true);
+    const today = new Date().toISOString().split('T')[0];
+    const effectiveStart = startDate || today;
     const data = {
       user_id: user.id,
       amount: parseFloat(amount),
@@ -217,8 +222,11 @@ export default function RecurringView({ user }: { user: User }) {
       category_id: categoryId || null,
       frequency,
       day_of_month: parseInt(dayOfMonth),
+      start_date: effectiveStart,
       end_date: endDate || null,
       is_active: true,
+      // Reset last_generated when editing so the function re-evaluates from start_date
+      ...(editingId ? { last_generated: null } : {}),
     };
     try {
       if (editingId) {
@@ -226,16 +234,22 @@ export default function RecurringView({ user }: { user: User }) {
       } else {
         await supabase.from('recurring_expenses').insert(data);
       }
+      // Always trigger generation — this handles backfill if start_date is in the past
+      await supabase.rpc('generate_recurring_expenses', { p_user_id: user.id });
       setShowForm(false);
       loadData();
     } catch (err) { console.error(err); }
     finally { setSaving(false); }
   }
 
-  // Soft delete: mark as deleted, keep generated expenses intact
+  // Soft delete: deactivate only — never deletes the recurring row or its generated expenses
   async function handleDelete(id: string) {
-    await supabase.from('recurring_expenses').update({ is_active: false, end_date: new Date().toISOString().split('T')[0] }).eq('id', id);
-    // Remove from list visually but keep in DB so past expenses still reference it
+    const today = new Date().toISOString().split('T')[0];
+    await supabase
+      .from('recurring_expenses')
+      .update({ is_active: false, end_date: today })
+      .eq('id', id);
+    // Remove from active list visually; row stays in DB so expenses keep their recurring_id reference
     setItems(prev => prev.filter(i => i.id !== id));
   }
 
@@ -363,6 +377,11 @@ export default function RecurringView({ user }: { user: User }) {
                     {item.frequency !== 'weekly' && ` · Día ${item.day_of_month}`}
                     {(item as any).category && ` · ${(item as any).category.name}`}
                   </p>
+                  {(item as any).start_date && (item as any).start_date < new Date().toISOString().split('T')[0] && (
+                    <p className="text-[10px] text-dark-500 mt-0.5">
+                      Desde {format(parseISO((item as any).start_date), "d MMM yyyy", { locale: es })}
+                    </p>
+                  )}
                   {item.end_date && (
                     <p className="text-[10px] text-dark-500 mt-0.5">
                       Hasta {format(parseISO(item.end_date), "d MMM yyyy", { locale: es })}
@@ -404,6 +423,20 @@ export default function RecurringView({ user }: { user: User }) {
                 onChange={(e) => setDescription(e.target.value)}
                 className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors"
               />
+            </div>
+
+            {/* Start date */}
+            <div>
+              <label className="text-xs text-dark-400 font-medium mb-1.5 block">Fecha de inicio</label>
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors"
+              />
+              {startDate && startDate < new Date().toISOString().split('T')[0] && (
+                <p className="text-[10px] text-brand-400 mt-1">⚡ Se generarán automáticamente los gastos desde esta fecha</p>
+              )}
             </div>
 
             {/* Category — same style as AddExpense */}
