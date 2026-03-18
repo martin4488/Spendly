@@ -123,7 +123,10 @@ function DonutChart({ cats, total }: { cats: CatSpend[]; total: number }) {
 }
 
 // ── Bar Chart ─────────────────────────────────────────────────────────────────
-function BarChart({ data, color, mode }: { data: { label: string; amount: number }[]; color: string; mode: ViewMode }) {
+interface BarSegment { amount: number; color: string; }
+interface BarEntry { label: string; amount: number; segments?: BarSegment[]; }
+
+function BarChart({ data, color, mode }: { data: BarEntry[]; color: string; mode: ViewMode }) {
   const W = 320; const H = 110; const PAD_L = 36; const PAD_B = 22; const PAD_T = 8; const PAD_R = 8;
   const chartW = W - PAD_L - PAD_R; const chartH = H - PAD_B - PAD_T;
   const max = Math.max(...data.map(d => d.amount), 1);
@@ -132,6 +135,7 @@ function BarChart({ data, color, mode }: { data: { label: string; amount: number
   const barW = Math.max(4, (chartW / data.length) * 0.55);
   const barGap = chartW / data.length;
   const showEvery = data.length > 20 ? 7 : data.length > 10 ? 3 : 1;
+  const baseY = PAD_T + chartH;
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} style={{ display: 'block' }}>
       {yTicks.map((v, i) => {
@@ -142,11 +146,22 @@ function BarChart({ data, color, mode }: { data: { label: string; amount: number
         </g>;
       })}
       {data.map((d, i) => {
-        const barH = Math.max(2, (d.amount / max) * chartH);
+        const totalBarH = Math.max(2, (d.amount / max) * chartH);
         const x = PAD_L + i * barGap + barGap / 2 - barW / 2;
-        const y = PAD_T + chartH - barH;
+        const opacity = i === data.length - 1 && mode === 'months' ? 0.5 : 1;
+        const segs = d.segments && d.segments.length > 0 ? d.segments : [{ amount: d.amount, color: d.amount > 0 ? color : '#1e293b' }];
+        // Stack segments from bottom up
+        let stackY = baseY;
         return <g key={i}>
-          <rect x={x} y={y} width={barW} height={barH} fill={d.amount > 0 ? color : '#1e293b'} rx={2} opacity={i === data.length - 1 && mode === 'months' ? 0.5 : 1} />
+          {segs.map((seg, si) => {
+            const segH = Math.max(0, (seg.amount / max) * chartH);
+            stackY -= segH;
+            const isFirst = si === 0;
+            const isLast = si === segs.length - 1;
+            return <rect key={si} x={x} y={stackY} width={barW} height={Math.max(segH, si === 0 && d.amount > 0 ? 2 : 0)}
+              fill={seg.color} opacity={opacity}
+              rx={isLast ? 2 : 0} ry={isLast ? 2 : 0} />;
+          })}
           {i % showEvery === 0 && <text x={PAD_L + i * barGap + barGap / 2} y={H - 6} textAnchor="middle" fill="#475569" fontSize={7.5}>{d.label}</text>}
         </g>;
       })}
@@ -245,7 +260,8 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
   // Recursive category list renderer
   function renderCatList(cats: CatSpend[], depth = 0): React.ReactNode {
     return cats.map(cat => {
-      const hasChildren = cat.children.length > 0;
+      const activeChildren = cat.children.filter(c => c.spent > 0);
+      const hasChildren = activeChildren.length > 0;
       const isExpanded = expanded.has(cat.id);
       const indent = depth * 16;
       return (
@@ -269,7 +285,7 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
           </div>
           {hasChildren && isExpanded && (
             <div className="border-l border-dark-700/40 ml-8">
-              {renderCatList(cat.children, depth + 1)}
+              {renderCatList(activeChildren, depth + 1)}
             </div>
           )}
         </div>
@@ -320,7 +336,7 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
   const [viewMode, setViewMode] = useState<ViewMode>(initialMode);
   const [currentDate, setCurrentDate] = useState(initialDate);
   const [expenses, setExpenses] = useState<ExpenseDetail[]>([]);
-  const [barData, setBarData] = useState<{ label: string; amount: number }[]>([]);
+  const [barData, setBarData] = useState<BarEntry[]>([]);
   const [periodTotal, setPeriodTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [allCats, setAllCats] = useState<RawCat[]>([]);
@@ -353,16 +369,35 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
     finally { setLoading(false); }
   }
 
-  function buildBarData(exp: { date: string; amount: number }[], date: Date, mode: ViewMode) {
+  function buildBarData(exp: ExpenseDetail[], date: Date, mode: ViewMode): BarEntry[] {
+    // Build a color map: category_id -> color
+    const colorMap: Record<string, string> = {};
+    allCats.forEach(c => { colorMap[c.id] = c.color; });
+
+    function makeEntry(label: string, dayExps: ExpenseDetail[]): BarEntry {
+      const amount = dayExps.reduce((s, e) => s + e.amount, 0);
+      if (amount === 0) return { label, amount, segments: [] };
+      // Group by category, sorted by amount desc
+      const bycat: Record<string, number> = {};
+      dayExps.forEach(e => {
+        const cid = e.category_id || '__none';
+        bycat[cid] = (bycat[cid] || 0) + e.amount;
+      });
+      const segments: BarSegment[] = Object.entries(bycat)
+        .sort((a, b) => b[1] - a[1])
+        .map(([cid, amt]) => ({ amount: amt, color: colorMap[cid] || drillDown.color }));
+      return { label, amount, segments };
+    }
+
     if (mode === 'months') {
       return eachDayOfInterval({ start: startOfMonth(date), end: endOfMonth(date) }).map(d => {
         const key = format(d, 'yyyy-MM-dd');
-        return { label: format(d, 'd'), amount: exp.filter(e => e.date === key).reduce((s, e) => s + e.amount, 0) };
+        return makeEntry(format(d, 'd'), exp.filter(e => e.date === key));
       });
     }
     return eachMonthOfInterval({ start: startOfYear(date), end: endOfYear(date) }).map(m => {
       const mStr = format(m, 'yyyy-MM');
-      return { label: format(m, 'MMM', { locale: es }), amount: exp.filter(e => e.date.startsWith(mStr)).reduce((s, e) => s + e.amount, 0) };
+      return makeEntry(format(m, 'MMM', { locale: es }), exp.filter(e => e.date.startsWith(mStr)));
     });
   }
 
