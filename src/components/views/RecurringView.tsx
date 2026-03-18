@@ -230,7 +230,17 @@ export default function RecurringView({ user }: { user: User }) {
     };
     try {
       if (editingId) {
+        // When editing, preserve past expenses' amounts — only update the recurring template
+        // Past expenses keep their original amount; only future-generated ones use the new amount
         await supabase.from('recurring_expenses').update(data).eq('id', editingId);
+        // Delete future (not-yet-occurred) auto-generated expenses so they get re-generated with new amount
+        const today = new Date().toISOString().split('T')[0];
+        await supabase
+          .from('expenses')
+          .delete()
+          .eq('recurring_id', editingId)
+          .eq('is_recurring', true)
+          .gt('date', today);
       } else {
         await supabase.from('recurring_expenses').insert(data);
       }
@@ -440,18 +450,6 @@ export default function RecurringView({ user }: { user: User }) {
               </button>
             </div>
 
-            {/* Description (optional) */}
-            <div>
-              <label className="text-xs text-dark-400 font-medium mb-1.5 block">Descripción (opcional)</label>
-              <input
-                type="text"
-                placeholder="Ej: Alquiler, Netflix, Gym..."
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors"
-              />
-            </div>
-
             {/* Frequency + day */}
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -510,6 +508,18 @@ export default function RecurringView({ user }: { user: User }) {
               </div>
               {!endDate && <p className="text-[10px] text-dark-500 mt-1">Sin fecha = se repite indefinidamente</p>}
             </div>
+
+            {/* Description (optional) */}
+            <div>
+              <label className="text-xs text-dark-400 font-medium mb-1.5 block">Descripción (opcional)</label>
+              <input
+                type="text"
+                placeholder="Ej: Alquiler, Netflix, Gym..."
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors"
+              />
+            </div>
           </div>
 
                     {/* Bottom: save + numpad */}
@@ -517,7 +527,7 @@ export default function RecurringView({ user }: { user: User }) {
             <div className="px-5 py-3">
               <button
                 onClick={handleSave}
-                disabled={saving || !amount || !description}
+                disabled={saving || !amount}
                 className="w-full bg-brand-600 hover:bg-brand-500 disabled:opacity-30 text-white font-bold py-4 rounded-2xl transition-all text-base"
               >
                 {saving ? 'Guardando...' : editingId ? 'Guardar cambios' : 'Agregar gasto fijo'}
