@@ -176,7 +176,7 @@ export default function RecurringView({ user }: { user: User }) {
   async function loadData() {
     setLoading(true);
     const [{ data: rec }, { data: cats }] = await Promise.all([
-      supabase.from('recurring_expenses').select('*, category:categories(*)').eq('user_id', user.id).order('description'),
+      supabase.from('recurring_expenses').select('*, category:categories(*)').eq('user_id', user.id).eq('is_active', true).order('description'),
       supabase.from('categories').select('*').eq('user_id', user.id).order('position').order('created_at'),
     ]);
     setItems(rec || []);
