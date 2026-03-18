@@ -280,31 +280,47 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     if (loadingMore || !hasMore) return;
     setLoadingMore(true);
     try {
-      const endDate = new Date(oldestDate.current);
-      endDate.setDate(endDate.getDate() - 1);
-      const startDate = new Date(endDate);
-      startDate.setDate(startDate.getDate() - 29);
-
-      // Stop going back more than 3 years
       const hardStop = new Date();
       hardStop.setFullYear(hardStop.getFullYear() - 3);
-      if (endDate < hardStop) { setHasMore(false); setLoadingMore(false); return; }
+      const toStr = (d: Date) =>
+        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-      const endStr = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
-      const startStr = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-${String(startDate.getDate()).padStart(2, '0')}`;
+      let accumulated: any[] = [];
+      let cursor = new Date(oldestDate.current);
+      let newOldest = oldestDate.current;
+      let reachedEnd = false;
 
-      const { data: exp } = await supabase
-        .from('expenses')
-        .select('*, category:categories(*)')
-        .eq('user_id', user.id)
-        .gte('date', startStr)
-        .lte('date', endStr)
-        .order('date', { ascending: false });
+      // Keep scanning 30-day chunks until we find expenses or hit the hard stop
+      while (accumulated.length === 0) {
+        const chunkEnd = new Date(cursor);
+        chunkEnd.setDate(chunkEnd.getDate() - 1);
+        if (chunkEnd < hardStop) { reachedEnd = true; break; }
 
-      const newExp = exp || [];
-      setExpenses(prev => [...prev, ...newExp]);
-      oldestDate.current = startStr;
-      if (newExp.length === 0) setHasMore(false);
+        const chunkStart = new Date(chunkEnd);
+        chunkStart.setDate(chunkStart.getDate() - 29);
+        const clampedStart = chunkStart < hardStop ? hardStop : chunkStart;
+
+        const endStr = toStr(chunkEnd);
+        const startStr = toStr(clampedStart);
+
+        const { data: exp } = await supabase
+          .from('expenses')
+          .select('*, category:categories(*)')
+          .eq('user_id', user.id)
+          .gte('date', startStr)
+          .lte('date', endStr)
+          .order('date', { ascending: false });
+
+        newOldest = startStr;
+        cursor = clampedStart;
+
+        if (exp && exp.length > 0) accumulated = exp;
+        if (clampedStart <= hardStop) { reachedEnd = true; break; }
+      }
+
+      oldestDate.current = newOldest;
+      if (accumulated.length > 0) setExpenses(prev => [...prev, ...accumulated]);
+      if (reachedEnd) setHasMore(false);
     } catch (err) {
       console.error(err);
     } finally {
