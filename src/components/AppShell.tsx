@@ -1,11 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
-import { prefetchRates } from '@/lib/currency';
 import { LayoutDashboard, FolderTree, Wallet, RefreshCcw, Settings } from 'lucide-react';
-
 import { Budget } from '@/types';
 import DashboardView from '@/components/views/DashboardView';
 import CategoriesView from '@/components/views/CategoriesView';
@@ -14,66 +12,30 @@ import BudgetDetailView from '@/components/views/BudgetDetailView';
 import RecurringView from '@/components/views/RecurringView';
 import SettingsView from '@/components/views/SettingsView';
 import SpendingOverview from '@/components/views/SpendingOverview';
-
 import type { CurrencyCode } from '@/lib/currency';
 
-type Tab =
-  | 'dashboard'
-  | 'categories'
-  | 'budgets'
-  | 'recurring'
-  | 'settings'
-  | 'overview'
-  | 'budget-detail';
+type Tab = 'dashboard' | 'categories' | 'budgets' | 'recurring' | 'settings' | 'overview' | 'budget-detail';
 
-interface TabConfig {
-  id: Tab;
-  label: string;
-  icon: typeof LayoutDashboard;
-}
-
-const tabs: TabConfig[] = [
-  { id: 'dashboard', label: 'Inicio', icon: LayoutDashboard },
-  { id: 'budgets', label: 'Budgets', icon: Wallet },
-  { id: 'categories', label: 'Categorías', icon: FolderTree },
-  { id: 'recurring', label: 'Fijos', icon: RefreshCcw },
-  { id: 'settings', label: 'Más', icon: Settings },
+const tabs = [
+  { id: 'dashboard' as Tab, label: 'Inicio', icon: LayoutDashboard },
+  { id: 'budgets' as Tab, label: 'Budgets', icon: Wallet },
+  { id: 'categories' as Tab, label: 'Categorías', icon: FolderTree },
+  { id: 'recurring' as Tab, label: 'Fijos', icon: RefreshCcw },
+  { id: 'settings' as Tab, label: 'Más', icon: Settings },
 ];
 
 interface AppShellProps {
   user: User;
+  initialCurrency: CurrencyCode;
 }
 
-export default function AppShell({ user }: AppShellProps) {
+export default function AppShell({ user, initialCurrency }: AppShellProps) {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [selectedBudget, setSelectedBudget] = useState<Budget | null>(null);
   const [selectedPeriodId, setSelectedPeriodId] = useState<string>('');
-  const [defaultCurrency, setDefaultCurrency] = useState<CurrencyCode>('EUR');
-  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [defaultCurrency, setDefaultCurrency] = useState<CurrencyCode>(initialCurrency);
 
-  // Cargar configuración del usuario + precargar tasas de cambio al montar
-  useEffect(() => {
-    async function init() {
-      const [_, { data }] = await Promise.all([
-        prefetchRates(),
-        supabase.from('user_settings').select('*').eq('user_id', user.id).single(),
-      ]);
-
-      if (data) {
-        setDefaultCurrency(data.default_currency as CurrencyCode);
-      } else {
-        // Crear configuración por defecto si no existe
-        await supabase.from('user_settings').insert({
-          user_id: user.id,
-          default_currency: 'EUR',
-        });
-      }
-
-      setSettingsLoaded(true);
-    }
-
-    init();
-  }, [user.id]);
+  // No loading state needed — currency is passed in from page.tsx boot
 
   const openBudget = (budget: Budget, periodId: string = '') => {
     setSelectedBudget(budget);
@@ -87,40 +49,16 @@ export default function AppShell({ user }: AppShellProps) {
     setActiveTab('budgets');
   };
 
-  const handleCurrencyChange = (currency: CurrencyCode) => {
-    setDefaultCurrency(currency);
-  };
-
   const hideNav = activeTab === 'overview' || activeTab === 'budget-detail';
-
-  if (!settingsLoaded) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="text-4xl mb-3">💸</div>
-          <div className="text-lg font-semibold text-brand-400">Spendly</div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen pb-20">
       <main className="page-transition">
         {activeTab === 'dashboard' && (
-          <DashboardView
-            user={user}
-            onNavigate={setActiveTab}
-            defaultCurrency={defaultCurrency}
-          />
+          <DashboardView user={user} onNavigate={setActiveTab} defaultCurrency={defaultCurrency} />
         )}
-
         {activeTab === 'categories' && <CategoriesView user={user} />}
-
-        {activeTab === 'budgets' && (
-          <BudgetsView user={user} onOpenBudget={openBudget} />
-        )}
-
+        {activeTab === 'budgets' && <BudgetsView user={user} onOpenBudget={openBudget} />}
         {activeTab === 'budget-detail' && selectedBudget && (
           <BudgetDetailView
             user={user}
@@ -129,28 +67,16 @@ export default function AppShell({ user }: AppShellProps) {
             onBack={backFromBudgetDetail}
             onRefresh={() => {
               setActiveTab('budgets');
-              setTimeout(() => {
-                setActiveTab('budget-detail');
-              }, 50);
+              setTimeout(() => setActiveTab('budget-detail'), 50);
             }}
           />
         )}
-
         {activeTab === 'recurring' && <RecurringView user={user} />}
-
         {activeTab === 'settings' && (
-          <SettingsView
-            user={user}
-            defaultCurrency={defaultCurrency}
-            onCurrencyChange={handleCurrencyChange}
-          />
+          <SettingsView user={user} defaultCurrency={defaultCurrency} onCurrencyChange={setDefaultCurrency} />
         )}
-
         {activeTab === 'overview' && (
-          <SpendingOverview
-            user={user}
-            onBack={() => setActiveTab('dashboard')}
-          />
+          <SpendingOverview user={user} onBack={() => setActiveTab('dashboard')} />
         )}
       </main>
 
@@ -160,23 +86,14 @@ export default function AppShell({ user }: AppShellProps) {
             {tabs.map((tab) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
-
               return (
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`flex flex-col items-center py-2.5 px-3 min-w-[60px] transition-all ${
-                    isActive ? 'text-brand-400' : 'text-dark-500'
-                  }`}
+                  className={`flex flex-col items-center py-2.5 px-3 min-w-[60px] transition-all ${isActive ? 'text-brand-400' : 'text-dark-500'}`}
                 >
                   <Icon size={22} strokeWidth={isActive ? 2.5 : 1.5} />
-                  <span
-                    className={`text-[10px] mt-1 ${
-                      isActive ? 'font-semibold' : 'font-medium'
-                    }`}
-                  >
-                    {tab.label}
-                  </span>
+                  <span className={`text-[10px] mt-1 ${isActive ? 'font-semibold' : 'font-medium'}`}>{tab.label}</span>
                 </button>
               );
             })}
