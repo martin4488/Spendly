@@ -2,42 +2,70 @@
 
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { prefetchRates } from '@/lib/currency';
 import { User } from '@supabase/supabase-js';
 import AuthPage from '@/app/auth/AuthPage';
 import AppShell from '@/components/AppShell';
+import type { CurrencyCode } from '@/lib/currency';
+
+interface BootData {
+  user: User;
+  currency: CurrencyCode;
+}
 
 export default function Home() {
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [bootData, setBootData] = useState<BootData | null>(null);
+  const [unauthenticated, setUnauthenticated] = useState(false);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
-      setLoading(false);
-    });
+    async function boot() {
+      // Kick off session + rates in parallel immediately
+      const [{ data: { session } }] = await Promise.all([
+        supabase.auth.getSession(),
+        prefetchRates(),
+      ]);
+
+      if (!session?.user) {
+        setUnauthenticated(true);
+        return;
+      }
+
+      const user = session.user;
+
+      // Fire recurring generation without blocking render
+      supabase.rpc('generate_recurring_expenses', { p_user_id: user.id }).catch(console.error);
+
+      // Load settings — use default if missing
+      let currency: CurrencyCode = 'EUR';
+      const { data: settings } = await supabase
+        .from('user_settings')
+        .select('default_currency')
+        .eq('user_id', user.id)
+        .single();
+
+      if (settings) {
+        currency = settings.default_currency as CurrencyCode;
+      } else {
+        // Create defaults without awaiting — don't block render
+        supabase.from('user_settings').insert({ user_id: user.id, default_currency: 'EUR' }).then(() => {});
+      }
+
+      setBootData({ user, currency });
+    }
+
+    boot();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
+      if (!session) {
+        setBootData(null);
+        setUnauthenticated(true);
+      }
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
-  // Generate recurring expenses on login
-  useEffect(() => {
-    async function generateRecurring() {
-      if (user) {
-        try {
-          await supabase.rpc('generate_recurring_expenses', { p_user_id: user.id });
-        } catch (err) {
-          console.error(err);
-        }
-      }
-    }
-    generateRecurring();
-  }, [user]);
-
-  if (loading) {
+  if (!bootData && !unauthenticated) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
@@ -48,9 +76,9 @@ export default function Home() {
     );
   }
 
-  if (!user) {
+  if (unauthenticated || !bootData) {
     return <AuthPage />;
   }
 
-  return <AppShell user={user} />;
+  return <AppShell user={bootData.user} initialCurrency={bootData.currency} />;
 }
