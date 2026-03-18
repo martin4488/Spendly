@@ -150,17 +150,21 @@ function BarChart({ data, color, mode }: { data: BarEntry[]; color: string; mode
         const x = PAD_L + i * barGap + barGap / 2 - barW / 2;
         const opacity = i === data.length - 1 && mode === 'months' ? 0.5 : 1;
         const segs = d.segments && d.segments.length > 0 ? d.segments : [{ amount: d.amount, color: d.amount > 0 ? color : '#1e293b' }];
-        // Stack segments from bottom up
+        // Stack segments from bottom up — use clipPath for unified rounded corners
+        const totalBarH2 = totalBarH;
+        const clipId = `clip-${i}`;
         let stackY = baseY;
         return <g key={i}>
+          <defs>
+            <clipPath id={clipId}>
+              <rect x={x} y={baseY - totalBarH2} width={barW} height={totalBarH2} rx={2} ry={2} />
+            </clipPath>
+          </defs>
           {segs.map((seg, si) => {
             const segH = Math.max(0, (seg.amount / max) * chartH);
             stackY -= segH;
-            const isFirst = si === 0;
-            const isLast = si === segs.length - 1;
             return <rect key={si} x={x} y={stackY} width={barW} height={Math.max(segH, si === 0 && d.amount > 0 ? 2 : 0)}
-              fill={seg.color} opacity={opacity}
-              rx={isLast ? 2 : 0} ry={isLast ? 2 : 0} />;
+              fill={seg.color} opacity={opacity} clipPath={`url(#${clipId})`} />;
           })}
           {i % showEvery === 0 && <text x={PAD_L + i * barGap + barGap / 2} y={H - 6} textAnchor="middle" fill="#475569" fontSize={7.5}>{d.label}</text>}
         </g>;
