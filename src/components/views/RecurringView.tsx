@@ -210,15 +210,15 @@ export default function RecurringView({ user }: { user: User }) {
   }
 
   async function handleSave() {
-    if (!amount || !description) return;
+    if (!amount) return;
     setSaving(true);
     const today = new Date().toISOString().split('T')[0];
     const effectiveStart = startDate || today;
     const data = {
       user_id: user.id,
       amount: parseFloat(amount),
-      description,
-      notes: notes || null,
+      description: description || selectedCat?.name || '',
+      notes: null,
       category_id: categoryId || null,
       frequency,
       day_of_month: parseInt(dayOfMonth),
@@ -413,33 +413,7 @@ export default function RecurringView({ user }: { user: User }) {
           </div>
 
           <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-            {/* Description */}
-            <div>
-              <label className="text-xs text-dark-400 font-medium mb-1.5 block">Descripción *</label>
-              <input
-                type="text"
-                placeholder="Ej: Alquiler, Netflix, Gym..."
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors"
-              />
-            </div>
-
-            {/* Start date */}
-            <div>
-              <label className="text-xs text-dark-400 font-medium mb-1.5 block">Fecha de inicio</label>
-              <input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors"
-              />
-              {startDate && startDate < new Date().toISOString().split('T')[0] && (
-                <p className="text-[10px] text-brand-400 mt-1">⚡ Se generarán automáticamente los gastos desde esta fecha</p>
-              )}
-            </div>
-
-            {/* Category — same style as AddExpense */}
+            {/* Category */}
             <div>
               <label className="text-xs text-dark-400 font-medium mb-1.5 block">Categoría</label>
               <button
@@ -464,6 +438,18 @@ export default function RecurringView({ user }: { user: User }) {
                 )}
                 <span className="text-dark-500 text-xs">›</span>
               </button>
+            </div>
+
+            {/* Description (optional) */}
+            <div>
+              <label className="text-xs text-dark-400 font-medium mb-1.5 block">Descripción (opcional)</label>
+              <input
+                type="text"
+                placeholder="Ej: Alquiler, Netflix, Gym..."
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors"
+              />
             </div>
 
             {/* Frequency + day */}
@@ -491,6 +477,20 @@ export default function RecurringView({ user }: { user: User }) {
               </div>
             </div>
 
+            {/* Start date */}
+            <div>
+              <label className="text-xs text-dark-400 font-medium mb-1.5 block">Fecha de inicio</label>
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors"
+              />
+              {startDate && startDate < new Date().toISOString().split('T')[0] && (
+                <p className="text-[10px] text-brand-400 mt-1">⚡ Se generarán automáticamente los gastos desde esta fecha</p>
+              )}
+            </div>
+
             {/* End date */}
             <div>
               <label className="text-xs text-dark-400 font-medium mb-1.5 flex items-center gap-1.5">
@@ -510,21 +510,9 @@ export default function RecurringView({ user }: { user: User }) {
               </div>
               {!endDate && <p className="text-[10px] text-dark-500 mt-1">Sin fecha = se repite indefinidamente</p>}
             </div>
-
-            {/* Notes */}
-            <div>
-              <label className="text-xs text-dark-400 font-medium mb-1.5 block">Notas (opcional)</label>
-              <textarea
-                placeholder="Algún detalle extra..."
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                rows={2}
-                className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors resize-none"
-              />
-            </div>
           </div>
 
-          {/* Bottom: save + numpad */}
+                    {/* Bottom: save + numpad */}
           <div className="flex-shrink-0">
             <div className="px-5 py-3">
               <button
