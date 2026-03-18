@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { LayoutDashboard, FolderTree, Wallet, RefreshCcw, Settings } from 'lucide-react';
+import { setDefaultCurrency } from '@/lib/utils';
 import { Budget } from '@/types';
 import DashboardView from '@/components/views/DashboardView';
 import CategoriesView from '@/components/views/CategoriesView';
@@ -33,7 +34,8 @@ export default function AppShell({ user, initialCurrency }: AppShellProps) {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [selectedBudget, setSelectedBudget] = useState<Budget | null>(null);
   const [selectedPeriodId, setSelectedPeriodId] = useState<string>('');
-  const [defaultCurrency, setDefaultCurrency] = useState<CurrencyCode>(initialCurrency);
+  const [defaultCurrency, _setDefaultCurrency] = useState<CurrencyCode>(initialCurrency);
+  function updateCurrency(c: CurrencyCode) { _setDefaultCurrency(c); setDefaultCurrency(c); }
 
   // No loading state needed — currency is passed in from page.tsx boot
 
@@ -73,7 +75,7 @@ export default function AppShell({ user, initialCurrency }: AppShellProps) {
         )}
         {activeTab === 'recurring' && <RecurringView user={user} />}
         {activeTab === 'settings' && (
-          <SettingsView user={user} defaultCurrency={defaultCurrency} onCurrencyChange={setDefaultCurrency} />
+          <SettingsView user={user} defaultCurrency={defaultCurrency} onCurrencyChange={updateCurrency} />
         )}
         {activeTab === 'overview' && (
           <SpendingOverview user={user} onBack={() => setActiveTab('dashboard')} />
