@@ -342,20 +342,21 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
   const [allCats, setAllCats] = useState<RawCat[]>([]);
   const swipeStartX = useRef<number | null>(null);
 
-  useEffect(() => {
-    supabase.from('categories').select('*').eq('user_id', user.id).neq('deleted', true).then(({ data }) => setAllCats(data || []));
-  }, []);
-
   useEffect(() => { loadData(); }, [viewMode, currentDate]);
 
   async function loadData() {
     setLoading(true);
     try {
       const range = getRange(currentDate, viewMode);
+
+      // Load cats and expenses in parallel — cats needed for color map
+      const { data: catsData } = await supabase.from('categories').select('*').eq('user_id', user.id).neq('deleted', true);
+      const cats = catsData || [];
+      setAllCats(cats);
+
       let list: ExpenseDetail[] = [];
       if (drillDown.id === 'uncategorized') {
-        const { data: cats } = await supabase.from('categories').select('id').eq('user_id', user.id).neq('deleted', true);
-        const ids = new Set((cats || []).map((c: any) => c.id));
+        const ids = new Set(cats.map((c: any) => c.id));
         const { data: exp } = await supabase.from('expenses').select('id, amount, description, date, category_id').eq('user_id', user.id).gte('date', range.start).lte('date', range.end).order('date', { ascending: false });
         list = (exp || []).filter((e: any) => !e.category_id || !ids.has(e.category_id)).map((e: any) => ({ id: e.id, date: e.date, description: e.description, amount: Number(e.amount), category_id: e.category_id }));
       } else {
@@ -364,15 +365,15 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
       }
       setExpenses(list);
       setPeriodTotal(list.reduce((s, e) => s + e.amount, 0));
-      setBarData(buildBarData(list, currentDate, viewMode));
+      setBarData(buildBarData(list, currentDate, viewMode, cats));
     } catch (err) { console.error(err); }
     finally { setLoading(false); }
   }
 
-  function buildBarData(exp: ExpenseDetail[], date: Date, mode: ViewMode): BarEntry[] {
+  function buildBarData(exp: ExpenseDetail[], date: Date, mode: ViewMode, cats: RawCat[] = allCats): BarEntry[] {
     // Build a color map: category_id -> color
     const colorMap: Record<string, string> = {};
-    allCats.forEach(c => { colorMap[c.id] = c.color; });
+    cats.forEach(c => { colorMap[c.id] = c.color; });
 
     function makeEntry(label: string, dayExps: ExpenseDetail[]): BarEntry {
       const amount = dayExps.reduce((s, e) => s + e.amount, 0);
