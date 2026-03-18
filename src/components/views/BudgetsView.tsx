@@ -125,7 +125,7 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
 
       const [{ data: budgetsData }, { data: catsData }, { data: bcData }, { data: periodsData }] = await Promise.all([
         supabase.from('budgets').select('*').eq('user_id', user.id).order('name'),
-        supabase.from('categories').select('*').eq('user_id', user.id).eq('deleted', false).order('position').order('created_at'),
+        supabase.from('categories').select('*').eq('user_id', user.id).neq('deleted', true).order('position').order('created_at'),
         supabase.from('budget_categories').select('*'),
         supabase.from('budget_periods').select('*'),
       ]);
