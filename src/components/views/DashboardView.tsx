@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, getMonthRange, getYearRange } from '@/lib/utils';
@@ -218,22 +218,103 @@ function SwipeableExpenseRow({
 export default function DashboardView({ user, onNavigate, defaultCurrency }: { user: User; onNavigate: (tab: any) => void; defaultCurrency: CurrencyCode }) {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>('months');
+  const [extendedLoaded, setExtendedLoaded] = useState(false);
+  // oldestDate tracks how far back we've loaded for the months list
+  const oldestDate = useRef<string>('');
+  const sentinelRef = useRef<HTMLDivElement>(null);
   const [showAddExpense, setShowAddExpense] = useState(false);
   const [editingExpense, setEditingExpense] = useState<any>(null);
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const searchRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => { loadInitial(); }, []);
 
   useEffect(() => {
-    if (showSearch && searchRef.current) {
-      searchRef.current.focus();
-    }
+    if (showSearch && searchRef.current) searchRef.current.focus();
   }, [showSearch]);
 
-  async function loadData() {
+  // Infinite scroll observer — fires when sentinel enters viewport
+  useEffect(() => {
+    if (!sentinelRef.current) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && !loadingMore && hasMore && viewMode === 'months') {
+          loadMoreMonths();
+        }
+      },
+      { threshold: 0.1 }
+    );
+    observer.observe(sentinelRef.current);
+    return () => observer.disconnect();
+  }, [loadingMore, hasMore, viewMode, oldestDate.current]);
+
+  // Load last 30 days on startup
+  async function loadInitial() {
+    try {
+      const now = new Date();
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29);
+      const startStr = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`;
+      oldestDate.current = startStr;
+      const { data: exp } = await supabase
+        .from('expenses')
+        .select('*, category:categories(*)')
+        .eq('user_id', user.id)
+        .gte('date', startStr)
+        .order('date', { ascending: false });
+      setExpenses(exp || []);
+      // If we got fewer than expected there might be nothing older — but keep hasMore true,
+      // the next loadMore call will find out
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Load the previous 30-day chunk when user scrolls to the bottom
+  async function loadMoreMonths() {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const endDate = new Date(oldestDate.current);
+      endDate.setDate(endDate.getDate() - 1);
+      const startDate = new Date(endDate);
+      startDate.setDate(startDate.getDate() - 29);
+
+      // Stop going back more than 3 years
+      const hardStop = new Date();
+      hardStop.setFullYear(hardStop.getFullYear() - 3);
+      if (endDate < hardStop) { setHasMore(false); setLoadingMore(false); return; }
+
+      const endStr = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
+      const startStr = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-${String(startDate.getDate()).padStart(2, '0')}`;
+
+      const { data: exp } = await supabase
+        .from('expenses')
+        .select('*, category:categories(*)')
+        .eq('user_id', user.id)
+        .gte('date', startStr)
+        .lte('date', endStr)
+        .order('date', { ascending: false });
+
+      const newExp = exp || [];
+      setExpenses(prev => [...prev, ...newExp]);
+      oldestDate.current = startStr;
+      if (newExp.length === 0) setHasMore(false);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
+  // Load full 3-year history for yearly chart
+  async function loadExtended() {
+    if (extendedLoaded) return;
     try {
       const startDate = `${new Date().getFullYear() - 2}-01-01`;
       const { data: exp } = await supabase
@@ -243,11 +324,34 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
         .gte('date', startDate)
         .order('date', { ascending: false });
       setExpenses(exp || []);
+      setExtendedLoaded(true);
+      setHasMore(false); // extended already covers everything
     } catch (err) {
       console.error(err);
-    } finally {
-      setLoading(false);
     }
+  }
+
+  async function loadData() {
+    // Full reload after add/edit/delete — respect current loaded range
+    try {
+      const startStr = extendedLoaded
+        ? `${new Date().getFullYear() - 2}-01-01`
+        : oldestDate.current;
+      const { data: exp } = await supabase
+        .from('expenses')
+        .select('*, category:categories(*)')
+        .eq('user_id', user.id)
+        .gte('date', startStr)
+        .order('date', { ascending: false });
+      setExpenses(exp || []);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  function handleViewModeChange(mode: ViewMode) {
+    setViewMode(mode);
+    if (mode === 'years') loadExtended();
   }
 
   const now = new Date();
@@ -384,7 +488,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       <div className="flex justify-center mb-2">
         <div className="inline-flex bg-dark-800 rounded-full p-0.5">
           <button
-            onClick={() => setViewMode('months')}
+            onClick={() => handleViewModeChange('months')}
             className={`px-3 py-1 rounded-full text-[11px] font-medium transition-all ${
               viewMode === 'months' ? 'bg-dark-600 text-white shadow-sm' : 'text-dark-400'
             }`}
@@ -392,7 +496,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
             Por meses
           </button>
           <button
-            onClick={() => setViewMode('years')}
+            onClick={() => handleViewModeChange('years')}
             className={`px-3 py-1 rounded-full text-[11px] font-medium transition-all ${
               viewMode === 'years' ? 'bg-dark-600 text-white shadow-sm' : 'text-dark-400'
             }`}
@@ -462,6 +566,18 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
               ))}
             </div>
           ))
+        )}
+
+        {/* Infinite scroll sentinel */}
+        {viewMode === 'months' && !searchQuery && (
+          <div ref={sentinelRef} className="py-6 flex justify-center">
+            {loadingMore && (
+              <div className="w-5 h-5 border-2 border-brand-500/30 border-t-brand-500 rounded-full animate-spin" />
+            )}
+            {!loadingMore && !hasMore && expenses.length > 0 && (
+              <p className="text-[10px] text-dark-600">— Inicio del historial —</p>
+            )}
+          </div>
         )}
       </div>
 
