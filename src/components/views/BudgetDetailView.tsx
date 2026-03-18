@@ -116,7 +116,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
     try {
       const [{ data: periodsData }, { data: catsData }, { data: bcData }] = await Promise.all([
         supabase.from('budget_periods').select('*').eq('budget_id', budget.id).order('period_start', { ascending: false }),
-        supabase.from('categories').select('*').eq('user_id', user.id).eq('deleted', false),
+        supabase.from('categories').select('*').eq('user_id', user.id).neq('deleted', true),
         supabase.from('budget_categories').select('category_id').eq('budget_id', budget.id),
       ]);
       const allPeriods = periodsData || [];
