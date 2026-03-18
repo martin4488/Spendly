@@ -33,7 +33,7 @@ export default function Home() {
       const user = session.user;
 
       // Fire recurring generation without blocking render
-      supabase.rpc('generate_recurring_expenses', { p_user_id: user.id }).catch(console.error);
+      Promise.resolve(supabase.rpc('generate_recurring_expenses', { p_user_id: user.id })).catch(console.error);
 
       // Load settings — use default if missing
       let currency: CurrencyCode = 'EUR';
