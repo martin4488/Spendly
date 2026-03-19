@@ -433,7 +433,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
                 const visibleCount = Math.min(periods.length, 12);
                 const reversedI = visibleCount - 1 - i;
                 const isActive = reversedI === currentPeriodIndex;
-                const activeColor = pct >= 100 ? '#ef4444' : pct >= 80 ? '#f59e0b' : '#22c55e';
+                const activeColor = budgetColor;
                 return (
                   <button key={i} onClick={() => setCurrentPeriodIndex(reversedI)}
                     className="w-2 h-2 rounded-full transition-all flex-shrink-0"
