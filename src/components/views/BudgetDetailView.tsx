@@ -411,14 +411,21 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
             </div>
           </div>
 
-          {/* PERIOD DOTS */}
+          {/* PERIOD DOTS — oldest left, newest right; all round; active = budget color */}
           {periods.length > 1 && (
             <div className="flex justify-center gap-1.5 mb-5">
-              {periods.slice(0, Math.min(periods.length, 12)).map((_, i) => (
-                <button key={i} onClick={() => setCurrentPeriodIndex(i)}
-                  className={`rounded-full transition-all ${i === currentPeriodIndex ? 'w-4 h-2 bg-brand-400' : 'w-2 h-2 bg-dark-600'}`} />
-              ))}
               {periods.length > 12 && <span className="text-[10px] text-dark-600">+{periods.length - 12}</span>}
+              {periods.slice(0, Math.min(periods.length, 12)).map((_, i) => {
+                const visibleCount = Math.min(periods.length, 12);
+                const reversedI = visibleCount - 1 - i;
+                const isActive = reversedI === currentPeriodIndex;
+                const activeColor = pct >= 100 ? '#ef4444' : pct >= 80 ? '#f59e0b' : '#22c55e';
+                return (
+                  <button key={i} onClick={() => setCurrentPeriodIndex(reversedI)}
+                    className="w-2 h-2 rounded-full transition-all flex-shrink-0"
+                    style={{ backgroundColor: isActive ? activeColor : '#334155' }} />
+                );
+              })}
             </div>
           )}
 
@@ -428,7 +435,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
               <p className="text-xs text-dark-500 font-medium uppercase tracking-wider mb-3">Por categoría</p>
               <div className="space-y-2">
                 {catSpending.map(cat => {
-                  const catPct = totalSpent > 0 ? (cat.spent / totalSpent) * 100 : 0;
+                  const catPct = periodAmount > 0 ? (cat.spent / periodAmount) * 100 : 0;
                   return (
                     <div key={cat.id} className="flex items-center gap-3">
                       <div className="w-8 h-8 rounded-xl flex items-center justify-center text-sm flex-shrink-0" style={{ backgroundColor: cat.color }}>{cat.icon}</div>
