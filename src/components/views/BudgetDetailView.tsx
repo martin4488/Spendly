@@ -351,18 +351,38 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
       ) : (
         <>
           {/* AMOUNT */}
-          <div className="text-center px-4 mb-4">
-            <p className={`text-4xl font-extrabold ${pct >= 100 ? 'text-red-400' : 'text-brand-400'}`}>{formatCurrency(left)}</p>
-            <p className="text-dark-500 text-sm mt-0.5">restante de {formatCurrency(periodAmount)}</p>
+          <div className="px-4 mb-4">
+            <div className="flex items-baseline justify-between">
+              <div className="flex items-baseline gap-2">
+                {pct >= 100 ? (
+                  <>
+                    <p className="text-4xl font-extrabold text-red-400">-{formatCurrency(totalSpent - periodAmount)}</p>
+                    <span className="text-sm text-red-400/70">sobre el límite</span>
+                  </>
+                ) : (
+                  <>
+                    <p className={`text-4xl font-extrabold ${pct >= 80 ? 'text-amber-400' : 'text-brand-400'}`}>{formatCurrency(left)}</p>
+                    <span className="text-dark-500 text-sm">disponible</span>
+                  </>
+                )}
+              </div>
+              <span className="text-dark-500 text-sm">de {formatCurrency(periodAmount)}</span>
+            </div>
           </div>
 
-          {/* DAILY ADVICE */}
+          {/* ADVICE */}
           {isCurrentPeriod && (
             <div className="mx-4 mb-4 bg-brand-500/8 border border-brand-500/15 rounded-2xl px-4 py-3">
               <p className="text-sm text-dark-200">
                 {pct >= 100 ? '¡Ya superaste el presupuesto!'
                   : daysLeft > 0
-                    ? <>Podés gastar <span className="font-bold text-brand-400">{formatCurrency(perDay)}</span>/día durante {daysLeft} días más.</>
+                    ? budget.recurrence === 'yearly'
+                      ? (() => {
+                          const monthsLeft = Math.round(daysLeft / 30.4 * 10) / 10;
+                          const perMonth = monthsLeft > 0 ? left / monthsLeft : 0;
+                          return <>Podés gastar <span className="font-bold text-brand-400">{formatCurrency(perMonth)}</span>/mes durante {monthsLeft} meses más.</>
+                        })()
+                      : <>Podés gastar <span className="font-bold text-brand-400">{formatCurrency(perDay)}</span>/día durante {daysLeft} días más.</>
                     : 'Último día del período.'}
               </p>
             </div>
@@ -379,13 +399,17 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
                 </div>
               </div>
             )}
-            <div className="w-full bg-dark-700 rounded-full h-2.5 mt-6">
-              <div className="h-2.5 rounded-full transition-all duration-500"
-                style={{ width: `${Math.min(pct, 100)}%`, backgroundColor: pct >= 100 ? '#ef4444' : pct >= 80 ? '#f59e0b' : '#22c55e' }} />
+            <div className="w-full bg-dark-700 rounded-full h-2.5 mt-6 overflow-hidden relative">
+              {pct >= 100 ? (
+                <div className="absolute inset-0 bg-red-400 rounded-full" />
+              ) : (
+                <div className="absolute right-0 top-0 h-full rounded-full transition-all duration-500"
+                  style={{ width: `${Math.max(100 - pct, 0)}%`, backgroundColor: pct >= 80 ? '#f59e0b' : '#22c55e' }} />
+              )}
             </div>
             <div className="flex justify-between mt-1.5">
               <span className="text-[10px] text-dark-500">{format(periodStart, 'MMM d', { locale: es })}</span>
-              <span className={`text-[10px] font-bold ${pct >= 100 ? 'text-red-400' : 'text-brand-400'}`}>{pct.toFixed(1)}%</span>
+              <span className={`text-[10px] font-bold ${pct >= 100 ? 'text-red-400' : 'text-dark-400'}`}>{pct.toFixed(1)}% gastado</span>
               <span className="text-[10px] text-dark-500">{format(periodEnd, 'MMM d', { locale: es })}</span>
             </div>
           </div>
