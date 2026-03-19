@@ -316,18 +316,19 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
     <div className="max-w-lg mx-auto pb-8 page-transition" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
 
       {/* HEADER */}
-      <div className="flex items-center justify-between px-4 pt-5 pb-3">
+      <div className="flex items-center justify-between px-4 pt-5 pb-2">
         <button onClick={onBack} className="p-1 text-dark-300"><ArrowLeft size={20} /></button>
-        <h1 className="text-sm font-bold truncate flex-1 text-center px-2">{budget.name}</h1>
         <div className="flex items-center gap-1">
-          <button onClick={openHistory} className="p-1.5 text-dark-400 hover:text-white"><History size={16} /></button>
           <button onClick={() => { setEditAmount(String(periodAmount)); setShowEditForm(true); }} className="p-1.5 text-dark-400 hover:text-white"><Edit3 size={16} /></button>
           <button onClick={handleDelete} className="p-1.5 text-dark-400 hover:text-red-400"><Trash2 size={16} /></button>
         </div>
       </div>
 
-      {/* PERIOD NAVIGATOR */}
-      <div className="flex items-center justify-between px-4 mb-4">
+      {/* PERIOD NAVIGATOR — title centered above date */}
+      <div className="text-center mb-1 px-4">
+        <h1 className="text-base font-bold truncate">{budget.name}</h1>
+      </div>
+      <div className="flex items-center justify-between px-4 mb-2">
         <button onClick={() => navigatePeriod(1)} disabled={!hasPrev}
           className={`p-1.5 rounded-full transition-colors ${hasPrev ? 'text-dark-300 active:bg-dark-800' : 'text-dark-700 cursor-not-allowed'}`}>
           <ChevronLeft size={20} />
@@ -339,6 +340,16 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
         <button onClick={() => navigatePeriod(-1)} disabled={!hasNext}
           className={`p-1.5 rounded-full transition-colors ${hasNext ? 'text-dark-300 active:bg-dark-800' : 'text-dark-700 cursor-not-allowed'}`}>
           <ChevronRight size={20} />
+        </button>
+      </div>
+
+      {/* BUDGET HISTORY BUTTON */}
+      <div className="px-3 pb-2">
+        <button onClick={openHistory}
+          className="w-full flex items-center justify-center gap-1.5 py-1.5 text-dark-400 hover:text-dark-200 transition-colors">
+          <History size={13} className="text-brand-400" />
+          <span className="text-[11px] font-medium">Budget History</span>
+          <ChevronRight size={12} className="text-dark-500" />
         </button>
       </div>
 
