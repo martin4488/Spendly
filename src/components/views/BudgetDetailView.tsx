@@ -92,6 +92,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
   const [showHistory, setShowHistory] = useState(false);
   const [historySummaries, setHistorySummaries] = useState<PeriodSummary[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyYear, setHistoryYear] = useState<number>(new Date().getFullYear());
 
   // Edit form
   const [showEditForm, setShowEditForm] = useState(false);
@@ -292,6 +293,19 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
   const hasPrev = currentPeriodIndex < periods.length - 1;
   const hasNext = currentPeriodIndex > 0;
   const pct = periodAmount > 0 ? (totalSpent / periodAmount) * 100 : 0;
+  const budgetColor = pct >= 100 ? '#ef4444' : (isCurrentPeriod && pct >= 80) ? '#f59e0b' : '#22c55e';
+  const budgetTextColor = pct >= 100 ? 'text-red-400' : (isCurrentPeriod && pct >= 80) ? 'text-amber-400' : 'text-brand-400';
+  const historyByYear: Record<number, { summary: PeriodSummary; originalIndex: number }[]> = {};
+  historySummaries.forEach((s, i) => {
+    const y = parseISO(s.period.period_start).getFullYear();
+    if (!historyByYear[y]) historyByYear[y] = [];
+    historyByYear[y].push({ summary: s, originalIndex: i });
+  });
+  const historyYears = Object.keys(historyByYear).map(Number).sort((a, b) => b - a);
+  const historyYearData = historyByYear[historyYear] || [];
+  const historyAccumulated = historyYearData
+    .filter(({ summary: s }) => !s.isCurrent)
+    .reduce((sum, { summary: s }) => sum + ((s.period.amount ?? budget.amount) - s.spent), 0);
   const left = Math.max(periodAmount - totalSpent, 0);
   const totalDays = differenceInDays(periodEnd, periodStart) + 1;
   const daysPassed = isCurrentPeriod ? Math.min(differenceInDays(now, periodStart) + 1, totalDays) : totalDays;
@@ -370,7 +384,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
               </>
             ) : (
               <>
-                <p className={`text-4xl font-extrabold ${pct >= 80 ? 'text-amber-400' : 'text-brand-400'}`}>{formatCurrency(left)}</p>
+                <p className={`text-4xl font-extrabold ${budgetTextColor}`}>{formatCurrency(left)}</p>
                 <p className="text-dark-500 text-sm mt-0.5">disponible de {formatCurrency(periodAmount)}</p>
               </>
             )}
@@ -386,9 +400,9 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
                       ? (() => {
                           const monthsLeft = Math.round(daysLeft / 30.4 * 10) / 10;
                           const perMonth = monthsLeft > 0 ? left / monthsLeft : 0;
-                          return <>Podés gastar <span className="font-bold text-brand-400">{formatCurrency(perMonth)}</span>/mes durante {monthsLeft} meses más.</>
+                          return <>Podés gastar <span className={`font-bold ${budgetTextColor}`}>{formatCurrency(perMonth)}</span>/mes durante {monthsLeft} meses más.</>
                         })()
-                      : <>Podés gastar <span className="font-bold text-brand-400">{formatCurrency(perDay)}</span>/día durante {daysLeft} días más.</>
+                      : <>Podés gastar <span className={`font-bold ${budgetTextColor}`}>{formatCurrency(perDay)}</span>/día durante {daysLeft} días más.</>
                     : 'Último día del período.'}
               </p>
             </div>
@@ -401,7 +415,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
                 <div className="absolute inset-0 bg-red-400 rounded-full" />
               ) : (
                 <div className="absolute right-0 top-0 h-full rounded-full transition-all duration-500"
-                  style={{ width: `${Math.max(100 - pct, 0)}%`, backgroundColor: pct >= 80 ? '#f59e0b' : '#22c55e' }} />
+                  style={{ width: `${Math.max(100 - pct, 0)}%`, backgroundColor: budgetColor }} />
               )}
             </div>
             <div className="flex justify-between mt-1.5">
@@ -498,100 +512,89 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
       )}
 
       {/* HISTORY SCREEN */}
-      {showHistory && (() => {
-        const byYear: Record<number, { summary: PeriodSummary; originalIndex: number }[]> = {};
-        historySummaries.forEach((s, i) => {
-          const y = parseISO(s.period.period_start).getFullYear();
-          if (!byYear[y]) byYear[y] = [];
-          byYear[y].push({ summary: s, originalIndex: i });
-        });
-        const years = Object.keys(byYear).map(Number).sort((a, b) => b - a);
-        const yearData = byYear[historyYear] || [];
-        const accumulated = yearData
-          .filter(({ summary: s }) => !s.isCurrent)
-          .reduce((sum, { summary: s }) => sum + ((s.period.amount ?? budget.amount) - s.spent), 0);
-        return (
-          <div className="fixed inset-0 bg-dark-900 z-[60] flex flex-col slide-up">
-            <div className="flex items-center justify-between px-4 pt-5 pb-3 flex-shrink-0 border-b border-dark-800">
-              <button onClick={() => setShowHistory(false)} className="p-1 text-dark-400"><ArrowLeft size={22} /></button>
-              <h2 className="text-base font-bold">Historial · {budget.name}</h2>
-              <div className="w-8" />
-            </div>
-            <div className="flex items-center justify-between px-4 pt-4 pb-2 flex-shrink-0">
-              <button onClick={() => { const i = years.indexOf(historyYear); if (i < years.length - 1) setHistoryYear(years[i + 1]); }}
-                disabled={years.indexOf(historyYear) >= years.length - 1}
-                className="p-2 rounded-xl bg-dark-800 text-dark-300 disabled:opacity-30 active:bg-dark-700">
-                <ChevronLeft size={18} />
-              </button>
-              <div className="text-center">
-                <p className="text-base font-bold">{historyYear}</p>
-                {yearData.some(({ summary: s }) => !s.isCurrent) && (
-                  <p className={`text-[11px] font-medium mt-0.5 ${accumulated >= 0 ? 'text-brand-400' : 'text-red-400'}`}>
-                    {formatCurrency(Math.abs(accumulated))} {accumulated >= 0 ? 'sin usar' : 'sobre el límite'} (acumulado)
-                  </p>
-                )}
-              </div>
-              <button onClick={() => { const i = years.indexOf(historyYear); if (i > 0) setHistoryYear(years[i - 1]); }}
-                disabled={years.indexOf(historyYear) <= 0}
-                className="p-2 rounded-xl bg-dark-800 text-dark-300 disabled:opacity-30 active:bg-dark-700">
-                <ChevronRight size={18} />
-              </button>
-            </div>
-            <div className="h-px bg-dark-800 mx-4 mb-1 flex-shrink-0" />
-            <div className="flex-1 overflow-y-auto pb-8">
-              {historyLoading ? (
-                <div className="flex justify-center py-16">
-                  <div className="w-7 h-7 border-2 border-brand-500/30 border-t-brand-500 rounded-full animate-spin" />
-                </div>
-              ) : yearData.length === 0 ? (
-                <div className="text-center py-16 text-dark-500">Sin datos para {historyYear}</div>
-              ) : (
-                <div className="px-4 py-2 flex flex-col gap-1">
-                  {yearData.map(({ summary: s, originalIndex }) => {
-                    const pAmt = s.period.amount ?? budget.amount;
-                    const sPct = pAmt > 0 ? (s.spent / pAmt) * 100 : 0;
-                    const sLeft = Math.max(pAmt - s.spent, 0);
-                    const pStart = parseISO(s.period.period_start);
-                    const label = format(pStart, budget.recurrence === 'monthly' ? 'MMMM' : 'yyyy', { locale: es });
-                    const isOver = s.spent > pAmt;
-                    const dotColor = isOver ? '#ef4444' : (s.isCurrent && sPct >= 80) ? '#f59e0b' : '#22c55e';
-                    const availPct = Math.max(100 - sPct, 0);
-                    return (
-                      <button key={s.period.id}
-                        onClick={() => { setCurrentPeriodIndex(originalIndex); setHistoryYear(new Date().getFullYear()); setShowHistory(false); }}
-                        className={`w-full text-left px-4 py-3 rounded-2xl active:bg-dark-800/60 transition-colors ${s.isCurrent ? 'bg-dark-800/60' : ''}`}>
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center gap-2">
-                            <div className="w-2 h-2 rounded-full flex-shrink-0"
-                              style={{ backgroundColor: dotColor, boxShadow: s.isCurrent ? `0 0 6px ${dotColor}88` : undefined }} />
-                            <span className={`text-sm font-semibold capitalize ${s.isCurrent ? 'text-white' : 'text-dark-200'}`}>{label}</span>
-                            {s.isCurrent && <span className="text-[9px] font-bold bg-brand-500/20 text-brand-400 px-1.5 py-0.5 rounded-full">actual</span>}
-                          </div>
-                          <span className={`text-[11px] ${isOver ? 'text-red-400' : 'text-dark-400'}`}>{sPct.toFixed(1)}% gastado</span>
-                        </div>
-                        {isOver ? (
-                          <div className="w-full rounded-full h-1.5 mb-1.5" style={{ backgroundColor: '#ef4444' }} />
-                        ) : (
-                          <div className="w-full bg-dark-700 rounded-full h-1.5 mb-1.5 overflow-hidden relative">
-                            <div className="absolute right-0 top-0 h-full rounded-full"
-                              style={{ width: `${availPct}%`, backgroundColor: dotColor }} />
-                          </div>
-                        )}
-                        <div className="flex justify-between">
-                          <span className="text-[11px] font-medium" style={{ color: dotColor }}>
-                            {isOver ? `${formatCurrency(s.spent - pAmt)} sobre el límite` : s.isCurrent ? `${formatCurrency(sLeft)} disponible` : `${formatCurrency(sLeft)} sin usar`}
-                          </span>
-                          <span className="text-[11px] text-dark-500">de {formatCurrency(pAmt)}</span>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
+      {showHistory && (
+        <div className="fixed inset-0 bg-dark-900 z-[60] flex flex-col slide-up">
+          <div className="flex items-center justify-between px-4 pt-5 pb-3 flex-shrink-0 border-b border-dark-800">
+            <button onClick={() => setShowHistory(false)} className="p-1 text-dark-400"><ArrowLeft size={22} /></button>
+            <h2 className="text-base font-bold">Historial · {budget.name}</h2>
+            <div className="w-8" />
+          </div>
+          <div className="flex items-center justify-between px-4 pt-4 pb-2 flex-shrink-0">
+            <button
+              onClick={() => { const i = historyYears.indexOf(historyYear); if (i < historyYears.length - 1) setHistoryYear(historyYears[i + 1]); }}
+              disabled={historyYears.indexOf(historyYear) >= historyYears.length - 1}
+              className="p-2 rounded-xl bg-dark-800 text-dark-300 disabled:opacity-30 active:bg-dark-700">
+              <ChevronLeft size={18} />
+            </button>
+            <div className="text-center">
+              <p className="text-base font-bold">{historyYear}</p>
+              {historyYearData.some(({ summary: s }) => !s.isCurrent) && (
+                <p className={`text-[11px] font-medium mt-0.5 ${historyAccumulated >= 0 ? 'text-brand-400' : 'text-red-400'}`}>
+                  {formatCurrency(Math.abs(historyAccumulated))} {historyAccumulated >= 0 ? 'sin usar' : 'sobre el límite'} (acumulado)
+                </p>
               )}
             </div>
+            <button
+              onClick={() => { const i = historyYears.indexOf(historyYear); if (i > 0) setHistoryYear(historyYears[i - 1]); }}
+              disabled={historyYears.indexOf(historyYear) <= 0}
+              className="p-2 rounded-xl bg-dark-800 text-dark-300 disabled:opacity-30 active:bg-dark-700">
+              <ChevronRight size={18} />
+            </button>
           </div>
-        );
-      })()}
+          <div className="h-px bg-dark-800 mx-4 mb-1 flex-shrink-0" />
+          <div className="flex-1 overflow-y-auto pb-8">
+            {historyLoading ? (
+              <div className="flex justify-center py-16">
+                <div className="w-7 h-7 border-2 border-brand-500/30 border-t-brand-500 rounded-full animate-spin" />
+              </div>
+            ) : historyYearData.length === 0 ? (
+              <div className="text-center py-16 text-dark-500">Sin datos para {historyYear}</div>
+            ) : (
+              <div className="px-4 py-2 flex flex-col gap-1">
+                {historyYearData.map(({ summary: s, originalIndex }) => {
+                  const pAmt = s.period.amount ?? budget.amount;
+                  const sPct = pAmt > 0 ? (s.spent / pAmt) * 100 : 0;
+                  const sLeft = Math.max(pAmt - s.spent, 0);
+                  const pStart = parseISO(s.period.period_start);
+                  const label = format(pStart, budget.recurrence === 'monthly' ? 'MMMM' : 'yyyy', { locale: es });
+                  const isOver = s.spent > pAmt;
+                  const dotColor = isOver ? '#ef4444' : (s.isCurrent && sPct >= 80) ? '#f59e0b' : '#22c55e';
+                  const availPct = Math.max(100 - sPct, 0);
+                  return (
+                    <button key={s.period.id}
+                      onClick={() => { setCurrentPeriodIndex(originalIndex); setHistoryYear(new Date().getFullYear()); setShowHistory(false); }}
+                      className={`w-full text-left px-4 py-3 rounded-2xl active:bg-dark-800/60 transition-colors ${s.isCurrent ? 'bg-dark-800/60' : ''}`}>
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <div className="w-2 h-2 rounded-full flex-shrink-0"
+                            style={{ backgroundColor: dotColor, boxShadow: s.isCurrent ? `0 0 6px ${dotColor}88` : undefined }} />
+                          <span className={`text-sm font-semibold capitalize ${s.isCurrent ? 'text-white' : 'text-dark-200'}`}>{label}</span>
+                          {s.isCurrent && <span className="text-[9px] font-bold bg-brand-500/20 text-brand-400 px-1.5 py-0.5 rounded-full">actual</span>}
+                        </div>
+                        <span className={`text-[11px] ${isOver ? 'text-red-400' : 'text-dark-400'}`}>{sPct.toFixed(1)}% gastado</span>
+                      </div>
+                      {isOver ? (
+                        <div className="w-full rounded-full h-1.5 mb-1.5" style={{ backgroundColor: '#ef4444' }} />
+                      ) : (
+                        <div className="w-full bg-dark-700 rounded-full h-1.5 mb-1.5 overflow-hidden relative">
+                          <div className="absolute right-0 top-0 h-full rounded-full"
+                            style={{ width: `${availPct}%`, backgroundColor: dotColor }} />
+                        </div>
+                      )}
+                      <div className="flex justify-between">
+                        <span className="text-[11px] font-medium" style={{ color: dotColor }}>
+                          {isOver ? `${formatCurrency(s.spent - pAmt)} sobre el límite` : s.isCurrent ? `${formatCurrency(sLeft)} disponible` : `${formatCurrency(sLeft)} sin usar`}
+                        </span>
+                        <span className="text-[11px] text-dark-500">de {formatCurrency(pAmt)}</span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* EDIT AMOUNT FORM */}
       {showEditForm && (
