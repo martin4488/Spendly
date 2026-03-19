@@ -355,8 +355,7 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
                   <span className={`text-lg font-extrabold ${pct >= 100 ? 'text-red-400' : 'text-brand-400'}`}>{formatCurrency(left)}</span>
                   <span className="text-dark-500 text-xs">disponible de {formatCurrency(budget.amount)}</span>
                 </div>
-                <div className="w-full rounded-full h-2 mb-2.5"
-                  style={{ backgroundColor: pct >= 100 ? '#ef4444' : pct >= 80 ? '#f59e0b' : '#22c55e' }}>
+                <div className="w-full bg-dark-700 rounded-full h-2 mb-2.5">
                   <div className="h-2 rounded-full transition-all duration-500"
                     style={{ width: `${Math.min(pct, 100)}%`, backgroundColor: 'white' }} />
                 </div>
