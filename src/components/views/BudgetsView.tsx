@@ -351,18 +351,34 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
                     <ChevronRight size={16} className="text-dark-500" />
                   </div>
                 </div>
-                <div className="flex items-baseline gap-1.5 mb-2">
-                  <span className={`text-lg font-extrabold ${pct >= 100 ? 'text-red-400' : 'text-brand-400'}`}>{formatCurrency(left)}</span>
-                  <span className="text-dark-500 text-xs">disponible de {formatCurrency(budget.amount)}</span>
+                <div className="flex items-baseline justify-between mb-2.5">
+                  <div className="flex items-baseline gap-1.5">
+                    {pct >= 100 ? (
+                      <>
+                        <span className="text-lg font-extrabold text-red-400">-{formatCurrency(Math.abs(left - budget.amount + left))}</span>
+                        <span className="text-xs text-red-400/70">sobre el límite</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className={`text-lg font-extrabold ${pct >= 80 ? 'text-amber-400' : 'text-brand-400'}`}>{formatCurrency(left)}</span>
+                        <span className="text-xs text-dark-500">disponible</span>
+                      </>
+                    )}
+                  </div>
+                  <span className="text-xs text-dark-500">de {formatCurrency(budget.amount)}</span>
                 </div>
-                <div className="w-full bg-dark-700 rounded-full h-2 mb-2.5">
-                  <div className="h-2 rounded-full transition-all duration-500"
-                    style={{ width: `${Math.min(pct, 100)}%`, backgroundColor: 'white' }} />
+                <div className="w-full bg-dark-700 rounded-full h-1.5 mb-2 overflow-hidden relative">
+                  {pct >= 100 ? (
+                    <div className="absolute inset-0 bg-red-400 rounded-full" />
+                  ) : (
+                    <div className="absolute right-0 top-0 h-full rounded-full transition-all duration-500"
+                      style={{ width: `${Math.max(100 - pct, 0)}%`, backgroundColor: pct >= 80 ? '#f59e0b' : '#22c55e' }} />
+                  )}
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] text-dark-500 capitalize">{startLabel}</span>
-                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${pct >= 100 ? 'bg-red-500/15 text-red-400' : 'bg-white/10 text-white'}`}>
-                    {pct.toFixed(1)}%
+                  <span className={`text-[10px] font-bold ${pct >= 100 ? 'text-red-400' : 'text-dark-400'}`}>
+                    {pct.toFixed(1)}% gastado
                   </span>
                   <span className="text-[10px] text-dark-500 capitalize">{endLabel}</span>
                 </div>
