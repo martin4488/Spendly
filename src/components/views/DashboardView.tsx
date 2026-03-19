@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, getMonthRange, getYearRange } from '@/lib/utils';
@@ -218,6 +218,7 @@ function SwipeableExpenseRow({
 export default function DashboardView({ user, onNavigate, defaultCurrency }: { user: User; onNavigate: (tab: any) => void; defaultCurrency: CurrencyCode }) {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);
+  const [chartTotals, setChartTotals] = useState<Record<string, number>>({});
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>('months');
@@ -258,16 +259,23 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       const now = new Date();
       const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29);
       const startStr = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`;
+      const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+      const chartStart = `${sixMonthsAgo.getFullYear()}-${String(sixMonthsAgo.getMonth() + 1).padStart(2, '0')}-01`;
       oldestDate.current = startStr;
-      const { data: exp } = await supabase
-        .from('expenses')
-        .select('*, category:categories(*)')
-        .eq('user_id', user.id)
-        .gte('date', startStr)
-        .order('date', { ascending: false });
+
+      // Both queries in parallel
+      const [{ data: exp }, { data: chartExp }] = await Promise.all([
+        supabase.from('expenses').select('*, category:categories(*)').eq('user_id', user.id).gte('date', startStr).order('date', { ascending: false }),
+        supabase.from('expenses').select('date, amount').eq('user_id', user.id).gte('date', chartStart),
+      ]);
+
       setExpenses(exp || []);
-      // If we got fewer than expected there might be nothing older — but keep hasMore true,
-      // the next loadMore call will find out
+      const totals: Record<string, number> = {};
+      (chartExp || []).forEach((e: any) => {
+        const month = e.date.slice(0, 7);
+        totals[month] = (totals[month] || 0) + Number(e.amount);
+      });
+      setChartTotals(totals);
     } catch (err) {
       console.error(err);
     } finally {
@@ -333,15 +341,17 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     if (extendedLoaded) return;
     try {
       const startDate = `${new Date().getFullYear() - 2}-01-01`;
+      // Lightweight: only date+amount needed for the yearly chart bars
       const { data: exp } = await supabase
         .from('expenses')
-        .select('*, category:categories(*)')
+        .select('date, amount')
         .eq('user_id', user.id)
         .gte('date', startDate)
         .order('date', { ascending: false });
-      setExpenses(exp || []);
+      // Store as minimal objects — yearly view doesn't show transaction list
+      setExpenses(exp as any || []);
       setExtendedLoaded(true);
-      setHasMore(false); // extended already covers everything
+      setHasMore(false);
     } catch (err) {
       console.error(err);
     }
@@ -350,16 +360,23 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
   async function loadData() {
     // Full reload after add/edit/delete — respect current loaded range
     try {
-      const startStr = extendedLoaded
-        ? `${new Date().getFullYear() - 2}-01-01`
-        : oldestDate.current;
-      const { data: exp } = await supabase
-        .from('expenses')
-        .select('*, category:categories(*)')
-        .eq('user_id', user.id)
-        .gte('date', startStr)
-        .order('date', { ascending: false });
+      const now = new Date();
+      const startStr = extendedLoaded ? `${now.getFullYear() - 2}-01-01` : oldestDate.current;
+      const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+      const chartStart = `${sixMonthsAgo.getFullYear()}-${String(sixMonthsAgo.getMonth() + 1).padStart(2, '0')}-01`;
+
+      const [{ data: exp }, { data: chartExp }] = await Promise.all([
+        supabase.from('expenses').select('*, category:categories(*)').eq('user_id', user.id).gte('date', startStr).order('date', { ascending: false }),
+        supabase.from('expenses').select('date, amount').eq('user_id', user.id).gte('date', chartStart),
+      ]);
+
       setExpenses(exp || []);
+      const totals: Record<string, number> = {};
+      (chartExp || []).forEach((e: any) => {
+        const month = e.date.slice(0, 7);
+        totals[month] = (totals[month] || 0) + Number(e.amount);
+      });
+      setChartTotals(totals);
     } catch (err) {
       console.error(err);
     }
@@ -371,25 +388,33 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
   }
 
   const now = new Date();
-  const monthRange = getMonthRange(now);
-  const yearRange = getYearRange(now);
+  const monthRange = useMemo(() => getMonthRange(now), [now.getMonth(), now.getFullYear()]);
+  const yearRange = useMemo(() => getYearRange(now), [now.getFullYear()]);
 
-  const currentMonthExp = expenses.filter(e => e.date >= monthRange.start && e.date <= monthRange.end);
-  const currentYearExp = expenses.filter(e => e.date >= yearRange.start && e.date <= yearRange.end);
+  const currentMonthExp = useMemo(
+    () => expenses.filter(e => e.date >= monthRange.start && e.date <= monthRange.end),
+    [expenses, monthRange.start, monthRange.end]
+  );
+  const currentYearExp = useMemo(
+    () => expenses.filter(e => e.date >= yearRange.start && e.date <= yearRange.end),
+    [expenses, yearRange.start, yearRange.end]
+  );
 
-  const accumulatedTotal = viewMode === 'months'
-    ? currentMonthExp.reduce((sum, e) => sum + Number(e.amount), 0)
-    : currentYearExp.reduce((sum, e) => sum + Number(e.amount), 0);
+  const accumulatedTotal = useMemo(
+    () => viewMode === 'months'
+      ? currentMonthExp.reduce((sum, e) => sum + Number(e.amount), 0)
+      : currentYearExp.reduce((sum, e) => sum + Number(e.amount), 0),
+    [viewMode, currentMonthExp, currentYearExp]
+  );
 
   const chartData = viewMode === 'months'
     ? (() => {
         const data: { name: string; year: string; total: number; isCurrent: boolean }[] = [];
         for (let i = 5; i >= 0; i--) {
           const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-          const range = getMonthRange(d);
-          const total = expenses
-            .filter(e => e.date >= range.start && e.date <= range.end)
-            .reduce((sum, e) => sum + Number(e.amount), 0);
+          const monthKey = format(d, 'yyyy-MM');
+          // Use dedicated chartTotals (always covers 6 months) instead of filtered expenses
+          const total = chartTotals[monthKey] || 0;
           data.push({ name: format(d, 'MMM', { locale: es }), year: format(d, 'yyyy'), total, isCurrent: i === 0 });
         }
         return data;
@@ -409,30 +434,31 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       })();
 
   const displayExpenses = viewMode === 'months' ? currentMonthExp : currentYearExp;
-  const filteredExpenses = searchQuery
-    ? displayExpenses.filter(e =>
-        e.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        ((e as any).category?.name || '').toLowerCase().includes(searchQuery.toLowerCase())
-      )
-    : displayExpenses;
-
-  const dayMap = new Map<string, Expense[]>();
-  filteredExpenses.forEach(exp => {
-    if (!dayMap.has(exp.date)) dayMap.set(exp.date, []);
-    dayMap.get(exp.date)!.push(exp);
-  });
 
   const today = format(now, 'yyyy-MM-dd');
   const yesterday = format(new Date(now.getTime() - 86400000), 'yyyy-MM-dd');
 
-  const groupedByDay = Array.from(dayMap.entries())
-    .map(([dateStr, exps]) => ({
-      date: dateStr,
-      label: dateStr === today ? 'Hoy' : dateStr === yesterday ? 'Ayer' : format(parseISO(dateStr), "d 'de' MMMM", { locale: es }),
-      total: exps.reduce((sum, e) => sum + Number(e.amount), 0),
-      expenses: exps,
-    }))
-    .sort((a, b) => b.date.localeCompare(a.date));
+  const groupedByDay = useMemo(() => {
+    const filtered = searchQuery
+      ? displayExpenses.filter(e =>
+          e.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          ((e as any).category?.name || '').toLowerCase().includes(searchQuery.toLowerCase())
+        )
+      : displayExpenses;
+    const dayMap = new Map<string, Expense[]>();
+    filtered.forEach(exp => {
+      if (!dayMap.has(exp.date)) dayMap.set(exp.date, []);
+      dayMap.get(exp.date)!.push(exp);
+    });
+    return Array.from(dayMap.entries())
+      .map(([dateStr, exps]) => ({
+        date: dateStr,
+        label: dateStr === today ? 'Hoy' : dateStr === yesterday ? 'Ayer' : format(parseISO(dateStr), "d 'de' MMMM", { locale: es }),
+        total: exps.reduce((sum, e) => sum + Number(e.amount), 0),
+        expenses: exps,
+      }))
+      .sort((a, b) => b.date.localeCompare(a.date));
+  }, [displayExpenses, searchQuery, today, yesterday]);
 
   function openEdit(expense: Expense) {
     setEditingExpense({
@@ -547,7 +573,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       {searchQuery && (
         <div className="px-3 py-1">
           <p className="text-[11px] text-dark-400">
-            {filteredExpenses.length} resultado{filteredExpenses.length !== 1 && 's'} para &quot;{searchQuery}&quot;
+            {groupedByDay.reduce((s, g) => s + g.expenses.length, 0)} resultado{groupedByDay.reduce((s, g) => s + g.expenses.length, 0) !== 1 && 's'} para &quot;{searchQuery}&quot;
           </p>
         </div>
       )}
