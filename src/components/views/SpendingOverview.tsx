@@ -11,7 +11,7 @@ import {
   eachDayOfInterval, eachMonthOfInterval,
 } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { ArrowLeft, ChevronDown, ChevronRight } from 'lucide-react';
+import { ArrowLeft, ChevronDown, ChevronRight, Trash2 } from 'lucide-react';
 
 type ViewMode = 'months' | 'years';
 
@@ -171,6 +171,41 @@ function BarChart({ data, color, mode }: { data: BarEntry[]; color: string; mode
       })}
       <line x1={PAD_L} y1={PAD_T + chartH} x2={W - PAD_R} y2={PAD_T + chartH} stroke="#1e293b" strokeWidth={1} />
     </svg>
+  );
+}
+
+// ── Swipeable expense row for DrillDown ──────────────────────────────────────
+function SwipeableExpenseRow({ children, onDelete }: { children: React.ReactNode; onDelete: () => void }) {
+  const [offset, setOffset] = useState(0);
+  const [dragging, setDragging] = useState(false);
+  const startX = useRef<number | null>(null);
+  const DELETE_THRESHOLD = 72;
+
+  function onTouchStart(e: React.TouchEvent) { startX.current = e.touches[0].clientX; setDragging(false); }
+  function onTouchMove(e: React.TouchEvent) {
+    if (startX.current === null) return;
+    const dx = startX.current - e.touches[0].clientX;
+    if (dx > 5) setDragging(true);
+    if (dx > 0) setOffset(Math.min(dx, DELETE_THRESHOLD));
+    else if (dx < 0 && offset > 0) setOffset(Math.max(0, offset + dx));
+  }
+  function onTouchEnd() { setOffset(offset > 36 ? DELETE_THRESHOLD : 0); startX.current = null; }
+
+  return (
+    <div className="relative overflow-hidden">
+      <div className="absolute right-0 top-0 bottom-0 flex items-center justify-center bg-red-500" style={{ width: DELETE_THRESHOLD }}>
+        <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onDelete(); }}
+          className="flex flex-col items-center justify-center w-full h-full gap-1 active:bg-red-600">
+          <Trash2 size={16} className="text-white" />
+          <span className="text-[10px] text-white font-medium">Borrar</span>
+        </button>
+      </div>
+      <div style={{ transform: `translateX(-${offset}px)`, transition: dragging ? 'none' : 'transform 0.2s ease' }}
+        onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
+        onClick={() => { if (offset > 0) setOffset(0); }}>
+        {children}
+      </div>
+    </div>
   );
 }
 
@@ -447,6 +482,16 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
     return undefined;
   }
 
+  async function deleteExpense(id: string) {
+    if (!confirm('¿Eliminar este gasto?')) return;
+    await supabase.from('expenses').delete().eq('id', id);
+    setExpenses(prev => prev.filter(e => e.id !== id));
+    setPeriodTotal(prev => prev - (expenses.find(e => e.id === id)?.amount || 0));
+    // Rebuild bar data from updated expenses
+    const updated = expenses.filter(e => e.id !== id);
+    setBarData(buildBarData(updated, currentDate, viewMode, allCats));
+  }
+
   return (
     <div className="max-w-lg mx-auto page-transition pb-8" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
       <div className="flex items-center gap-2 px-3 pt-4 pb-3">
@@ -496,16 +541,18 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
                     const displayColor = cat?.color || drillDown.color;
                     const displayName = cat?.name || drillDown.name;
                     return (
-                      <div key={exp.id} className="flex items-center gap-2.5 px-4 py-2.5 border-b border-dark-800/40">
-                        <div className="w-8 h-8 rounded-xl flex items-center justify-center text-base flex-shrink-0" style={{ backgroundColor: displayColor }}>{displayIcon}</div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-[12px] font-semibold truncate">{displayName}</p>
-                          {exp.description && exp.description !== displayName && (
-                            <p className="text-[10px] text-dark-500 truncate">{exp.description}</p>
-                          )}
+                      <SwipeableExpenseRow key={exp.id} onDelete={() => deleteExpense(exp.id)}>
+                        <div className="flex items-center gap-2.5 px-4 py-2.5 border-b border-dark-800/40 bg-dark-900">
+                          <div className="w-8 h-8 rounded-xl flex items-center justify-center text-base flex-shrink-0" style={{ backgroundColor: displayColor }}>{displayIcon}</div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[12px] font-semibold truncate">{displayName}</p>
+                            {exp.description && exp.description !== displayName && (
+                              <p className="text-[10px] text-dark-500 truncate">{exp.description}</p>
+                            )}
+                          </div>
+                          <span className="text-[12px] font-bold text-red-400 flex-shrink-0">-{formatCurrency(exp.amount)}</span>
                         </div>
-                        <span className="text-[12px] font-bold text-red-400 flex-shrink-0">-{formatCurrency(exp.amount)}</span>
-                      </div>
+                      </SwipeableExpenseRow>
                     );
                   })}
                 </div>
