@@ -117,7 +117,12 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
 
   const today = new Date().toISOString().split('T')[0];
   const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
-  const dateLabel = date === today ? 'Hoy' : date === yesterday ? 'Ayer' : format(parseISO(date), "d 'de' MMM yyyy", { locale: es });
+  const dateLabel = (() => {
+    if (date === today) return 'Hoy';
+    if (date === yesterday) return 'Ayer';
+    try { return format(parseISO(date), "d 'de' MMM yyyy", { locale: es }); }
+    catch { return date; }
+  })();
 
   const amt = parseFloat(amountStr) || 0;
   const isOtherCurrency = currency !== defaultCurrency;
@@ -239,7 +244,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
         {showDatePicker && (
           <div className="px-5 py-3 border-b border-dark-800 bg-dark-800/50">
             <input type="date" value={date}
-              onChange={(e) => { setDate(e.target.value); setShowDatePicker(false); }}
+              onChange={(e) => { const v = e.target.value; if (/^\d{4}-\d{2}-\d{2}$/.test(v)) { setDate(v); setShowDatePicker(false); } }}
               className="w-full bg-dark-700 border border-dark-600 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors" />
           </div>
         )}
