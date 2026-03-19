@@ -353,15 +353,16 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
                 </div>
                 <div className="flex items-baseline gap-1.5 mb-2">
                   <span className={`text-lg font-extrabold ${pct >= 100 ? 'text-red-400' : 'text-brand-400'}`}>{formatCurrency(left)}</span>
-                  <span className="text-dark-500 text-xs">de {formatCurrency(budget.amount)}</span>
+                  <span className="text-dark-500 text-xs">disponible de {formatCurrency(budget.amount)}</span>
                 </div>
-                <div className="w-full bg-dark-700 rounded-full h-2 mb-2.5">
+                <div className="w-full rounded-full h-2 mb-2.5"
+                  style={{ backgroundColor: pct >= 100 ? '#ef4444' : pct >= 80 ? '#f59e0b' : '#22c55e' }}>
                   <div className="h-2 rounded-full transition-all duration-500"
-                    style={{ width: `${Math.min(pct, 100)}%`, backgroundColor: pct >= 100 ? '#ef4444' : pct >= 80 ? '#f59e0b' : '#22c55e' }} />
+                    style={{ width: `${Math.min(pct, 100)}%`, backgroundColor: 'white' }} />
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] text-dark-500 capitalize">{startLabel}</span>
-                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${pct >= 100 ? 'bg-red-500/15 text-red-400' : 'bg-brand-500/15 text-brand-400'}`}>
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${pct >= 100 ? 'bg-red-500/15 text-red-400' : 'bg-white/10 text-white'}`}>
                     {pct.toFixed(1)}%
                   </span>
                   <span className="text-[10px] text-dark-500 capitalize">{endLabel}</span>
