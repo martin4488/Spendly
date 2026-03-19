@@ -304,7 +304,6 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
   const historyYears = Object.keys(historyByYear).map(Number).sort((a, b) => b - a);
   const historyYearData = historyByYear[historyYear] || [];
   const historyAccumulated = historyYearData
-    .filter(({ summary: s }) => !s.isCurrent)
     .reduce((sum, { summary: s }) => sum + ((s.period.amount ?? budget.amount) - s.spent), 0);
   const left = Math.max(periodAmount - totalSpent, 0);
   const totalDays = differenceInDays(periodEnd, periodStart) + 1;
@@ -528,7 +527,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
             </button>
             <div className="text-center">
               <p className="text-base font-bold">{historyYear}</p>
-              {historyYearData.some(({ summary: s }) => !s.isCurrent) && (
+              {historyYearData.length > 0 && (
                 <p className={`text-[11px] font-medium mt-0.5 ${historyAccumulated >= 0 ? 'text-brand-400' : 'text-red-400'}`}>
                   {formatCurrency(Math.abs(historyAccumulated))} {historyAccumulated >= 0 ? 'sin usar' : 'sobre el límite'} (acumulado)
                 </p>
