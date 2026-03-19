@@ -351,29 +351,24 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
       ) : (
         <>
           {/* AMOUNT */}
-          <div className="px-4 mb-4">
-            <div className="flex items-baseline justify-between">
-              <div className="flex items-baseline gap-2">
-                {pct >= 100 ? (
-                  <>
-                    <p className="text-4xl font-extrabold text-red-400">-{formatCurrency(totalSpent - periodAmount)}</p>
-                    <span className="text-sm text-red-400/70">sobre el límite</span>
-                  </>
-                ) : (
-                  <>
-                    <p className={`text-4xl font-extrabold ${pct >= 80 ? 'text-amber-400' : 'text-brand-400'}`}>{formatCurrency(left)}</p>
-                    <span className="text-dark-500 text-sm">disponible</span>
-                  </>
-                )}
-              </div>
-              <span className="text-dark-500 text-sm">de {formatCurrency(periodAmount)}</span>
-            </div>
+          <div className="px-4 mb-4 text-center">
+            {pct >= 100 ? (
+              <>
+                <p className="text-4xl font-extrabold text-red-400">-{formatCurrency(totalSpent - periodAmount)}</p>
+                <p className="text-red-400/70 text-sm mt-0.5">sobre el límite · de {formatCurrency(periodAmount)}</p>
+              </>
+            ) : (
+              <>
+                <p className={`text-4xl font-extrabold ${pct >= 80 ? 'text-amber-400' : 'text-brand-400'}`}>{formatCurrency(left)}</p>
+                <p className="text-dark-500 text-sm mt-0.5">disponible de {formatCurrency(periodAmount)}</p>
+              </>
+            )}
           </div>
 
           {/* ADVICE */}
           {isCurrentPeriod && (
             <div className="mx-4 mb-4 bg-brand-500/8 border border-brand-500/15 rounded-2xl px-4 py-3">
-              <p className="text-sm text-dark-200">
+              <p className="text-sm text-dark-200 text-center">
                 {pct >= 100 ? '¡Ya superaste el presupuesto!'
                   : daysLeft > 0
                     ? budget.recurrence === 'yearly'
@@ -390,16 +385,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
 
           {/* PROGRESS BAR */}
           <div className="px-4 mb-5">
-            {isCurrentPeriod && (
-              <div className="relative mb-1">
-                <div className="absolute -top-5 flex flex-col items-center"
-                  style={{ left: `${Math.min(timeProgress, 98)}%`, transform: 'translateX(-50%)' }}>
-                  <span className="text-[9px] font-bold bg-dark-700 text-white px-1.5 py-0.5 rounded">Hoy</span>
-                  <div className="w-px h-2 bg-dark-500" />
-                </div>
-              </div>
-            )}
-            <div className="w-full bg-dark-700 rounded-full h-2.5 mt-6 overflow-hidden relative">
+            <div className="w-full bg-dark-700 rounded-full h-2.5 overflow-hidden relative">
               {pct >= 100 ? (
                 <div className="absolute inset-0 bg-red-400 rounded-full" />
               ) : (
