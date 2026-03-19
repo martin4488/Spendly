@@ -181,15 +181,25 @@ function SwipeableExpenseRow({ children, onDelete }: { children: React.ReactNode
   const startX = useRef<number | null>(null);
   const DELETE_THRESHOLD = 72;
 
-  function onTouchStart(e: React.TouchEvent) { startX.current = e.touches[0].clientX; setDragging(false); }
+  function onTouchStart(e: React.TouchEvent) {
+    startX.current = e.touches[0].clientX;
+    setDragging(false);
+  }
   function onTouchMove(e: React.TouchEvent) {
     if (startX.current === null) return;
     const dx = startX.current - e.touches[0].clientX;
-    if (dx > 5) setDragging(true);
+    if (dx > 5) {
+      setDragging(true);
+      e.stopPropagation(); // prevent parent swipe navigation
+    }
     if (dx > 0) setOffset(Math.min(dx, DELETE_THRESHOLD));
     else if (dx < 0 && offset > 0) setOffset(Math.max(0, offset + dx));
   }
-  function onTouchEnd() { setOffset(offset > 36 ? DELETE_THRESHOLD : 0); startX.current = null; }
+  function onTouchEnd(e: React.TouchEvent) {
+    if (dragging) e.stopPropagation();
+    setOffset(offset > 36 ? DELETE_THRESHOLD : 0);
+    startX.current = null;
+  }
 
   return (
     <div className="relative overflow-hidden">
