@@ -1,46 +1,31 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, getBudgetPeriodRange } from '@/lib/utils';
 import { Budget, Category } from '@/types';
-import { ArrowLeft, ChevronLeft, ChevronRight, Edit3, Trash2, X, Delete, History, CheckCircle2, XCircle, Clock } from 'lucide-react';
-import { format, parseISO, differenceInDays, isWithinInterval } from 'date-fns';
+import { Plus, X, ChevronRight, Delete, ArrowLeft, Search, Check } from 'lucide-react';
+import {
+  format, addMonths, addYears, startOfMonth, endOfMonth,
+  startOfYear, endOfYear, parseISO, isBefore, isAfter
+} from 'date-fns';
 import { es } from 'date-fns/locale';
-import type { BudgetPeriod } from './BudgetsView';
 
 interface Props {
   user: User;
-  budget: Budget;
-  initialPeriodId: string;
-  onBack: () => void;
-  onRefresh: () => void;
+  onOpenBudget: (budget: Budget, periodId?: string) => void;
 }
 
-interface ExpenseRow {
+export interface BudgetPeriod {
   id: string;
-  date: string;
-  description: string;
-  amount: number;
-  category_id: string | null;
+  budget_id: string;
+  period_start: string;
+  period_end: string;
+  amount?: number;
 }
 
-interface CatSpend {
-  id: string;
-  name: string;
-  icon: string;
-  color: string;
-  spent: number;
-  transactions: number;
-}
-
-interface PeriodSummary {
-  period: BudgetPeriod;
-  spent: number;
-  isCurrent: boolean;
-}
-
+// ── Tree ──────────────────────────────────────────────────────────────────────
 interface CatNode extends Category { children: CatNode[] }
 
 function buildTree(flat: Category[]): CatNode[] {
@@ -54,564 +39,419 @@ function buildTree(flat: Category[]): CatNode[] {
   return roots;
 }
 
+interface FlatEntry { cat: CatNode; ancestors: CatNode[] }
+function flattenTree(nodes: CatNode[], ancestors: CatNode[] = []): FlatEntry[] {
+  return nodes.flatMap(n => [{ cat: n, ancestors }, ...flattenTree(n.children, [...ancestors, n])]);
+}
+
 function allDescendantIds(node: CatNode): string[] {
   return [node.id, ...node.children.flatMap(allDescendantIds)];
 }
 
-function expandCatIds(catIds: string[], categories: Category[]): string[] {
-  const tree = buildTree(categories);
-  const allIds: string[] = [...catIds];
-  const addDesc = (nodes: CatNode[]) => {
-    nodes.forEach(n => {
-      if (catIds.includes(n.id)) {
-        allDescendantIds(n).forEach(id => { if (!allIds.includes(id)) allIds.push(id); });
-      }
-      addDesc(n.children);
-    });
+// ── Period generation ─────────────────────────────────────────────────────────
+function getPeriodBounds(startDate: string, recurrence: 'monthly' | 'yearly', offset: number = 0): { start: string; end: string } {
+  const base = parseISO(startDate);
+  let periodStart: Date;
+  let periodEnd: Date;
+
+  if (recurrence === 'monthly') {
+    periodStart = startOfMonth(addMonths(base, offset));
+    periodEnd = endOfMonth(addMonths(base, offset));
+  } else {
+    periodStart = startOfYear(addYears(base, offset));
+    periodEnd = endOfYear(addYears(base, offset));
+  }
+
+  return {
+    start: format(periodStart, 'yyyy-MM-dd'),
+    end: format(periodEnd, 'yyyy-MM-dd'),
   };
-  addDesc(tree);
-  return allIds;
 }
 
-export default function BudgetDetailView({ user, budget, initialPeriodId, onBack, onRefresh }: Props) {
-  const [periods, setPeriods] = useState<BudgetPeriod[]>([]);
-  const [currentPeriodIndex, setCurrentPeriodIndex] = useState(0);
+// Generate all period ranges from budget start_date up to today
+function generateMissingPeriods(budget: Budget, existingPeriods: BudgetPeriod[]): { start: string; end: string }[] {
+  const today = format(new Date(), 'yyyy-MM-dd');
+  const missing: { start: string; end: string }[] = [];
+  let offset = 0;
+
+  while (true) {
+    const bounds = getPeriodBounds(budget.start_date, budget.recurrence as 'monthly' | 'yearly', offset);
+    if (bounds.start > today) break;
+
+    const exists = existingPeriods.some(p => p.period_start === bounds.start && p.budget_id === budget.id);
+    if (!exists) missing.push(bounds);
+
+    offset++;
+    if (offset > 120) break; // safety cap: 10 years
+  }
+
+  return missing;
+}
+
+export default function BudgetsView({ user, onOpenBudget }: Props) {
+  const [budgets, setBudgets] = useState<Budget[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [allCatIds, setAllCatIds] = useState<string[]>([]);
-
-  // Per-period cache: periodId -> data
-  const periodCache = useRef<Map<string, { expenses: ExpenseRow[]; total: number; catSpending: CatSpend[] }>>(new Map());
-
-  const [expenses, setExpenses] = useState<ExpenseRow[]>([]);
-  const [catSpending, setCatSpending] = useState<CatSpend[]>([]);
-  const [totalSpent, setTotalSpent] = useState(0);
+  const [roots, setRoots] = useState<CatNode[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [showForm, setShowForm] = useState(false);
+  const [editingBudget, setEditingBudget] = useState<Budget | null>(null);
+  const [currentPeriods, setCurrentPeriods] = useState<Record<string, BudgetPeriod>>({});
 
-  // History
-  const [showHistory, setShowHistory] = useState(false);
-  const [historySummaries, setHistorySummaries] = useState<PeriodSummary[]>([]);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const [historyYear, setHistoryYear] = useState<number>(new Date().getFullYear());
-
-  // Edit form
-  const [showEditForm, setShowEditForm] = useState(false);
-  const [editAmount, setEditAmount] = useState('');
+  // Form state
+  const [name, setName] = useState('');
+  const [amount, setAmount] = useState('');
+  const [recurrence, setRecurrence] = useState<'monthly' | 'yearly'>('monthly');
+  const [startDate, setStartDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [selectedCatIds, setSelectedCatIds] = useState<string[]>([]);
+  const [showCatPicker, setShowCatPicker] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const swipeStartX = useRef<number | null>(null);
-  const now = new Date();
-
-  useEffect(() => { init(); }, [budget.id, user.id]);
-
-  useEffect(() => {
-    if (periods.length > 0 && allCatIds.length > 0) {
-      loadPeriodData(currentPeriodIndex);
-    }
-  }, [currentPeriodIndex, periods, allCatIds]);
-
-  async function init() {
-    setLoading(true);
-    setError(null);
-    periodCache.current.clear();
-    try {
-      const [{ data: periodsData }, { data: catsData }, { data: bcData }] = await Promise.all([
-        supabase.from('budget_periods').select('*').eq('budget_id', budget.id).order('period_start', { ascending: false }),
-        supabase.from('categories').select('*').eq('user_id', user.id).neq('deleted', true),
-        supabase.from('budget_categories').select('category_id').eq('budget_id', budget.id),
-      ]);
-      const allPeriods = periodsData || [];
-      const allCats = catsData || [];
-      const catIds = (bcData || []).map((bc: any) => bc.category_id);
-      const expanded = expandCatIds(catIds, allCats);
-      setPeriods(allPeriods);
-      setCategories(allCats);
-      setAllCatIds(expanded);
-      const idx = allPeriods.findIndex((p: BudgetPeriod) => p.id === initialPeriodId);
-      setCurrentPeriodIndex(idx >= 0 ? idx : 0);
-    } catch (err) {
-      console.error(err);
-      setError('No se pudieron cargar los datos');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function loadPeriodData(index: number) {
-    if (periods.length === 0 || allCatIds.length === 0) return;
-    const period = periods[index];
-
-    // Serve from cache if available
-    const cached = periodCache.current.get(period.id);
-    if (cached) {
-      setExpenses(cached.expenses);
-      setTotalSpent(cached.total);
-      setCatSpending(cached.catSpending);
-      setEditAmount(String(period.amount ?? budget.amount));
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const { data: expData } = await supabase
-        .from('expenses')
-        .select('id, amount, description, date, category_id')
-        .eq('user_id', user.id)
-        .in('category_id', allCatIds)
-        .gte('date', period.period_start)
-        .lte('date', period.period_end)
-        .order('date', { ascending: false });
-
-      const exps = (expData || []).map((e: any) => ({
-        id: e.id, date: e.date, description: e.description,
-        amount: Number(e.amount), category_id: e.category_id,
-      }));
-      const total = exps.reduce((s, e) => s + e.amount, 0);
-      const spendByCat: Record<string, number> = {};
-      const txByCat: Record<string, number> = {};
-      exps.forEach(e => {
-        if (e.category_id) {
-          spendByCat[e.category_id] = (spendByCat[e.category_id] || 0) + e.amount;
-          txByCat[e.category_id] = (txByCat[e.category_id] || 0) + 1;
-        }
-      });
-      const catSpends: CatSpend[] = categories
-        .filter(c => allCatIds.includes(c.id) && (spendByCat[c.id] || 0) > 0)
-        .map(c => ({ id: c.id, name: c.name, icon: c.icon, color: c.color, spent: spendByCat[c.id] || 0, transactions: txByCat[c.id] || 0 }))
-        .sort((a, b) => b.spent - a.spent);
-
-      periodCache.current.set(period.id, { expenses: exps, total, catSpending: catSpends });
-      setExpenses(exps);
-      setTotalSpent(total);
-      setCatSpending(catSpends);
-      setEditAmount(String(period.amount ?? budget.amount));
-    } catch (err) {
-      console.error(err);
-      setError('Error al cargar gastos');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function loadHistorySummaries() {
-    if (allCatIds.length === 0 || periods.length === 0) return;
-    setHistoryLoading(true);
-    try {
-      const oldest = periods[periods.length - 1]?.period_start;
-      const newest = periods[0]?.period_end;
-      // Single query for ALL expenses across all periods
-      const { data: allExp } = await supabase
-        .from('expenses')
-        .select('amount, date')
-        .eq('user_id', user.id)
-        .in('category_id', allCatIds)
-        .gte('date', oldest)
-        .lte('date', newest);
-
-      const expList = (allExp || []).map((e: any) => ({ amount: Number(e.amount), date: e.date as string }));
-      const todayStr = format(now, 'yyyy-MM-dd');
-
-      const summaries: PeriodSummary[] = periods.map(p => {
-        const spent = expList
-          .filter(e => e.date >= p.period_start && e.date <= p.period_end)
-          .reduce((s, e) => s + e.amount, 0);
-        const isCurrent = todayStr >= p.period_start && todayStr <= p.period_end;
-        return { period: p, spent, isCurrent };
-      });
-
-      setHistorySummaries(summaries);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setHistoryLoading(false);
-    }
-  }
-
-  function openHistory() {
-    setShowHistory(true);
-    loadHistorySummaries();
-  }
-
-  function navigatePeriod(dir: 1 | -1) {
-    const next = currentPeriodIndex + dir;
-    if (next >= 0 && next < periods.length) setCurrentPeriodIndex(next);
-  }
-
-  function onTouchStart(e: React.TouchEvent) { swipeStartX.current = e.touches[0].clientX; }
-  function onTouchEnd(e: React.TouchEvent) {
-    if (swipeStartX.current === null) return;
-    const dx = swipeStartX.current - e.changedTouches[0].clientX;
-    if (Math.abs(dx) > 50) navigatePeriod(dx > 0 ? 1 : -1);
-    swipeStartX.current = null;
-  }
-
   function handleNumpad(key: string) {
-    if (key === 'backspace') { setEditAmount(prev => prev.slice(0, -1)); }
-    else if (key === '.') { if (!editAmount.includes('.')) setEditAmount(prev => (prev || '0') + '.'); }
+    if (key === 'backspace') { setAmount(prev => prev.slice(0, -1)); }
+    else if (key === '.') { if (!amount.includes('.')) setAmount(prev => (prev || '0') + '.'); }
     else {
-      if (editAmount.includes('.')) { const [, d] = editAmount.split('.'); if (d?.length >= 2) return; }
-      setEditAmount(prev => prev + key);
+      if (amount.includes('.')) { const d = amount.split('.')[1]; if (d && d.length >= 2) return; }
+      setAmount(prev => prev + key);
     }
   }
 
-  async function handleSaveAmount() {
-    if (!editAmount || isNaN(parseFloat(editAmount))) return;
+  useEffect(() => { loadData(); }, []);
+
+  async function loadData() {
+    setLoading(true);
+    try {
+      const today = format(new Date(), 'yyyy-MM-dd');
+
+      const [{ data: budgetsData }, { data: catsData }, { data: bcData }, { data: periodsData }] = await Promise.all([
+        supabase.from('budgets').select('*').eq('user_id', user.id).order('name'),
+        supabase.from('categories').select('*').eq('user_id', user.id).neq('deleted', true).order('position').order('created_at'),
+        supabase.from('budget_categories').select('*'),
+        supabase.from('budget_periods').select('*'),
+      ]);
+
+      const allCats = catsData || [];
+      const allPeriods = periodsData || [];
+      setCategories(allCats);
+      setRoots(buildTree(allCats));
+
+      const tree = buildTree(allCats);
+
+      // Ensure all periods exist for all budgets
+      const allBudgets = budgetsData || [];
+      for (const b of allBudgets) {
+        const bPeriods = allPeriods.filter((p: BudgetPeriod) => p.budget_id === b.id);
+        const missing = generateMissingPeriods(b as Budget, bPeriods);
+        if (missing.length > 0) {
+          const { data: newPeriods } = await supabase.from('budget_periods').insert(
+            missing.map(m => ({ budget_id: b.id, period_start: m.start, period_end: m.end }))
+          ).select();
+          if (newPeriods) allPeriods.push(...newPeriods);
+        }
+      }
+
+      // Find current period for each budget
+      const curPeriods: Record<string, BudgetPeriod> = {};
+      for (const b of allBudgets) {
+        const bPeriods = allPeriods.filter((p: BudgetPeriod) => p.budget_id === b.id);
+        const current = bPeriods.find((p: BudgetPeriod) => p.period_start <= today && p.period_end >= today);
+        if (current) curPeriods[b.id] = current;
+      }
+      setCurrentPeriods(curPeriods);
+
+      // Build per-budget expanded cat IDs (in memory, no extra queries)
+      const budgetCatMap: Record<string, string[]> = {};
+      for (const b of allBudgets) {
+        const catIds = (bcData || []).filter((bc: any) => bc.budget_id === b.id).map((bc: any) => bc.category_id);
+        const expanded = [...catIds];
+        const addDesc = (nodes: CatNode[]) => {
+          nodes.forEach(n => {
+            if (catIds.includes(n.id)) {
+              allDescendantIds(n).forEach(id => { if (!expanded.includes(id)) expanded.push(id); });
+            }
+            addDesc(n.children);
+          });
+        };
+        addDesc(tree);
+        budgetCatMap[b.id] = expanded;
+      }
+
+      // Single bulk query for ALL expenses across ALL current periods
+      const allExpandedCatIds = Array.from(new Set(Object.values(budgetCatMap).flat()));
+      const periodStarts = Object.values(curPeriods).map(p => p.period_start);
+      const periodEnds = Object.values(curPeriods).map(p => p.period_end);
+      const minDate = periodStarts.length > 0 ? periodStarts.reduce((a, b) => a < b ? a : b) : today;
+      const maxDate = periodEnds.length > 0 ? periodEnds.reduce((a, b) => a > b ? a : b) : today;
+
+      let allExpenses: { category_id: string; amount: number; date: string }[] = [];
+      if (allExpandedCatIds.length > 0) {
+        const { data: expData } = await supabase
+          .from('expenses')
+          .select('category_id, amount, date')
+          .eq('user_id', user.id)
+          .in('category_id', allExpandedCatIds)
+          .gte('date', minDate)
+          .lte('date', maxDate);
+        allExpenses = (expData || []).map((e: any) => ({ category_id: e.category_id, amount: Number(e.amount), date: e.date }));
+      }
+
+      const enriched: Budget[] = allBudgets.map(b => {
+        const catIds = (bcData || []).filter((bc: any) => bc.budget_id === b.id).map((bc: any) => bc.category_id);
+        const bCats = allCats.filter(c => catIds.includes(c.id));
+        const expanded = budgetCatMap[b.id] || [];
+        const curPeriod = curPeriods[b.id];
+        let spent = 0;
+        if (curPeriod && expanded.length > 0) {
+          spent = allExpenses
+            .filter(e => expanded.includes(e.category_id) && e.date >= curPeriod.period_start && e.date <= curPeriod.period_end)
+            .reduce((sum, e) => sum + e.amount, 0);
+        }
+        return { ...b, category_ids: catIds, categories: bCats, spent };
+      });
+      setBudgets(enriched);
+    } catch (err) { console.error(err); }
+    finally { setLoading(false); }
+  }
+
+  function openForm(budget?: Budget) {
+    if (budget) {
+      setEditingBudget(budget); setName(budget.name); setAmount(String(budget.amount));
+      setRecurrence(budget.recurrence as 'monthly' | 'yearly'); setStartDate(budget.start_date);
+      setSelectedCatIds(budget.category_ids || []);
+    } else {
+      setEditingBudget(null); setName(''); setAmount('');
+      setRecurrence('monthly');
+      setStartDate(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
+      setSelectedCatIds([]);
+    }
+    setShowForm(true);
+  }
+
+  async function handleSave() {
+    if (!name || !amount) return;
     setSaving(true);
     try {
-      const newAmount = parseFloat(editAmount);
-      const currentPeriod = periods[currentPeriodIndex];
-      const { error } = await supabase.from('budget_periods').update({ amount: newAmount }).eq('id', currentPeriod.id);
-      if (error) throw error;
-      setPeriods(prev => prev.map((p, i) => i === currentPeriodIndex ? { ...p, amount: newAmount } : p));
-      periodCache.current.delete(currentPeriod.id);
-      setShowEditForm(false);
-      onRefresh();
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setSaving(false);
+      const budgetData = { user_id: user.id, name, amount: parseFloat(amount), recurrence, start_date: startDate };
+      let budgetId: string;
+      if (editingBudget) {
+        await supabase.from('budgets').update(budgetData).eq('id', editingBudget.id);
+        budgetId = editingBudget.id;
+        await supabase.from('budget_categories').delete().eq('budget_id', budgetId);
+      } else {
+        const { data } = await supabase.from('budgets').insert(budgetData).select().single();
+        budgetId = data.id;
+      }
+      if (selectedCatIds.length > 0) {
+        await supabase.from('budget_categories').insert(
+          selectedCatIds.map(cid => ({ budget_id: budgetId, category_id: cid }))
+        );
+      }
+      setShowForm(false);
+      loadData();
+    } catch (err) { console.error(err); }
+    finally { setSaving(false); }
+  }
+
+  async function handleDelete(id: string) {
+    if (confirm('¿Eliminar este presupuesto?')) {
+      await supabase.from('budgets').delete().eq('id', id);
+      loadData();
     }
   }
 
-  async function handleDelete() {
-    if (!confirm('¿Eliminar este presupuesto? Esta acción no se puede deshacer.')) return;
-    try {
-      const { error } = await supabase.from('budgets').delete().eq('id', budget.id);
-      if (error) throw error;
-      onBack();
-    } catch (err) { console.error(err); }
+  function toggleLeaf(catId: string) {
+    setSelectedCatIds(prev => prev.includes(catId) ? prev.filter(id => id !== catId) : [...prev, catId]);
   }
 
-  if (periods.length === 0 && !loading) return <div className="text-center py-10 text-dark-400">No hay períodos disponibles</div>;
-  const period = periods[currentPeriodIndex];
-  if (!period) return null;
+  function toggleRoot(root: CatNode) {
+    const ids = allDescendantIds(root);
+    const allSelected = ids.every(id => selectedCatIds.includes(id));
+    if (allSelected) {
+      setSelectedCatIds(prev => prev.filter(id => !ids.includes(id)));
+    } else {
+      setSelectedCatIds(prev => Array.from(new Set([...prev, ...ids])));
+    }
+  }
 
-  const periodAmount = period.amount ?? budget.amount;
-  const periodStart = parseISO(period.period_start);
-  const periodEnd = parseISO(period.period_end);
-  const isCurrentPeriod = isWithinInterval(now, { start: periodStart, end: periodEnd });
-  const hasPrev = currentPeriodIndex < periods.length - 1;
-  const hasNext = currentPeriodIndex > 0;
-  const pct = periodAmount > 0 ? (totalSpent / periodAmount) * 100 : 0;
-  const left = Math.max(periodAmount - totalSpent, 0);
-  const totalDays = differenceInDays(periodEnd, periodStart) + 1;
-  const daysPassed = isCurrentPeriod ? Math.min(differenceInDays(now, periodStart) + 1, totalDays) : totalDays;
-  const daysLeft = Math.max(differenceInDays(periodEnd, now), 0);
-  const perDay = daysLeft > 0 ? left / daysLeft : 0;
-  const timeProgress = (daysPassed / totalDays) * 100;
-  const periodLabel = format(periodStart, budget.recurrence === 'monthly' ? 'MMMM yyyy' : 'yyyy', { locale: es });
-  const todayStr = format(now, 'yyyy-MM-dd');
-  const yestStr = format(new Date(now.getTime() - 86400000), 'yyyy-MM-dd');
-  const dayMap = new Map<string, ExpenseRow[]>();
-  expenses.forEach(e => { if (!dayMap.has(e.date)) dayMap.set(e.date, []); dayMap.get(e.date)!.push(e); });
-  const grouped = Array.from(dayMap.entries())
-    .map(([dateStr, exps]) => ({
-      date: dateStr,
-      label: dateStr === todayStr ? 'Hoy' : dateStr === yestStr ? 'Ayer' : format(parseISO(dateStr), "d 'de' MMMM", { locale: es }),
-      total: exps.reduce((s, e) => s + e.amount, 0),
-      expenses: exps,
-    }))
-    .sort((a, b) => b.date.localeCompare(a.date));
+  function isRootFullySelected(root: CatNode) {
+    return allDescendantIds(root).every(id => selectedCatIds.includes(id));
+  }
+  function isRootPartiallySelected(root: CatNode) {
+    const ids = allDescendantIds(root);
+    return ids.some(id => selectedCatIds.includes(id)) && !ids.every(id => selectedCatIds.includes(id));
+  }
+
+  const allEntries = flattenTree(roots);
+  const q = searchQuery.trim().toLowerCase();
+  const searchResults = q ? allEntries.filter(e => e.cat.name.toLowerCase().includes(q)) : [];
+
+  const recurrenceLabels: Record<string, string> = { monthly: 'Mensual', yearly: 'Anual' };
+
+  function buildSelectedLabel(): string {
+    if (selectedCatIds.length === 0) return '';
+    const parts: string[] = [];
+    roots.forEach(r => {
+      const ids = allDescendantIds(r);
+      if (ids.every(id => selectedCatIds.includes(id))) {
+        parts.push(`${r.icon} ${r.name} (todo)`);
+      } else {
+        ids.filter(id => selectedCatIds.includes(id)).forEach(id => {
+          const c = categories.find(c => c.id === id);
+          if (c) parts.push(`${c.icon} ${c.name}`);
+        });
+      }
+    });
+    return parts.join(', ');
+  }
 
   return (
-    <div className="max-w-lg mx-auto pb-8 page-transition" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
-
-      {/* HEADER */}
-      <div className="flex items-center justify-between px-4 pt-5 pb-2">
-        <button onClick={onBack} className="p-1 text-dark-300"><ArrowLeft size={20} /></button>
-        <div className="flex items-center gap-1">
-          <button onClick={() => { setEditAmount(String(periodAmount)); setShowEditForm(true); }} className="p-1.5 text-dark-400 hover:text-white"><Edit3 size={16} /></button>
-          <button onClick={handleDelete} className="p-1.5 text-dark-400 hover:text-red-400"><Trash2 size={16} /></button>
-        </div>
-      </div>
-
-      {/* PERIOD NAVIGATOR — title centered above date */}
-      <div className="text-center mb-1 px-4">
-        <h1 className="text-base font-bold truncate">{budget.name}</h1>
-      </div>
-      <div className="flex items-center justify-between px-4 mb-2">
-        <button onClick={() => navigatePeriod(1)} disabled={!hasPrev}
-          className={`p-1.5 rounded-full transition-colors ${hasPrev ? 'text-dark-300 active:bg-dark-800' : 'text-dark-700 cursor-not-allowed'}`}>
-          <ChevronLeft size={20} />
-        </button>
-        <div className="text-center">
-          <p className="text-base font-bold capitalize">{periodLabel}</p>
-          {!isCurrentPeriod && <span className="text-[10px] text-dark-500 bg-dark-800 px-2 py-0.5 rounded-full">Histórico</span>}
-        </div>
-        <button onClick={() => navigatePeriod(-1)} disabled={!hasNext}
-          className={`p-1.5 rounded-full transition-colors ${hasNext ? 'text-dark-300 active:bg-dark-800' : 'text-dark-700 cursor-not-allowed'}`}>
-          <ChevronRight size={20} />
+    <div className="px-4 pt-6 pb-4 max-w-lg mx-auto page-transition">
+      <div className="flex items-center justify-between mb-5">
+        <h1 className="text-xl font-bold">Presupuestos</h1>
+        <button onClick={() => openForm()}
+          className="bg-brand-600 hover:bg-brand-500 text-white p-2.5 rounded-xl transition-colors shadow-lg shadow-brand-600/20">
+          <Plus size={18} />
         </button>
       </div>
 
-      {/* BUDGET HISTORY BUTTON */}
-      <div className="px-3 pb-2">
-        <button onClick={openHistory}
-          className="w-full flex items-center justify-center gap-1.5 py-1.5 text-dark-400 hover:text-dark-200 transition-colors">
-          <History size={13} className="text-brand-400" />
-          <span className="text-[11px] font-medium">Budget History</span>
-          <ChevronRight size={12} className="text-dark-500" />
-        </button>
-      </div>
-
-      {error ? (
-        <div className="text-center py-10 text-red-400 px-4">{error}</div>
-      ) : loading ? (
-        <div className="flex justify-center py-16">
+      {loading ? (
+        <div className="flex justify-center py-10">
           <div className="w-7 h-7 border-2 border-brand-500/30 border-t-brand-500 rounded-full animate-spin" />
         </div>
+      ) : budgets.length === 0 ? (
+        <div className="text-center py-10">
+          <div className="text-5xl mb-4">💰</div>
+          <p className="text-dark-300 font-medium">No tenés presupuestos</p>
+          <p className="text-dark-500 text-sm mt-1">Creá uno para controlar tus gastos</p>
+          <button onClick={() => openForm()}
+            className="mt-5 bg-brand-600/15 text-brand-400 text-sm font-semibold px-6 py-3 rounded-2xl border border-brand-600/20">
+            Crear presupuesto
+          </button>
+        </div>
       ) : (
-        <>
-          {/* AMOUNT */}
-          <div className="px-4 mb-4 text-center">
-            {pct >= 100 ? (
-              <>
-                <p className="text-4xl font-extrabold text-red-400">{formatCurrency(totalSpent - periodAmount)}</p>
-                <p className="text-red-400/70 text-sm mt-0.5">sobre el límite · de {formatCurrency(periodAmount)}</p>
-              </>
-            ) : (
-              <>
-                <p className={`text-4xl font-extrabold ${pct >= 80 ? 'text-amber-400' : 'text-brand-400'}`}>{formatCurrency(left)}</p>
-                <p className="text-dark-500 text-sm mt-0.5">disponible de {formatCurrency(periodAmount)}</p>
-              </>
-            )}
-          </div>
+        <div className="space-y-3">
+          {budgets.map((budget) => {
+            const spent = budget.spent || 0;
+            const left = Math.max(budget.amount - spent, 0);
+            const pct = budget.amount > 0 ? (spent / budget.amount) * 100 : 0;
+            const curPeriod = currentPeriods[budget.id];
+            const startLabel = curPeriod ? format(parseISO(curPeriod.period_start), "MMM d", { locale: es }) : '';
+            const endLabel = curPeriod ? format(parseISO(curPeriod.period_end), "MMM d, yyyy", { locale: es }) : '';
 
-          {/* ADVICE */}
-          {isCurrentPeriod && (
-            <div className="mx-4 mb-4 bg-brand-500/8 border border-brand-500/15 rounded-2xl px-4 py-3">
-              <p className="text-sm text-dark-200 text-center">
-                {pct >= 100 ? '¡Ya superaste el presupuesto!'
-                  : daysLeft > 0
-                    ? budget.recurrence === 'yearly'
-                      ? (() => {
-                          const monthsLeft = Math.round(daysLeft / 30.4 * 10) / 10;
-                          const perMonth = monthsLeft > 0 ? left / monthsLeft : 0;
-                          return <>Podés gastar <span className="font-bold text-brand-400">{formatCurrency(perMonth)}</span>/mes durante {monthsLeft} meses más.</>
-                        })()
-                      : <>Podés gastar <span className="font-bold text-brand-400">{formatCurrency(perDay)}</span>/día durante {daysLeft} días más.</>
-                    : 'Último día del período.'}
-              </p>
-            </div>
-          )}
-
-          {/* PROGRESS BAR */}
-          <div className="px-4 mb-5">
-            <div className="w-full bg-dark-700 rounded-full h-2.5 overflow-hidden relative">
-              {pct >= 100 ? (
-                <div className="absolute inset-0 bg-red-400 rounded-full" />
-              ) : (
-                <div className="absolute right-0 top-0 h-full rounded-full transition-all duration-500"
-                  style={{ width: `${Math.max(100 - pct, 0)}%`, backgroundColor: pct >= 80 ? '#f59e0b' : '#22c55e' }} />
-              )}
-            </div>
-            <div className="flex justify-between mt-1.5">
-              <span className="text-[10px] text-dark-500">{format(periodStart, 'MMM d', { locale: es })}</span>
-              <span className={`text-[10px] font-bold ${pct >= 100 ? 'text-red-400' : 'text-dark-400'}`}>{pct.toFixed(1)}% gastado</span>
-              <span className="text-[10px] text-dark-500">{format(periodEnd, 'MMM d', { locale: es })}</span>
-            </div>
-          </div>
-
-          {/* PERIOD DOTS — oldest left, newest right; all round; active = budget color */}
-          {periods.length > 1 && (
-            <div className="flex justify-center gap-1.5 mb-5">
-              {periods.length > 12 && <span className="text-[10px] text-dark-600">+{periods.length - 12}</span>}
-              {periods.slice(0, Math.min(periods.length, 12)).map((_, i) => {
-                const visibleCount = Math.min(periods.length, 12);
-                const reversedI = visibleCount - 1 - i;
-                const isActive = reversedI === currentPeriodIndex;
-                const activeColor = pct >= 100 ? '#ef4444' : pct >= 80 ? '#f59e0b' : '#22c55e';
-                return (
-                  <button key={i} onClick={() => setCurrentPeriodIndex(reversedI)}
-                    className="w-2 h-2 rounded-full transition-all flex-shrink-0"
-                    style={{ backgroundColor: isActive ? activeColor : '#334155' }} />
-                );
-              })}
-            </div>
-          )}
-
-          {/* CATEGORY BREAKDOWN */}
-          {catSpending.length > 0 && (
-            <div className="px-4 mb-5">
-              <p className="text-xs text-dark-500 font-medium uppercase tracking-wider mb-3">Por categoría</p>
-              <div className="space-y-2">
-                {catSpending.map(cat => {
-                  const catPct = periodAmount > 0 ? (cat.spent / periodAmount) * 100 : 0;
-                  return (
-                    <div key={cat.id} className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-xl flex items-center justify-center text-sm flex-shrink-0" style={{ backgroundColor: cat.color }}>{cat.icon}</div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex justify-between mb-0.5">
-                          <span className="text-xs font-medium truncate">{cat.name}</span>
-                          <span className="text-xs text-dark-400 flex-shrink-0 ml-2">{formatCurrency(cat.spent)}</span>
-                        </div>
-                        <div className="w-full bg-dark-700 rounded-full h-1.5">
-                          <div className="h-1.5 rounded-full" style={{ width: `${catPct}%`, backgroundColor: cat.color }} />
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* TOTAL */}
-          <div className="flex items-center justify-between px-4 py-3 border-t border-b border-dark-800/60 mb-1">
-            <span className="text-xs text-dark-400 font-medium uppercase tracking-wider">Total gastado</span>
-            <span className="text-base font-bold text-red-400">-{formatCurrency(totalSpent)}</span>
-          </div>
-
-          {/* TRANSACTIONS */}
-          {grouped.length === 0 ? (
-            <div className="text-center py-10"><p className="text-dark-500 text-sm">Sin gastos en este período</p></div>
-          ) : (
-            <div>
-              <p className="px-4 pt-3 pb-1 text-sm font-bold">Transacciones</p>
-              {grouped.map(group => (
-                <div key={group.date}>
-                  <div className="flex items-center justify-between px-4 py-1.5 bg-dark-800/60">
-                    <span className="text-[10px] font-semibold text-dark-500 uppercase tracking-wider capitalize">{group.label}</span>
-                    <span className="text-[10px] font-semibold text-dark-500">-{formatCurrency(group.total)}</span>
+            return (
+              <button key={budget.id}
+                onClick={() => curPeriod && onOpenBudget(budget, curPeriod.id)}
+                className="w-full bg-dark-800 rounded-2xl p-4 text-left transition-colors">
+                <div className="flex items-center justify-between mb-1">
+                  <h3 className="text-sm font-bold">{budget.name}</h3>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-dark-500 capitalize">
+                      {budget.recurrence === 'monthly' ? 'Mensual' : 'Anual'}
+                    </span>
+                    <ChevronRight size={16} className="text-dark-500" />
                   </div>
-                  {group.expenses.map(exp => {
-                    const cat = categories.find(c => c.id === exp.category_id);
-                    return (
-                      <div key={exp.id} className="flex items-center gap-2.5 px-4 py-2.5 border-b border-dark-800/40">
-                        <div className="w-8 h-8 rounded-xl flex items-center justify-center text-base flex-shrink-0" style={{ backgroundColor: cat?.color || '#475569' }}>
-                          {cat?.icon || '💸'}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-[12px] font-semibold truncate">{cat?.name || 'Sin categoría'}</p>
-                          {exp.description && exp.description !== cat?.name && (
-                            <p className="text-[10px] text-dark-500 truncate">{exp.description}</p>
-                          )}
-                        </div>
-                        <span className="text-[12px] font-bold text-red-400 flex-shrink-0">-{formatCurrency(exp.amount)}</span>
-                      </div>
-                    );
-                  })}
                 </div>
-              ))}
-            </div>
-          )}
-        </>
+                <div className="flex items-baseline justify-between mb-2.5">
+                  <div className="flex items-baseline gap-1.5">
+                    {pct >= 100 ? (
+                      <>
+                        <span className="text-lg font-extrabold text-red-400">-{formatCurrency(Math.abs(left - budget.amount + left))}</span>
+                        <span className="text-xs text-red-400/70">sobre el límite</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className={`text-lg font-extrabold ${pct >= 80 ? 'text-amber-400' : 'text-brand-400'}`}>{formatCurrency(left)}</span>
+                        <span className="text-xs text-dark-500">disponible</span>
+                      </>
+                    )}
+                  </div>
+                  <span className="text-xs text-dark-500">de {formatCurrency(budget.amount)}</span>
+                </div>
+                <div className="w-full bg-dark-700 rounded-full h-1.5 mb-2 overflow-hidden relative">
+                  {pct >= 100 ? (
+                    <div className="absolute inset-0 bg-red-400 rounded-full" />
+                  ) : (
+                    <div className="absolute right-0 top-0 h-full rounded-full transition-all duration-500"
+                      style={{ width: `${Math.max(100 - pct, 0)}%`, backgroundColor: pct >= 80 ? '#f59e0b' : '#22c55e' }} />
+                  )}
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-dark-500 capitalize">{startLabel}</span>
+                  <span className={`text-[10px] font-bold ${pct >= 100 ? 'text-red-400' : 'text-dark-400'}`}>
+                    {pct.toFixed(1)}% gastado
+                  </span>
+                  <span className="text-[10px] text-dark-500 capitalize">{endLabel}</span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
       )}
 
-      {/* HISTORY SCREEN */}
-      {showHistory && (() => {
-        const byYear: Record<number, { summary: PeriodSummary; originalIndex: number }[]> = {};
-        historySummaries.forEach((s, i) => {
-          const y = parseISO(s.period.period_start).getFullYear();
-          if (!byYear[y]) byYear[y] = [];
-          byYear[y].push({ summary: s, originalIndex: i });
-        });
-        const years = Object.keys(byYear).map(Number).sort((a, b) => b - a);
-        const yearData = byYear[historyYear] || [];
-        const accumulated = yearData
-          .filter(({ summary: s }) => !s.isCurrent)
-          .reduce((sum, { summary: s }) => sum + ((s.period.amount ?? budget.amount) - s.spent), 0);
-        return (
-          <div className="fixed inset-0 bg-dark-900 z-[60] flex flex-col slide-up">
-            <div className="flex items-center justify-between px-4 pt-5 pb-3 flex-shrink-0 border-b border-dark-800">
-              <button onClick={() => setShowHistory(false)} className="p-1 text-dark-400"><ArrowLeft size={22} /></button>
-              <h2 className="text-base font-bold">Historial · {budget.name}</h2>
-              <div className="w-8" />
-            </div>
-            <div className="flex items-center justify-between px-4 pt-4 pb-2 flex-shrink-0">
-              <button onClick={() => { const i = years.indexOf(historyYear); if (i < years.length - 1) setHistoryYear(years[i + 1]); }}
-                disabled={years.indexOf(historyYear) >= years.length - 1}
-                className="p-2 rounded-xl bg-dark-800 text-dark-300 disabled:opacity-30 active:bg-dark-700">
-                <ChevronLeft size={18} />
-              </button>
-              <div className="text-center">
-                <p className="text-base font-bold">{historyYear}</p>
-                {yearData.some(({ summary: s }) => !s.isCurrent) && (
-                  <p className={`text-[11px] font-medium mt-0.5 ${accumulated >= 0 ? 'text-brand-400' : 'text-red-400'}`}>
-                    {formatCurrency(Math.abs(accumulated))} {accumulated >= 0 ? 'sin usar' : 'sobre el límite'} (acumulado)
-                  </p>
-                )}
-              </div>
-              <button onClick={() => { const i = years.indexOf(historyYear); if (i > 0) setHistoryYear(years[i - 1]); }}
-                disabled={years.indexOf(historyYear) <= 0}
-                className="p-2 rounded-xl bg-dark-800 text-dark-300 disabled:opacity-30 active:bg-dark-700">
-                <ChevronRight size={18} />
-              </button>
-            </div>
-            <div className="h-px bg-dark-800 mx-4 mb-1 flex-shrink-0" />
-            <div className="flex-1 overflow-y-auto pb-8">
-              {historyLoading ? (
-                <div className="flex justify-center py-16">
-                  <div className="w-7 h-7 border-2 border-brand-500/30 border-t-brand-500 rounded-full animate-spin" />
-                </div>
-              ) : yearData.length === 0 ? (
-                <div className="text-center py-16 text-dark-500">Sin datos para {historyYear}</div>
-              ) : (
-                <div className="px-4 py-2 flex flex-col gap-1">
-                  {yearData.map(({ summary: s, originalIndex }) => {
-                    const pAmt = s.period.amount ?? budget.amount;
-                    const sPct = pAmt > 0 ? (s.spent / pAmt) * 100 : 0;
-                    const sLeft = Math.max(pAmt - s.spent, 0);
-                    const pStart = parseISO(s.period.period_start);
-                    const label = format(pStart, budget.recurrence === 'monthly' ? 'MMMM' : 'yyyy', { locale: es });
-                    const isOver = s.spent > pAmt;
-                    const dotColor = isOver ? '#ef4444' : (s.isCurrent && sPct >= 80) ? '#f59e0b' : '#22c55e';
-                    const availPct = Math.max(100 - sPct, 0);
-                    return (
-                      <button key={s.period.id}
-                        onClick={() => { setCurrentPeriodIndex(originalIndex); setHistoryYear(new Date().getFullYear()); setShowHistory(false); }}
-                        className={`w-full text-left px-4 py-3 rounded-2xl active:bg-dark-800/60 transition-colors ${s.isCurrent ? 'bg-dark-800/60' : ''}`}>
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center gap-2">
-                            <div className="w-2 h-2 rounded-full flex-shrink-0"
-                              style={{ backgroundColor: dotColor, boxShadow: s.isCurrent ? `0 0 6px ${dotColor}88` : undefined }} />
-                            <span className={`text-sm font-semibold capitalize ${s.isCurrent ? 'text-white' : 'text-dark-200'}`}>{label}</span>
-                            {s.isCurrent && <span className="text-[9px] font-bold bg-brand-500/20 text-brand-400 px-1.5 py-0.5 rounded-full">actual</span>}
-                          </div>
-                          <span className={`text-[11px] ${isOver ? 'text-red-400' : 'text-dark-400'}`}>{sPct.toFixed(1)}% gastado</span>
-                        </div>
-                        {isOver ? (
-                          <div className="w-full rounded-full h-1.5 mb-1.5" style={{ backgroundColor: '#ef4444' }} />
-                        ) : (
-                          <div className="w-full bg-dark-700 rounded-full h-1.5 mb-1.5 overflow-hidden relative">
-                            <div className="absolute right-0 top-0 h-full rounded-full"
-                              style={{ width: `${availPct}%`, backgroundColor: dotColor }} />
-                          </div>
-                        )}
-                        <div className="flex justify-between">
-                          <span className="text-[11px] font-medium" style={{ color: dotColor }}>
-                            {isOver ? `${formatCurrency(s.spent - pAmt)} sobre el límite` : s.isCurrent ? `${formatCurrency(sLeft)} disponible` : `${formatCurrency(sLeft)} sin usar`}
-                          </span>
-                          <span className="text-[11px] text-dark-500">de {formatCurrency(pAmt)}</span>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* EDIT AMOUNT FORM */}
-      {showEditForm && (
+      {/* ── FORM ── */}
+      {showForm && !showCatPicker && (
         <div className="fixed inset-0 bg-dark-900 z-[60] flex flex-col slide-up">
           <div className="flex items-center justify-between px-4 pt-5 pb-3 flex-shrink-0">
-            <button onClick={() => setShowEditForm(false)} className="p-1 text-dark-400"><X size={24} /></button>
-            <h2 className="text-base font-bold">Editar monto</h2>
-            <div className="w-8" />
+            <button onClick={() => setShowForm(false)} className="p-1 text-dark-400 hover:text-white"><X size={24} /></button>
+            <h2 className="text-base font-bold">{editingBudget ? 'Editar presupuesto' : 'Nuevo presupuesto'}</h2>
+            {editingBudget ? (
+              <button onClick={() => { handleDelete(editingBudget.id); setShowForm(false); }} className="p-1 text-red-400">🗑️</button>
+            ) : <div className="w-8" />}
           </div>
-          <div className="px-5 py-6 flex-shrink-0 border-b border-dark-800 text-center">
-            <p className="text-xs text-dark-400 mb-1">Monto para {format(parseISO(period.period_start), 'MMMM yyyy', { locale: es })}</p>
-            <p className="text-4xl font-extrabold">{editAmount || '0'}</p>
+
+          <div className="px-5 py-4 flex-shrink-0 border-b border-dark-800">
+            <p className="text-xs text-dark-400 font-medium mb-1 uppercase tracking-wider">Monto</p>
+            <p className="text-3xl font-extrabold text-white">{amount || '0'}</p>
           </div>
-          <div className="flex-1" />
+
+          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+            <div>
+              <label className="text-xs text-dark-400 font-medium mb-1.5 block uppercase tracking-wider">Nombre</label>
+              <div className="relative">
+                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-lg">💰</span>
+                <input type="text" placeholder="Ej: Car, Groceries..." value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3.5 pl-11 pr-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-brand-500 transition-colors" />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs text-dark-400 font-medium mb-1.5 block uppercase tracking-wider">Recurrencia</label>
+              <div className="flex bg-dark-800 rounded-xl p-1 border border-dark-700">
+                {(['monthly', 'yearly'] as const).map((r) => (
+                  <button key={r} onClick={() => setRecurrence(r)}
+                    className={`flex-1 py-2.5 rounded-lg text-xs font-medium transition-all ${recurrence === r ? 'bg-brand-600 text-white shadow-lg' : 'text-dark-400'}`}>
+                    {recurrenceLabels[r]}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs text-dark-400 font-medium mb-1.5 block uppercase tracking-wider">Fecha inicio</label>
+              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)}
+                className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors" />
+            </div>
+
+            <div>
+              <label className="text-xs text-dark-400 font-medium mb-1.5 block uppercase tracking-wider">
+                Categorías {selectedCatIds.length > 0 && `(${selectedCatIds.length})`}
+              </label>
+              <button onClick={() => setShowCatPicker(true)}
+                className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3.5 px-4 text-sm text-left flex items-center justify-between">
+                <span className={`flex-1 min-w-0 truncate ${selectedCatIds.length > 0 ? 'text-white' : 'text-dark-500'}`}>
+                  {selectedCatIds.length > 0 ? buildSelectedLabel() : 'Seleccionar categorías...'}
+                </span>
+                <ChevronRight size={16} className="text-dark-500 flex-shrink-0 ml-2" />
+              </button>
+            </div>
+          </div>
+
           <div className="flex-shrink-0">
             <div className="px-5 py-3">
-              <button onClick={handleSaveAmount} disabled={saving || !editAmount || isNaN(parseFloat(editAmount))}
+              <button onClick={handleSave} disabled={saving || !name || !amount}
                 className="w-full bg-brand-600 disabled:opacity-30 text-white font-bold py-4 rounded-2xl text-base">
-                {saving ? 'Guardando...' : 'Guardar para este período'}
+                {saving ? 'Guardando...' : editingBudget ? 'Guardar cambios' : 'Crear presupuesto'}
               </button>
             </div>
             <div className="border-t border-dark-700">
@@ -628,6 +468,105 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
               </div>
               <div className="h-[env(safe-area-inset-bottom)]" />
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── CATEGORY PICKER ── */}
+      {showForm && showCatPicker && (
+        <div className="fixed inset-0 bg-dark-900 z-[70] flex flex-col slide-up">
+          <div className="flex items-center justify-between px-4 pt-5 pb-3 flex-shrink-0">
+            <button onClick={() => { setShowCatPicker(false); setSearchQuery(''); }} className="p-1 text-dark-400 hover:text-white">
+              <ArrowLeft size={24} />
+            </button>
+            <h2 className="text-base font-bold">Categorías del presupuesto</h2>
+            <button onClick={() => { setShowCatPicker(false); setSearchQuery(''); }} className="text-xs text-brand-400 font-medium">
+              Confirmar
+            </button>
+          </div>
+
+          <div className="px-4 pb-3 flex-shrink-0">
+            <div className="flex items-center gap-2 bg-dark-800 rounded-2xl px-4 py-3">
+              <Search size={16} className="text-dark-400 flex-shrink-0" />
+              <input type="text" placeholder="Buscar categorías" value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="flex-1 bg-transparent text-sm placeholder:text-dark-500 focus:outline-none" />
+              {searchQuery && <button onClick={() => setSearchQuery('')} className="text-dark-400"><X size={14} /></button>}
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto pb-8">
+            {q ? (
+              searchResults.length === 0 ? (
+                <div className="text-center py-10 text-dark-500 text-sm">Sin resultados</div>
+              ) : (
+                <div>
+                  {searchResults.map(({ cat, ancestors }) => {
+                    const isSelected = selectedCatIds.includes(cat.id);
+                    return (
+                      <button key={cat.id} onClick={() => toggleLeaf(cat.id)}
+                        className={`w-full flex items-center gap-3 px-5 py-3.5 border-b border-dark-800/60 transition-colors ${isSelected ? 'bg-dark-800' : 'active:bg-dark-800/60'}`}>
+                        <div className="w-9 h-9 rounded-full flex items-center justify-center text-lg flex-shrink-0" style={{ backgroundColor: cat.color }}>{cat.icon}</div>
+                        <div className="flex-1 text-left">
+                          <p className="text-sm font-medium">{cat.name}</p>
+                          {ancestors.length > 0 && <p className="text-xs text-dark-400">{ancestors.map(a => a.name).join(' › ')}</p>}
+                        </div>
+                        {isSelected && <Check size={18} className="text-brand-400 flex-shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              )
+            ) : (
+              roots.map(root => {
+                const childEntries = flattenTree(root.children, [root]);
+                const fullySelected = isRootFullySelected(root);
+                const partiallySelected = isRootPartiallySelected(root);
+                return (
+                  <div key={root.id} className="mb-6">
+                    <button onClick={() => toggleRoot(root)}
+                      className="w-full flex items-center justify-between px-4 pt-4 pb-2 active:opacity-70">
+                      <span className="text-xs font-bold text-dark-400 uppercase tracking-wider">{root.name}</span>
+                      <div className={`w-5 h-5 rounded flex items-center justify-center border transition-all ${
+                        fullySelected ? 'bg-brand-500 border-brand-500' :
+                        partiallySelected ? 'bg-brand-500/30 border-brand-500/50' : 'border-dark-600'
+                      }`}>
+                        {fullySelected && <Check size={12} className="text-white" />}
+                        {partiallySelected && !fullySelected && <div className="w-2 h-2 rounded-sm bg-brand-400" />}
+                      </div>
+                    </button>
+                    {childEntries.length > 0 && (
+                      <div className="grid grid-cols-4 gap-x-2 gap-y-4 px-4">
+                        {childEntries.map(({ cat, ancestors }) => {
+                          const isSelected = selectedCatIds.includes(cat.id);
+                          const depth = ancestors.length - 1;
+                          const iconSize = depth === 0 ? 52 : depth === 1 ? 46 : 40;
+                          return (
+                            <button key={cat.id} onClick={() => toggleLeaf(cat.id)}
+                              className="flex flex-col items-center gap-1.5 active:opacity-70">
+                              <div className="rounded-full flex items-center justify-center flex-shrink-0 relative"
+                                style={{ width: iconSize, height: iconSize, backgroundColor: cat.color, fontSize: depth === 0 ? 24 : depth === 1 ? 20 : 17,
+                                  boxShadow: isSelected ? `0 0 0 3px white, 0 0 0 5px ${cat.color}` : undefined }}>
+                                {cat.icon}
+                                {isSelected && (
+                                  <div className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-brand-500 flex items-center justify-center">
+                                    <Check size={9} className="text-white" strokeWidth={3} />
+                                  </div>
+                                )}
+                              </div>
+                              <span className="text-center leading-tight text-dark-200 w-full"
+                                style={{ fontSize: 11, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as any, overflow: 'hidden', wordBreak: 'break-word' }}>
+                                {cat.name}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
       )}
