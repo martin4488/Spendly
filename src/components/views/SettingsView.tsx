@@ -151,7 +151,7 @@ export default function SettingsView({ user, defaultCurrency, onCurrencyChange, 
       // Cache of parent_id → hidden "Importado" sub id (created on demand)
       const importedSubCache = new Map<string, string>();
 
-      async function getOrCreateImportedSub(parentCat: typeof allCats[0]): Promise<string> {
+      const getOrCreateImportedSub = async (parentCat: typeof allCats[0]): Promise<string> => {
         if (importedSubCache.has(parentCat.id)) return importedSubCache.get(parentCat.id)!;
 
         // Check if it already exists in DB
