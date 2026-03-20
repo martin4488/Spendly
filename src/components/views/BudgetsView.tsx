@@ -99,8 +99,10 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
   const [currentPeriods, setCurrentPeriods] = useState<Record<string, BudgetPeriod>>({});
   const [monthlyBudget, setMonthlyBudget] = useState<number | null>(null);
   const [globalStats, setGlobalStats] = useState<{ spent: number; prevSpent: number } | null>(null);
+  const [globalAccumulated, setGlobalAccumulated] = useState<number | null>(null);
   const [showBudgetModal, setShowBudgetModal] = useState(false);
   const [budgetInput, setBudgetInput] = useState('');
+  const [budgetStartMonth, setBudgetStartMonth] = useState(format(startOfMonth(new Date()), 'yyyy-MM'));
 
   // Form state
   const [name, setName] = useState('');
@@ -219,24 +221,49 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
       setBudgets(enrichedPartial);
       setLoading(false);
 
-      // Load monthly_budget from user_settings (non-blocking)
-      supabase.from('user_settings').select('monthly_budget').eq('user_id', user.id).single()
-        .then(({ data }) => { if (data?.monthly_budget) setMonthlyBudget(Number(data.monthly_budget)); });
+      // Load global budget from global_budget_periods
+      const curMonth = format(new Date(), 'yyyy-MM');
+      supabase.from('global_budget_periods').select('month, amount').eq('user_id', user.id)
+        .then(({ data }) => {
+          if (!data || data.length === 0) return;
+          const sorted = [...data].sort((a, b) => b.month.localeCompare(a.month));
+          // Current month budget (or most recent)
+          const cur = sorted.find(p => p.month === curMonth) || sorted[0];
+          if (cur) setMonthlyBudget(Number(cur.amount));
+          // Accumulated from closed months this year (budget - spent will be loaded via globalStats)
+        });
 
-      // Also load global month stats in parallel with per-budget expenses
+      // Load global month stats + accumulated
       const now2 = new Date();
+      const curMonth2 = format(now2, 'yyyy-MM');
+      const yearStart = `${now2.getFullYear()}-01-01`;
       const curMonthStart = format(startOfMonth(now2), 'yyyy-MM-dd');
       const curMonthEnd = format(endOfMonth(now2), 'yyyy-MM-dd');
-      const prevMonthStart = format(startOfMonth(addMonths(now2, -1)), 'yyyy-MM-dd');
-      const prevMonthEnd = format(endOfMonth(addMonths(now2, -1)), 'yyyy-MM-dd');
-      supabase.from('expenses').select('amount, date').eq('user_id', user.id)
-        .gte('date', prevMonthStart).lte('date', curMonthEnd)
-        .then(({ data }) => {
-          const rows = data || [];
-          const curSpent = rows.filter(e => e.date >= curMonthStart && e.date <= curMonthEnd).reduce((s, e) => s + Number(e.amount), 0);
-          const prevSpent = rows.filter(e => e.date >= prevMonthStart && e.date <= prevMonthEnd).reduce((s, e) => s + Number(e.amount), 0);
-          setGlobalStats({ spent: curSpent, prevSpent });
-        });
+
+      // Load all expenses this year + global_budget_periods for accumulation
+      Promise.all([
+        supabase.from('expenses').select('amount, date').eq('user_id', user.id).gte('date', yearStart).lte('date', curMonthEnd),
+        supabase.from('global_budget_periods').select('month, amount').eq('user_id', user.id),
+      ]).then(([{ data: expRows }, { data: periods }]) => {
+        const rows = expRows || [];
+        const curSpent = rows.filter(e => e.date >= curMonthStart && e.date <= curMonthEnd).reduce((s, e) => s + Number(e.amount), 0);
+        setGlobalStats({ spent: curSpent, prevSpent: 0 });
+
+        // Compute accumulated for closed months this year
+        if (periods && periods.length > 0) {
+          const cur = (periods as any[]).find(p => p.month === curMonth2);
+          if (cur) setMonthlyBudget(Number(cur.amount));
+          const closedMonths = (periods as any[]).filter(p => p.month < curMonth2 && p.month >= `${now2.getFullYear()}-01`);
+          let acc = 0;
+          closedMonths.forEach(p => {
+            const mStart = `${p.month}-01`;
+            const mEnd = format(endOfMonth(new Date(`${p.month}-01`)), 'yyyy-MM-dd');
+            const mSpent = rows.filter(e => e.date >= mStart && e.date <= mEnd).reduce((s, e) => s + Number(e.amount), 0);
+            acc += Number(p.amount) - mSpent;
+          });
+          if (closedMonths.length > 0) setGlobalAccumulated(acc);
+        }
+      });
 
       // Roundtrip 2: expenses — loads in background, UI already visible
       const allExpandedCatIds = Array.from(new Set(Object.values(budgetCatMap).flat()));
@@ -362,9 +389,19 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
   async function saveMonthlyBudget() {
     const val = parseFloat(budgetInput);
     if (isNaN(val) || val <= 0) return;
+    const curMonth = format(new Date(), 'yyyy-MM');
+    // Upsert from budgetStartMonth forward (propagate to future months with same amount)
+    const months: string[] = [];
+    let m = budgetStartMonth;
+    while (m <= curMonth) {
+      months.push(m);
+      const d = addMonths(new Date(`${m}-01`), 1);
+      m = format(d, 'yyyy-MM');
+    }
+    const upserts = months.map(mo => ({ user_id: user.id, month: mo, amount: val }));
+    await supabase.from('global_budget_periods').upsert(upserts, { onConflict: 'user_id,month' });
     setMonthlyBudget(val);
     setShowBudgetModal(false);
-    await supabase.from('user_settings').update({ monthly_budget: val }).eq('user_id', user.id);
   }
 
   const allEntries = flattenTree(roots);
@@ -414,7 +451,7 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
 
         return (
           <button onClick={onOpenGlobalBudget} className="w-full text-left mb-4">
-            <div className="rounded-2xl p-4" style={{ background: '#0d2235' }}>
+            <div className="rounded-2xl p-4" style={{ background: '#0a2540', border: '1px solid #1d4ed820' }}>
               <div className="flex items-center justify-between mb-3">
                 <span className="text-[11px] font-semibold text-dark-500 uppercase tracking-wider capitalize">
                   Gasto global · {monthLabel}
@@ -436,15 +473,23 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
                     </div>
                     <span className="text-xs text-dark-500">de {formatCurrency(monthlyBudget)}</span>
                   </div>
-                  <div className="w-full rounded-full h-1.5 mb-2 overflow-hidden relative" style={{ background: '#1a3349' }}>
+                  <div className="w-full rounded-full h-1.5 mb-2 overflow-hidden relative" style={{ background: '#1e3a5f' }}>
                     {!isOver && <div className="absolute right-0 top-0 h-full rounded-full transition-all duration-500"
                       style={{ width: `${Math.max(100 - pct, 0)}%`, backgroundColor: color }} />}
                   </div>
-                  <div className="flex justify-between">
+                  <div className="flex justify-between mb-2">
                     <span className="text-[10px] text-dark-500 capitalize">1 {monthLabel}</span>
                     <span className={`text-[10px] font-bold ${isOver ? 'text-red-400' : 'text-dark-400'}`}>{pct.toFixed(1)}% gastado</span>
                     <span className="text-[10px] text-dark-500 capitalize">{daysInMonth} {monthLabel}</span>
                   </div>
+                  {globalAccumulated !== null && (
+                    <div className="flex items-center gap-1.5 pt-2 border-t border-white/5">
+                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: globalAccumulated >= 0 ? '#22c55e' : '#ef4444' }} />
+                      <span className="text-[11px] font-medium" style={{ color: globalAccumulated >= 0 ? '#22c55e' : '#ef4444' }}>
+                        {formatCurrency(Math.abs(globalAccumulated))} {globalAccumulated >= 0 ? 'ahorro acumulado' : 'excedido acumulado'} en {now.getFullYear()}
+                      </span>
+                    </div>
+                  )}
                 </>
               ) : (
                 <div className="flex items-center justify-between">
@@ -729,6 +774,12 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
               <button onClick={() => setShowBudgetModal(false)} className="text-dark-400 p-1"><X size={20} /></button>
             </div>
             <p className="text-xs text-dark-500 mb-3">¿Cuánto querés gastar como máximo por mes en total?</p>
+            <div className="flex items-center gap-3 mb-3">
+              <label className="text-xs text-dark-400 whitespace-nowrap">Desde</label>
+              <input type="month" value={budgetStartMonth} onChange={e => setBudgetStartMonth(e.target.value)}
+                max={format(new Date(), 'yyyy-MM')}
+                className="flex-1 bg-dark-800 border border-dark-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-dark-500" />
+            </div>
             <div className="bg-dark-800 rounded-2xl px-4 py-3 text-center mb-4">
               <span className="text-3xl font-extrabold">{budgetInput || '0'}</span>
             </div>
