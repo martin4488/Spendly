@@ -118,15 +118,30 @@ export default function ReflectView({ user }: Props) {
       months.push({ label: cap(label), amount: monthMap[mo] || 0, isCurrent: mo === currentMonth });
     }
 
-    // Build category spend map
-    const spendMap: Record<string, number> = {};
-    expenses.forEach((e: any) => {
-      if (e.category_id) spendMap[e.category_id] = (spendMap[e.category_id] || 0) + Number(e.amount);
-    });
-
-    // Compute avg for closed months (to divide into monthly avg)
+    // Compute avg for closed months only
     const closedMonths = months.filter(m => !m.isCurrent);
     const numClosed = Math.max(closedMonths.length, 1);
+
+    // Build category spend map using ONLY closed months
+    const closedMonthKeys = new Set(
+      closedMonths.map(m => {
+        const idx = months.indexOf(m);
+        return format(new Date(yr, idx, 1), 'yyyy-MM');
+      })
+    );
+    // Recompute closed month keys from actual month positions
+    const closedKeys = new Set<string>();
+    for (let m = 0; m < 12; m++) {
+      const mo = format(new Date(yr, m, 1), 'yyyy-MM');
+      if (mo >= format(new Date(yr, 0, 1), 'yyyy-MM') && mo < currentMonth) closedKeys.add(mo);
+    }
+    const spendMap: Record<string, number> = {};
+    expenses.forEach((e: any) => {
+      const mo = e.date.slice(0, 7);
+      if (e.category_id && closedKeys.has(mo)) {
+        spendMap[e.category_id] = (spendMap[e.category_id] || 0) + Number(e.amount);
+      }
+    });
 
     const catData: CatData[] = tree
       .map(node => {
