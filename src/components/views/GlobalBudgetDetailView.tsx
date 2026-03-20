@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/utils';
-import { ArrowLeft, ChevronLeft, ChevronRight, Edit3, Delete, X } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, Edit3, Delete, X, Trash2 } from 'lucide-react';
 import { format, parseISO, startOfMonth, endOfMonth, subMonths } from 'date-fns';
 import { es } from 'date-fns/locale';
 import type { CurrencyCode } from '@/lib/currency';
@@ -170,36 +170,35 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
     }
   }
 
+  async function handleDeleteGlobal() {
+    if (!confirm('¿Eliminar el presupuesto global? Los datos históricos se conservan.')) return;
+    await supabase.from('global_budget_periods').delete().eq('user_id', user.id);
+    onBack();
+  }
+
   async function handleSaveAmount() {
     if (!editAmount || isNaN(parseFloat(editAmount))) return;
     setSaving(true);
     try {
       const newAmount = parseFloat(editAmount);
       const period = months[currentIndex];
-      const oldAmount = period.amount;
+      const startMonthInput = (document.getElementById('global-edit-start-month') as HTMLInputElement)?.value || period.month;
 
-      // Upsert this month
-      await supabase.from('global_budget_periods').upsert({
-        user_id: user.id,
-        month: period.month,
-        amount: newAmount,
-      }, { onConflict: 'user_id,month' });
-
-      // Update future months that had the same amount (propagate forward)
-      const futureMonths = months.filter((p, i) =>
-        i < currentIndex && p.month > period.month && p.amount === oldAmount
-      );
-      for (const fp of futureMonths) {
-        await supabase.from('global_budget_periods').upsert({
-          user_id: user.id, month: fp.month, amount: newAmount,
-        }, { onConflict: 'user_id,month' });
+      // Upsert all months from startMonth to current (and future existing ones with same amount)
+      const curMonth = format(new Date(), 'yyyy-MM');
+      const upserts: { user_id: string; month: string; amount: number }[] = [];
+      let m = startMonthInput;
+      while (m <= curMonth) {
+        upserts.push({ user_id: user.id, month: m, amount: newAmount });
+        const d = new Date(`${m}-01`);
+        d.setMonth(d.getMonth() + 1);
+        m = format(d, 'yyyy-MM');
       }
+      await supabase.from('global_budget_periods').upsert(upserts, { onConflict: 'user_id,month' });
 
-      setMonths(prev => prev.map((p, i) => {
-        if (i === currentIndex) return { ...p, amount: newAmount };
-        if (futureMonths.some(fp => fp.month === p.month)) return { ...p, amount: newAmount };
-        return p;
-      }));
+      setMonths(prev => prev.map(p =>
+        p.month >= startMonthInput ? { ...p, amount: newAmount } : p
+      ));
       cache.current.clear();
       setShowEditForm(false);
     } catch (err) {
@@ -287,6 +286,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
         <button onClick={onBack} className="p-1 text-dark-300"><ArrowLeft size={20} /></button>
         <div className="flex items-center gap-1">
           <button onClick={() => { setEditAmount(String(period.amount || '')); setShowEditForm(true); }} className="p-1.5 text-dark-400 hover:text-white"><Edit3 size={16} /></button>
+          <button onClick={handleDeleteGlobal} className="p-1.5 text-dark-400 hover:text-red-400"><Trash2 size={16} /></button>
         </div>
       </div>
 
@@ -537,8 +537,15 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
             <div className="w-8" />
           </div>
           <div className="px-5 py-6 flex-shrink-0 border-b border-dark-800 text-center">
-            <p className="text-xs text-dark-400 mb-1">Monto para {format(parseISO(`${period.month}-01`), 'MMMM yyyy', { locale: es })}</p>
-            <p className="text-4xl font-extrabold">{editAmount || '0'}</p>
+            <p className="text-xs text-dark-400 mb-3">Monto a partir de este mes en adelante</p>
+            <p className="text-4xl font-extrabold mb-4">{editAmount || '0'}</p>
+            <div className="flex items-center gap-3">
+              <label className="text-xs text-dark-400 whitespace-nowrap">Desde</label>
+              <input type="month" defaultValue={period.month}
+                id="global-edit-start-month"
+                max={format(new Date(), 'yyyy-MM')}
+                className="flex-1 bg-dark-800 border border-dark-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-dark-500" />
+            </div>
           </div>
           <div className="flex-1" />
           <div className="flex-shrink-0">
