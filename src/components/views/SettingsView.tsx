@@ -5,15 +5,16 @@ import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { exportToCSV } from '@/lib/utils';
 import { CURRENCIES, CurrencyCode } from '@/lib/currency';
-import { LogOut, Download, Mail, Shield, Coins } from 'lucide-react';
+import { LogOut, Download, Mail, Shield, Coins, FolderTree, ChevronRight } from 'lucide-react';
 
 interface Props {
   user: User;
   defaultCurrency: CurrencyCode;
   onCurrencyChange: (currency: CurrencyCode) => void;
+  onOpenCategories: () => void;
 }
 
-export default function SettingsView({ user, defaultCurrency, onCurrencyChange }: Props) {
+export default function SettingsView({ user, defaultCurrency, onCurrencyChange, onOpenCategories }: Props) {
   const [exporting, setExporting] = useState(false);
   const [savingCurrency, setSavingCurrency] = useState(false);
 
@@ -119,6 +120,18 @@ export default function SettingsView({ user, defaultCurrency, onCurrencyChange }
             );
           })}
         </div>
+      </div>
+
+      {/* Categories */}
+      <div className="bg-dark-800 rounded-xl overflow-hidden mb-4">
+        <button onClick={onOpenCategories} className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-dark-700/50 transition-colors">
+          <FolderTree size={18} className="text-dark-400" />
+          <div className="text-left flex-1">
+            <p className="text-sm font-medium">Categorías</p>
+            <p className="text-xs text-dark-400">Organizá tus gastos por categoría</p>
+          </div>
+          <ChevronRight size={16} className="text-dark-500" />
+        </button>
       </div>
 
       {/* Actions */}
