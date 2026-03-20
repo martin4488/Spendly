@@ -165,7 +165,7 @@ export default function CategoriesView({ user, onBack }: { user: User; onBack?: 
     setLoading(true);
     const monthRange = getMonthRange();
     const [{ data: cats }, { data: expenses }] = await Promise.all([
-      supabase.from('categories').select('*').eq('user_id', user.id).neq('deleted', true).order('position').order('created_at'),
+      supabase.from('categories').select('*').eq('user_id', user.id).neq('deleted', true).neq('hidden', true).order('position').order('created_at'),
       supabase.from('expenses').select('amount, category_id').eq('user_id', user.id).gte('date', monthRange.start).lte('date', monthRange.end),
     ]);
     const spendMap: Record<string, number> = {};
