@@ -336,12 +336,24 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
     if (!name || !amount) return;
     setSaving(true);
     try {
-      const budgetData = { user_id: user.id, name, amount: parseFloat(amount), recurrence, start_date: startDate };
+      const newAmount = parseFloat(amount);
+      const budgetData = { user_id: user.id, name, amount: newAmount, recurrence, start_date: startDate };
       let budgetId: string;
       if (editingBudget) {
         await supabase.from('budgets').update(budgetData).eq('id', editingBudget.id);
         budgetId = editingBudget.id;
         await supabase.from('budget_categories').delete().eq('budget_id', budgetId);
+        // Propagate new amount to current + future periods that had the old amount
+        const today = format(new Date(), 'yyyy-MM-dd');
+        const { data: futurePeriods } = await supabase
+          .from('budget_periods').select('id, amount').eq('budget_id', budgetId).gte('period_start', today);
+        if (futurePeriods && futurePeriods.length > 0) {
+          const toUpdate = (futurePeriods as any[])
+            .filter(p => p.amount == null || p.amount === editingBudget.amount)
+            .map(p => p.id);
+          if (toUpdate.length > 0)
+            await supabase.from('budget_periods').update({ amount: newAmount }).in('id', toUpdate);
+        }
       } else {
         const { data } = await supabase.from('budgets').insert(budgetData).select().single();
         budgetId = data.id;
@@ -595,7 +607,7 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
           </div>
 
           <div className="px-5 py-4 flex-shrink-0 border-b border-dark-800">
-            <p className="text-xs text-dark-400 font-medium mb-1 uppercase tracking-wider">Monto</p>
+            <p className="text-xs text-dark-400 font-medium mb-1 uppercase tracking-wider">{editingBudget ? 'Monto a partir de este período' : 'Monto'}</p>
             <p className="text-3xl font-extrabold text-white">{amount || '0'}</p>
           </div>
 
