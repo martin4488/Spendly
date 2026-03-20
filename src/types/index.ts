@@ -5,6 +5,7 @@ export interface Category {
   icon: string;
   color: string;
   parent_id: string | null;
+  hidden: boolean;
   created_at: string;
   updated_at: string;
   subcategories?: Category[];
