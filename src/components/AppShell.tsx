@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
-import { LayoutDashboard, FolderTree, Wallet, RefreshCcw, Settings } from 'lucide-react';
+import { LayoutDashboard, FolderTree, Wallet, RefreshCcw, Settings, BarChart2 } from 'lucide-react';
 import { setDefaultCurrency } from '@/lib/utils';
 import { Budget } from '@/types';
 import DashboardView from '@/components/views/DashboardView';
@@ -12,15 +12,17 @@ import BudgetsView from '@/components/views/BudgetsView';
 import BudgetDetailView from '@/components/views/BudgetDetailView';
 import GlobalBudgetDetailView from '@/components/views/GlobalBudgetDetailView';
 import RecurringView from '@/components/views/RecurringView';
+import ReflectView from '@/components/views/ReflectView';
 import SettingsView from '@/components/views/SettingsView';
 import SpendingOverview from '@/components/views/SpendingOverview';
 import type { CurrencyCode } from '@/lib/currency';
 
-type Tab = 'dashboard' | 'categories' | 'budgets' | 'recurring' | 'settings' | 'overview' | 'budget-detail' | 'global-budget-detail';
+type Tab = 'dashboard' | 'categories' | 'budgets' | 'recurring' | 'settings' | 'overview' | 'budget-detail' | 'global-budget-detail' | 'reflect';
 
 const tabs = [
   { id: 'dashboard' as Tab, label: 'Inicio', icon: LayoutDashboard },
   { id: 'budgets' as Tab, label: 'Budgets', icon: Wallet },
+  { id: 'reflect' as Tab, label: 'Reflect', icon: BarChart2 },
   { id: 'recurring' as Tab, label: 'Fijos', icon: RefreshCcw },
   { id: 'settings' as Tab, label: 'Más', icon: Settings },
 ];
@@ -80,6 +82,7 @@ export default function AppShell({ user, initialCurrency }: AppShellProps) {
             defaultCurrency={defaultCurrency}
           />
         )}
+        {activeTab === 'reflect' && <ReflectView user={user} />}
         {activeTab === 'recurring' && <RecurringView user={user} />}
         {activeTab === 'settings' && (
           <SettingsView user={user} defaultCurrency={defaultCurrency} onCurrencyChange={updateCurrency} onOpenCategories={() => setActiveTab('categories')} />
