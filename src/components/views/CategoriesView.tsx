@@ -321,7 +321,7 @@ export default function CategoriesView({ user }: { user: User }) {
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium text-dark-200">{node.name}</p>
-                    <p className="text-xs text-dark-400">{formatCurrency(spent)}</p>
+                    
                   </div>
                   {/* Add sub-sub only up to depth 1 (so max 3 levels total) */}
                   {depth < 2 && (
@@ -381,7 +381,7 @@ export default function CategoriesView({ user }: { user: User }) {
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium">{cat.name}</p>
-                        <p className="text-xs text-dark-400">{formatCurrency(spent)} este mes</p>
+                        
                       </div>
                       <button onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => { e.stopPropagation(); openForm(undefined, cat.id); }}
