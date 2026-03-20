@@ -385,7 +385,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
             ) : (
               <>
                 <p className={`text-4xl font-extrabold ${budgetTextColor}`}>{formatCurrency(left)}</p>
-                <p className="text-dark-500 text-sm mt-0.5">disponible de {formatCurrency(periodAmount)}</p>
+                <p className="text-dark-500 text-sm mt-0.5">{isCurrentPeriod ? 'disponible' : 'sin usar'} de {formatCurrency(periodAmount)}</p>
               </>
             )}
           </div>
