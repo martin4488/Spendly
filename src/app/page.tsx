@@ -61,11 +61,8 @@ export default function Home() {
       if (event === 'SIGNED_OUT') {
         setBootData(null);
         setUnauthenticated(true);
-      } else if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-        // Session refreshed on another device — update user if needed
-        if (session?.user && !bootData) {
-          boot();
-        }
+      } else if (event === 'SIGNED_IN' && session?.user) {
+        boot();
       }
     });
 
