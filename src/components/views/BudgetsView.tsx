@@ -15,6 +15,7 @@ import { es } from 'date-fns/locale';
 interface Props {
   user: User;
   onOpenBudget: (budget: Budget, periodId?: string) => void;
+  onOpenGlobalBudget: () => void;
 }
 
 export interface BudgetPeriod {
@@ -88,7 +89,7 @@ function generateMissingPeriods(budget: Budget, existingPeriods: BudgetPeriod[])
   return missing;
 }
 
-export default function BudgetsView({ user, onOpenBudget }: Props) {
+export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: Props) {
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [roots, setRoots] = useState<CatNode[]>([]);
@@ -96,6 +97,10 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
   const [showForm, setShowForm] = useState(false);
   const [editingBudget, setEditingBudget] = useState<Budget | null>(null);
   const [currentPeriods, setCurrentPeriods] = useState<Record<string, BudgetPeriod>>({});
+  const [monthlyBudget, setMonthlyBudget] = useState<number | null>(null);
+  const [globalStats, setGlobalStats] = useState<{ spent: number; prevSpent: number } | null>(null);
+  const [showBudgetModal, setShowBudgetModal] = useState(false);
+  const [budgetInput, setBudgetInput] = useState('');
 
   // Form state
   const [name, setName] = useState('');
@@ -158,12 +163,16 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
         periodsByBudget[p.budget_id].push(p);
       });
 
-      // Batch-insert any missing periods (one insert, not N)
-      const missingInserts: { budget_id: string; period_start: string; period_end: string }[] = [];
+      // Batch-insert any missing periods, inheriting amount from most recent existing period
+      const missingInserts: { budget_id: string; period_start: string; period_end: string; amount?: number }[] = [];
       for (const b of allBudgets) {
-        generateMissingPeriods(b as Budget, periodsByBudget[b.id] || []).forEach(m =>
-          missingInserts.push({ budget_id: b.id, period_start: m.start, period_end: m.end })
-        );
+        const existing = (periodsByBudget[b.id] || []).sort((a: BudgetPeriod, b: BudgetPeriod) => b.period_start.localeCompare(a.period_start));
+        const lastAmount = existing.find((p: BudgetPeriod) => p.amount != null)?.amount ?? null;
+        generateMissingPeriods(b as Budget, periodsByBudget[b.id] || []).forEach(m => {
+          const insert: { budget_id: string; period_start: string; period_end: string; amount?: number } = { budget_id: b.id, period_start: m.start, period_end: m.end };
+          if (lastAmount != null) insert.amount = lastAmount;
+          missingInserts.push(insert);
+        });
       }
       if (missingInserts.length > 0) {
         const { data: newPeriods } = await supabase.from('budget_periods').insert(missingInserts).select();
@@ -209,6 +218,25 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
       });
       setBudgets(enrichedPartial);
       setLoading(false);
+
+      // Load monthly_budget from user_settings (non-blocking)
+      supabase.from('user_settings').select('monthly_budget').eq('user_id', user.id).single()
+        .then(({ data }) => { if (data?.monthly_budget) setMonthlyBudget(Number(data.monthly_budget)); });
+
+      // Also load global month stats in parallel with per-budget expenses
+      const now2 = new Date();
+      const curMonthStart = format(startOfMonth(now2), 'yyyy-MM-dd');
+      const curMonthEnd = format(endOfMonth(now2), 'yyyy-MM-dd');
+      const prevMonthStart = format(startOfMonth(addMonths(now2, -1)), 'yyyy-MM-dd');
+      const prevMonthEnd = format(endOfMonth(addMonths(now2, -1)), 'yyyy-MM-dd');
+      supabase.from('expenses').select('amount, date').eq('user_id', user.id)
+        .gte('date', prevMonthStart).lte('date', curMonthEnd)
+        .then(({ data }) => {
+          const rows = data || [];
+          const curSpent = rows.filter(e => e.date >= curMonthStart && e.date <= curMonthEnd).reduce((s, e) => s + Number(e.amount), 0);
+          const prevSpent = rows.filter(e => e.date >= prevMonthStart && e.date <= prevMonthEnd).reduce((s, e) => s + Number(e.amount), 0);
+          setGlobalStats({ spent: curSpent, prevSpent });
+        });
 
       // Roundtrip 2: expenses — loads in background, UI already visible
       const allExpandedCatIds = Array.from(new Set(Object.values(budgetCatMap).flat()));
@@ -331,6 +359,14 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
     return ids.some(id => selectedCatIds.includes(id)) && !ids.every(id => selectedCatIds.includes(id));
   }
 
+  async function saveMonthlyBudget() {
+    const val = parseFloat(budgetInput);
+    if (isNaN(val) || val <= 0) return;
+    setMonthlyBudget(val);
+    setShowBudgetModal(false);
+    await supabase.from('user_settings').update({ monthly_budget: val }).eq('user_id', user.id);
+  }
+
   const allEntries = flattenTree(roots);
   const q = searchQuery.trim().toLowerCase();
   const searchResults = q ? allEntries.filter(e => e.cat.name.toLowerCase().includes(q)) : [];
@@ -363,6 +399,66 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
           <Plus size={18} />
         </button>
       </div>
+
+      {/* GLOBAL BUDGET WIDGET */}
+      {(() => {
+        const now = new Date();
+        const spent = globalStats?.spent || 0;
+        const pct = monthlyBudget && monthlyBudget > 0 ? (spent / monthlyBudget) * 100 : 0;
+        const left = monthlyBudget ? Math.max(monthlyBudget - spent, 0) : 0;
+        const isOver = monthlyBudget ? spent > monthlyBudget : false;
+        const color = isOver ? '#ef4444' : pct >= 80 ? '#f59e0b' : '#22c55e';
+        const textColor = isOver ? 'text-red-400' : pct >= 80 ? 'text-amber-400' : 'text-brand-400';
+        const monthLabel = format(now, 'MMMM', { locale: es });
+        const daysInMonth = endOfMonth(now).getDate();
+
+        return (
+          <button onClick={onOpenGlobalBudget} className="w-full text-left mb-4">
+            <div className="rounded-2xl p-4" style={{ background: '#0d2235' }}>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-[11px] font-semibold text-dark-500 uppercase tracking-wider capitalize">
+                  Gasto global · {monthLabel}
+                </span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: '#22c55e18', color: '#22c55e' }}>GLOBAL</span>
+              </div>
+
+              {monthlyBudget ? (
+                <>
+                  <div className="flex items-baseline justify-between mb-2.5">
+                    <div className="flex items-baseline gap-1.5">
+                      {isOver ? (
+                        <><span className="text-xl font-extrabold text-red-400">{formatCurrency(spent - monthlyBudget)}</span>
+                        <span className="text-xs text-red-400/70">excedido</span></>
+                      ) : (
+                        <><span className={`text-xl font-extrabold ${textColor}`}>{formatCurrency(left)}</span>
+                        <span className="text-xs text-dark-500">disponible</span></>
+                      )}
+                    </div>
+                    <span className="text-xs text-dark-500">de {formatCurrency(monthlyBudget)}</span>
+                  </div>
+                  <div className="w-full rounded-full h-1.5 mb-2 overflow-hidden relative" style={{ background: '#1a3349' }}>
+                    {!isOver && <div className="absolute right-0 top-0 h-full rounded-full transition-all duration-500"
+                      style={{ width: `${Math.max(100 - pct, 0)}%`, backgroundColor: color }} />}
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-[10px] text-dark-500 capitalize">1 {monthLabel}</span>
+                    <span className={`text-[10px] font-bold ${isOver ? 'text-red-400' : 'text-dark-400'}`}>{pct.toFixed(1)}% gastado</span>
+                    <span className="text-[10px] text-dark-500 capitalize">{daysInMonth} {monthLabel}</span>
+                  </div>
+                </>
+              ) : (
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-xl font-extrabold text-dark-200">{formatCurrency(spent)}</span>
+                    <span className="text-xs text-dark-500 ml-2">gastado este mes</span>
+                  </div>
+                  <span className="text-xs text-brand-400 font-medium">Configurar →</span>
+                </div>
+              )}
+            </div>
+          </button>
+        );
+      })()}
 
       {loading ? (
         <div className="flex justify-center py-10">
@@ -621,6 +717,39 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
                 );
               })
             )}
+          </div>
+        </div>
+      )}
+      {/* SET MONTHLY BUDGET MODAL */}
+      {showBudgetModal && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-end justify-center">
+          <div className="bg-dark-900 w-full max-w-lg rounded-t-3xl p-6">
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="text-base font-bold">Presupuesto mensual global</h3>
+              <button onClick={() => setShowBudgetModal(false)} className="text-dark-400 p-1"><X size={20} /></button>
+            </div>
+            <p className="text-xs text-dark-500 mb-3">¿Cuánto querés gastar como máximo por mes en total?</p>
+            <div className="bg-dark-800 rounded-2xl px-4 py-3 text-center mb-4">
+              <span className="text-3xl font-extrabold">{budgetInput || '0'}</span>
+            </div>
+            <div className="grid grid-cols-3 border-t border-dark-800">
+              {['1','2','3','4','5','6','7','8','9','.','0','backspace'].map(key => (
+                <button key={key}
+                  onClick={() => {
+                    if (key === 'backspace') setBudgetInput(p => p.slice(0, -1));
+                    else if (key === '.') { if (!budgetInput.includes('.')) setBudgetInput(p => (p || '0') + '.'); }
+                    else { if (budgetInput.includes('.')) { const [,d] = budgetInput.split('.'); if ((d?.length || 0) >= 2) return; } setBudgetInput(p => p + key); }
+                  }}
+                  className="py-4 text-center text-xl font-medium border-b border-r border-dark-800 active:bg-dark-700 bg-dark-900 text-white">
+                  {key === 'backspace' ? <span className="flex items-center justify-center"><Delete size={20} /></span> : key}
+                </button>
+              ))}
+            </div>
+            <button onClick={saveMonthlyBudget}
+              disabled={!budgetInput || isNaN(parseFloat(budgetInput))}
+              className="w-full mt-4 bg-brand-600 disabled:opacity-30 text-white font-bold py-4 rounded-2xl text-base">
+              Guardar
+            </button>
           </div>
         </div>
       )}
