@@ -123,60 +123,70 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
     try {
       const today = format(new Date(), 'yyyy-MM-dd');
 
-      // Step 1: budgets + categories in parallel (both indexed by user_id)
+      // Roundtrip 1a: budgets + categories (indexed by user_id)
       const [{ data: budgetsData }, { data: catsData }] = await Promise.all([
         supabase.from('budgets').select('*').eq('user_id', user.id).order('name'),
         supabase.from('categories').select('*').eq('user_id', user.id).neq('deleted', true).order('position').order('created_at'),
       ]);
-      const allBudgets = budgetsData || [];
-      const budgetIds = allBudgets.map((b: any) => b.id);
+      const budgetIds = (budgetsData || []).map((b: any) => b.id);
 
-      // Step 2: filter budget_categories + budget_periods by budget IDs (avoids full table scans)
+      // Roundtrip 1b: bc + periods filtered by budget IDs — fire immediately after budgetIds known,
+      // overlaps with the in-memory work below so effectively free
       const [{ data: bcData }, { data: periodsData }] = budgetIds.length > 0
         ? await Promise.all([
             supabase.from('budget_categories').select('*').in('budget_id', budgetIds),
-            supabase.from('budget_periods').select('*').in('budget_id', budgetIds),
+            supabase.from('budget_periods').select('id, budget_id, period_start, period_end, amount').in('budget_id', budgetIds),
           ])
         : [{ data: [] as any[] }, { data: [] as any[] }];
 
+      const allBudgets = budgetsData || [];
       const allCats = catsData || [];
       const allPeriods = periodsData || [];
       setCategories(allCats);
-      // Build tree once, reuse
       const tree = buildTree(allCats);
       setRoots(tree);
 
-      // Batch all missing period inserts in one query instead of N sequential inserts
-      const missingInserts: { budget_id: string; period_start: string; period_end: string }[] = [];
-      for (const b of allBudgets) {
-        const bPeriods = allPeriods.filter((p: BudgetPeriod) => p.budget_id === b.id);
-        generateMissingPeriods(b as Budget, bPeriods).forEach(m =>
-          missingInserts.push({ budget_id: b.id, period_start: m.start, period_end: m.end })
-        );
-      }
-      if (missingInserts.length > 0) {
-        const { data: newPeriods } = await supabase.from('budget_periods').insert(missingInserts).select();
-        if (newPeriods) allPeriods.push(...newPeriods);
-      }
-
-      // Find current period for each budget
-      const curPeriods: Record<string, BudgetPeriod> = {};
-      for (const b of allBudgets) {
-        const bPeriods = allPeriods.filter((p: BudgetPeriod) => p.budget_id === b.id);
-        const current = bPeriods.find((p: BudgetPeriod) => p.period_start <= today && p.period_end >= today);
-        if (current) curPeriods[b.id] = current;
-      }
-      setCurrentPeriods(curPeriods);
-
-      // Build per-budget expanded cat IDs — use Sets for O(1) lookups
-      const budgetCatMap: Record<string, string[]> = {};
-      const budgetCatSetMap: Record<string, Set<string>> = {};
-      // Pre-index bcData by budget_id for O(1) access
+      // Index bcData and periods by budget_id up front
       const bcByBudget: Record<string, string[]> = {};
       (bcData || []).forEach((bc: any) => {
         if (!bcByBudget[bc.budget_id]) bcByBudget[bc.budget_id] = [];
         bcByBudget[bc.budget_id].push(bc.category_id);
       });
+      const periodsByBudget: Record<string, BudgetPeriod[]> = {};
+      allPeriods.forEach((p: BudgetPeriod) => {
+        if (!periodsByBudget[p.budget_id]) periodsByBudget[p.budget_id] = [];
+        periodsByBudget[p.budget_id].push(p);
+      });
+
+      // Batch-insert any missing periods (one insert, not N)
+      const missingInserts: { budget_id: string; period_start: string; period_end: string; user_id: string }[] = [];
+      for (const b of allBudgets) {
+        generateMissingPeriods(b as Budget, periodsByBudget[b.id] || []).forEach(m =>
+          missingInserts.push({ budget_id: b.id, period_start: m.start, period_end: m.end })
+        );
+      }
+      if (missingInserts.length > 0) {
+        const { data: newPeriods } = await supabase.from('budget_periods').insert(missingInserts).select();
+        if (newPeriods) newPeriods.forEach((p: BudgetPeriod) => {
+          if (!periodsByBudget[p.budget_id]) periodsByBudget[p.budget_id] = [];
+          periodsByBudget[p.budget_id].push(p);
+          allPeriods.push(p);
+        });
+      }
+
+      // Current period per budget
+      const curPeriods: Record<string, BudgetPeriod> = {};
+      for (const b of allBudgets) {
+        const cur = (periodsByBudget[b.id] || []).find(
+          (p: BudgetPeriod) => p.period_start <= today && p.period_end >= today
+        );
+        if (cur) curPeriods[b.id] = cur;
+      }
+      setCurrentPeriods(curPeriods);
+
+      // Expand category IDs for each budget using Set for O(1)
+      const budgetCatSetMap: Record<string, Set<string>> = {};
+      const budgetCatMap: Record<string, string[]> = {};
       for (const b of allBudgets) {
         const catIds = bcByBudget[b.id] || [];
         const expandedSet = new Set<string>(catIds);
@@ -187,20 +197,23 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
           });
         };
         addDesc(tree);
-        budgetCatMap[b.id] = Array.from(expandedSet);
         budgetCatSetMap[b.id] = expandedSet;
+        budgetCatMap[b.id] = Array.from(expandedSet);
       }
 
-      // Single bulk query for ALL expenses across ALL current periods
-      const allExpandedCatIds = Array.from(new Set(Object.values(budgetCatMap).flat()));
-      const periodStarts = Object.values(curPeriods).map(p => p.period_start);
-      const periodEnds = Object.values(curPeriods).map(p => p.period_end);
-      const minDate = periodStarts.length > 0 ? periodStarts.reduce((a, b) => a < b ? a : b) : today;
-      const maxDate = periodEnds.length > 0 ? periodEnds.reduce((a, b) => a > b ? a : b) : today;
-      // Also need past periods for accumulated calc — use budget start_date as floor
-      const globalMinDate = allBudgets.reduce((min, b) => b.start_date < min ? b.start_date : min, minDate);
+      // Show budgets immediately with spent=0 so UI appears fast, then fill in spending
+      const enrichedPartial: Budget[] = allBudgets.map(b => {
+        const catIds = bcByBudget[b.id] || [];
+        const bCats = allCats.filter(c => catIds.includes(c.id));
+        return { ...b, category_ids: catIds, categories: bCats, spent: 0, prevAccumulated: null } as any;
+      });
+      setBudgets(enrichedPartial);
+      setLoading(false);
 
-      let allExpenses: { category_id: string; amount: number; date: string }[] = [];
+      // Roundtrip 2: expenses — loads in background, UI already visible
+      const allExpandedCatIds = Array.from(new Set(Object.values(budgetCatMap).flat()));
+      const globalMinDate = allBudgets.reduce((min, b) => b.start_date < min ? b.start_date : min, today);
+      const expByCat: Record<string, { amount: number; date: string }[]> = {};
       if (allExpandedCatIds.length > 0) {
         const { data: expData } = await supabase
           .from('expenses')
@@ -208,15 +221,12 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
           .eq('user_id', user.id)
           .in('category_id', allExpandedCatIds)
           .gte('date', globalMinDate)
-          .lte('date', maxDate);
-        allExpenses = (expData || []).map((e: any) => ({ category_id: e.category_id, amount: Number(e.amount), date: e.date }));
+          .lte('date', today);
+        (expData || []).forEach((e: any) => {
+          if (!expByCat[e.category_id]) expByCat[e.category_id] = [];
+          expByCat[e.category_id].push({ amount: Number(e.amount), date: e.date });
+        });
       }
-      // Index expenses by category_id for O(1) access in enriched loop
-      const expByCat: Record<string, { amount: number; date: string }[]> = {};
-      allExpenses.forEach(e => {
-        if (!expByCat[e.category_id]) expByCat[e.category_id] = [];
-        expByCat[e.category_id].push(e);
-      });
 
       const enriched: Budget[] = allBudgets.map(b => {
         const catIds = (bcData || []).filter((bc: any) => bc.budget_id === b.id).map((bc: any) => bc.category_id);
@@ -250,8 +260,7 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
         return { ...b, category_ids: catIds, categories: bCats, spent, prevAccumulated } as any;
       });
             setBudgets(enriched);
-    } catch (err) { console.error(err); }
-    finally { setLoading(false); }
+    } catch (err) { console.error(err); setLoading(false); }
   }
 
   function openForm(budget?: Budget) {
