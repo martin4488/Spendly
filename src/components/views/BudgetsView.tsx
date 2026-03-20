@@ -265,10 +265,10 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
           if (closedMonths.length > 0) {
             setGlobalAccumulated(acc);
             const sorted = [...closedMonths].sort((a, b) => a.month.localeCompare(b.month));
-            const first = format(new Date(`${sorted[0].month}-01`), 'MMM', { locale: es });
-            const last = format(new Date(`${sorted[sorted.length - 1].month}-01`), 'MMM', { locale: es });
-            const label = first === last ? first : `${first} - ${last}`;
-            setGlobalAccumMonths(label.charAt(0).toUpperCase() + label.slice(1));
+            const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+            const first = cap(format(new Date(`${sorted[0].month}-01`), 'MMM', { locale: es }));
+            const last = cap(format(new Date(`${sorted[sorted.length - 1].month}-01`), 'MMM', { locale: es }));
+            setGlobalAccumMonths(first === last ? first : `${first} - ${last}`);
           }
         }
       });
