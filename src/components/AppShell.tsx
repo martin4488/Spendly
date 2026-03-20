@@ -21,7 +21,6 @@ type Tab = 'dashboard' | 'categories' | 'budgets' | 'recurring' | 'settings' | '
 const tabs = [
   { id: 'dashboard' as Tab, label: 'Inicio', icon: LayoutDashboard },
   { id: 'budgets' as Tab, label: 'Budgets', icon: Wallet },
-  { id: 'categories' as Tab, label: 'Categorías', icon: FolderTree },
   { id: 'recurring' as Tab, label: 'Fijos', icon: RefreshCcw },
   { id: 'settings' as Tab, label: 'Más', icon: Settings },
 ];
@@ -52,7 +51,7 @@ export default function AppShell({ user, initialCurrency }: AppShellProps) {
     setActiveTab('budgets');
   };
 
-  const hideNav = activeTab === 'overview' || activeTab === 'budget-detail' || activeTab === 'global-budget-detail';
+  const hideNav = activeTab === 'overview' || activeTab === 'budget-detail' || activeTab === 'global-budget-detail' || activeTab === 'categories';
 
   return (
     <div className="min-h-screen pb-20">
@@ -60,7 +59,7 @@ export default function AppShell({ user, initialCurrency }: AppShellProps) {
         {activeTab === 'dashboard' && (
           <DashboardView user={user} onNavigate={setActiveTab} defaultCurrency={defaultCurrency} />
         )}
-        {activeTab === 'categories' && <CategoriesView user={user} />}
+        {activeTab === 'categories' && <CategoriesView user={user} onBack={() => setActiveTab('settings')} />}
         {activeTab === 'budgets' && <BudgetsView user={user} onOpenBudget={openBudget} onOpenGlobalBudget={() => setActiveTab('global-budget-detail')} />}
         {activeTab === 'budget-detail' && selectedBudget && (
           <BudgetDetailView
@@ -83,7 +82,7 @@ export default function AppShell({ user, initialCurrency }: AppShellProps) {
         )}
         {activeTab === 'recurring' && <RecurringView user={user} />}
         {activeTab === 'settings' && (
-          <SettingsView user={user} defaultCurrency={defaultCurrency} onCurrencyChange={updateCurrency} />
+          <SettingsView user={user} defaultCurrency={defaultCurrency} onCurrencyChange={updateCurrency} onOpenCategories={() => setActiveTab('categories')} />
         )}
         {activeTab === 'overview' && (
           <SpendingOverview user={user} onBack={() => setActiveTab('dashboard')} />
