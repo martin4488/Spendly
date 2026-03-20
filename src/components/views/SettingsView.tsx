@@ -198,7 +198,8 @@ export default function SettingsView({ user, defaultCurrency, onCurrencyChange, 
 
         // Partial match fallback
         if (!matchedCat && catNameLower) {
-          for (const [name, cat] of catMap.entries()) {
+          const entries = Array.from(catMap.entries());
+          for (const [name, cat] of entries) {
             if (name.includes(catNameLower) || catNameLower.includes(name)) {
               matchedCat = cat;
               break;
