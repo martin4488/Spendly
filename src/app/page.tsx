@@ -19,51 +19,47 @@ export default function Home() {
   const [unauthenticated, setUnauthenticated] = useState(false);
 
   useEffect(() => {
+    // Track if we've already booted to avoid double-boot from INITIAL_SESSION + SIGNED_IN
+    let booted = false;
+
     async function bootWithSession(user: User) {
-      // Fire recurring generation without blocking render
-      Promise.resolve(supabase.rpc('generate_recurring_expenses', { p_user_id: user.id })).catch(console.error);
+      if (booted) return;
+      booted = true;
 
-      // Load settings — use default if missing
-      let currency: CurrencyCode = 'EUR';
-      const { data: settings } = await supabase
-        .from('user_settings')
-        .select('default_currency')
-        .eq('user_id', user.id)
-        .single();
-
-      if (settings) {
-        currency = settings.default_currency as CurrencyCode;
-      } else {
-        supabase.from('user_settings').insert({ user_id: user.id, default_currency: 'EUR' }).then(() => {});
-      }
-
-      setDefaultCurrency(currency);
+      // Show app immediately with default currency — don't wait for settings
+      const defaultCurr: CurrencyCode = 'EUR';
+      setDefaultCurrency(defaultCurr);
       setUnauthenticated(false);
-      setBootData({ user, currency });
+      setBootData({ user, currency: defaultCurr });
+
+      // Load real settings + prefetch rates in background (non-blocking)
+      Promise.resolve(supabase.rpc('generate_recurring_expenses', { p_user_id: user.id })).catch(console.error);
+      prefetchRates().catch(console.error);
+
+      supabase.from('user_settings').select('default_currency').eq('user_id', user.id).single()
+        .then(({ data: settings }) => {
+          if (settings?.default_currency && settings.default_currency !== defaultCurr) {
+            const currency = settings.default_currency as CurrencyCode;
+            setDefaultCurrency(currency);
+            setBootData(prev => prev ? { ...prev, currency } : null);
+          } else if (!settings) {
+            supabase.from('user_settings').insert({ user_id: user.id, default_currency: 'EUR' }).then(() => {});
+          }
+        });
     }
-
-    async function boot() {
-      const [{ data: { session } }] = await Promise.all([
-        supabase.auth.getSession(),
-        prefetchRates(),
-      ]);
-
-      if (!session?.user) {
-        setUnauthenticated(true);
-        return;
-      }
-
-      await bootWithSession(session.user);
-    }
-
-    boot();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'SIGNED_OUT') {
+      if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN') {
+        if (session?.user) {
+          bootWithSession(session.user);
+        } else if (event === 'INITIAL_SESSION') {
+          // No session cached — show login immediately
+          setUnauthenticated(true);
+        }
+      } else if (event === 'SIGNED_OUT') {
+        booted = false;
         setBootData(null);
         setUnauthenticated(true);
-      } else if (event === 'SIGNED_IN' && session?.user) {
-        bootWithSession(session.user);
       }
     });
 
