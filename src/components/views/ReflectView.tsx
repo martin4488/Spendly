@@ -20,6 +20,7 @@ interface YearData {
   months: MonthData[];
   cats: CatData[];
   prevYearCats: Record<string, number> | null;
+  prevYearMonths: Record<string, number> | null; // month label -> amount
 }
 
 interface RawCat { id: string; name: string; icon: string; color: string; parent_id: string | null; }
@@ -136,22 +137,29 @@ export default function ReflectView({ user }: Props) {
       .filter(c => c.amount > 0)
       .sort((a, b) => b.amount - a.amount);
 
-    // Previous year cat averages
+    // Previous year cat averages + monthly totals
     let prevYearCats: Record<string, number> | null = null;
+    let prevYearMonths: Record<string, number> | null = null;
     if (prevData?.data && prevData.data.length > 0) {
       const prevSpendMap: Record<string, number> = {};
+      const prevMonthMap: Record<string, number> = {};
       prevData.data.forEach((e: any) => {
         if (e.category_id) prevSpendMap[e.category_id] = (prevSpendMap[e.category_id] || 0) + Number(e.amount);
+        // Group by month label (MMM) — use same month position
+        const mo = parseInt(e.date.slice(5, 7)) - 1;
+        const label = format(new Date(yr - 1, mo, 1), 'MMM', { locale: es });
+        const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+        prevMonthMap[cap(label)] = (prevMonthMap[cap(label)] || 0) + Number(e.amount);
       });
-      // prev year had 12 closed months
       prevYearCats = {};
+      prevYearMonths = prevMonthMap;
       tree.forEach(node => {
         const total = sumNode(node, prevSpendMap);
         if (total > 0) prevYearCats![node.name] = total / 12;
       });
     }
 
-    setYearData(prev => ({ ...prev, [yr]: { months, cats: catData, prevYearCats } }));
+    setYearData(prev => ({ ...prev, [yr]: { months, cats: catData, prevYearCats, prevYearMonths } }));
   }
 
   async function handleYearChange(newYr: number) {
@@ -175,12 +183,26 @@ export default function ReflectView({ user }: Props) {
       }
     }
 
-    if (closed.length > 1) {
-      const best = closed.reduce((a, b) => a.amount < b.amount ? a : b);
-      const worst = closed.reduce((a, b) => a.amount > b.amount ? a : b);
-      if (best !== worst) {
-        insights.push({ color: '#22c55e', text: `${best.label} fue tu <b style="color:#e2e8f0">mejor mes</b> — ${formatCurrency(avg - best.amount)} por debajo del promedio.` });
-        insights.push({ color: '#ef4444', text: `${worst.label} fue tu <b style="color:#e2e8f0">mes más caro</b> — ${formatCurrency(worst.amount - avg)} por encima del promedio.` });
+    // Average comparison vs previous year (same number of months)
+    if (d.prevYearMonths && closed.length > 0) {
+      // Compute prev year avg for the same months (by label)
+      const matchedPrev = closed
+        .map(m => d.prevYearMonths![m.label])
+        .filter(v => v !== undefined);
+      if (matchedPrev.length > 0) {
+        const prevAvg = matchedPrev.reduce((s, v) => s + v, 0) / matchedPrev.length;
+        const diff = avg - prevAvg;
+        const pct = Math.round(Math.abs(diff / prevAvg) * 100);
+        if (pct >= 3) {
+          const up = diff > 0;
+          const firstLabel = closed[0].label;
+          const lastLabel = closed[closed.length - 1].label;
+          const period = firstLabel === lastLabel ? firstLabel : `${firstLabel}–${lastLabel}`;
+          insights.push({
+            color: up ? '#ef4444' : '#22c55e',
+            text: `Gastás <b style="color:#e2e8f0">${formatCurrency(Math.round(Math.abs(diff)))} ${up ? 'más' : 'menos'} por mes</b> que en el mismo período de ${yr - 1} (${period}).`
+          });
+        }
       }
     }
 
@@ -219,14 +241,16 @@ export default function ReflectView({ user }: Props) {
     });
   }
 
-  function renderCatRow(cat: CatData, depth: number): React.ReactNode {
+  function renderCatRow(cat: CatData, depth: number, parentAmount?: number): React.ReactNode {
     const d = yearData[year];
     const closed = d.months.filter(m => !m.isCurrent);
     const avg = closed.length > 0 ? closed.reduce((s, m) => s + m.amount, 0) / closed.length : 0;
     const maxCat = Math.max(...d.cats.map(c => c.amount), 1);
-    const pct = (cat.amount / maxCat) * 100;
+    const barPct = (cat.amount / maxCat) * 100;
     const totalPct = avg > 0 ? Math.round((cat.amount / avg) * 100) : 0;
-    const hasChildren = cat.children.filter(c => c.amount > 0).length > 0;
+    const subPct = parentAmount && parentAmount > 0 ? Math.round((cat.amount / parentAmount) * 100) : 0;
+    const activeChildren = cat.children.filter(c => c.amount > 0).sort((a, b) => b.amount - a.amount);
+    const hasChildren = activeChildren.length > 0;
     const isExp = expanded.has(cat.id);
     const indent = depth * 20;
 
@@ -240,11 +264,14 @@ export default function ReflectView({ user }: Props) {
           <div className="flex-1 min-w-0">
             <div className="flex justify-between mb-1">
               <span className={`font-semibold ${depth === 0 ? 'text-[12px] text-white' : 'text-[11px] text-dark-200'}`}>{cat.name}</span>
-              <span className={`${depth === 0 ? 'text-[12px]' : 'text-[11px]'} text-dark-400`}>{formatCurrency(Math.round(cat.amount))}</span>
+              <div className="flex items-center gap-1.5">
+                {depth > 0 && subPct > 0 && <span className="text-[10px] text-dark-500">{subPct}%</span>}
+                <span className={`${depth === 0 ? 'text-[12px]' : 'text-[11px]'} text-dark-400`}>{formatCurrency(Math.round(cat.amount))}</span>
+              </div>
             </div>
             {depth === 0 && (
               <div className="w-full bg-dark-700 rounded-full h-1 overflow-hidden">
-                <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: cat.color }} />
+                <div className="h-full rounded-full" style={{ width: `${barPct}%`, backgroundColor: cat.color }} />
               </div>
             )}
           </div>
@@ -255,7 +282,7 @@ export default function ReflectView({ user }: Props) {
             </button>
           ) : <div className="w-5" />}
         </div>
-        {hasChildren && isExp && cat.children.filter(c => c.amount > 0).map(c => renderCatRow(c, depth + 1))}
+        {hasChildren && isExp && activeChildren.map(c => renderCatRow(c, depth + 1, cat.amount))}
       </div>
     );
   }
