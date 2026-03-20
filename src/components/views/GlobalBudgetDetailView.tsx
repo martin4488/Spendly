@@ -261,9 +261,17 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
   });
   const historyYears = Object.keys(historyByYear).map(Number).sort((a, b) => b - a);
   const historyYearData = historyByYear[historyYear] || [];
-  const historyAccumulated = historyYearData
-    .filter(m => !m.isCurrent && m.amount > 0)
-    .reduce((sum, m) => sum + (m.amount - m.spent), 0);
+  const closedHistMonths = historyYearData.filter(m => !m.isCurrent && m.amount > 0);
+  const historyAccumulated = closedHistMonths.reduce((sum, m) => sum + (m.amount - m.spent), 0);
+  const histAccumMonths = (() => {
+    if (closedHistMonths.length === 0) return '';
+    const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+    const fmt = (mo: string) => cap(format(parseISO(`${mo}-01`), 'MMM', { locale: es }));
+    const sorted = [...closedHistMonths].sort((a, b) => a.month.localeCompare(b.month));
+    const first = fmt(sorted[0].month);
+    const last = fmt(sorted[sorted.length - 1].month);
+    return first === last ? first : `${first} - ${last}`;
+  })();
 
   const todayStr = format(now, 'yyyy-MM-dd');
   const yesterdayStr = format(subMonths(now, 0), 'yyyy-MM-dd');
@@ -479,7 +487,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
               <p className="text-base font-bold">{historyYear}</p>
               {historyYearData.some(m => !m.isCurrent && m.amount > 0) && (
                 <p className={`text-[11px] font-medium mt-0.5 ${historyAccumulated >= 0 ? 'text-brand-400' : 'text-red-400'}`}>
-                  {formatCurrency(Math.abs(historyAccumulated))} {historyAccumulated >= 0 ? 'ahorro' : 'excedido'} (acumulado meses previos)
+                  {formatCurrency(Math.abs(historyAccumulated))} {historyAccumulated >= 0 ? 'ahorro acumulado' : 'excedido acumulado'} en {historyYear}{histAccumMonths ? ` (${histAccumMonths})` : ''}
                 </p>
               )}
             </div>
