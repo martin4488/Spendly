@@ -305,8 +305,14 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
           });
         }
         let prevAccumulated: number | null = null;
+        let prevAccumMonths = '';
         if (b.recurrence === 'monthly' && curPeriod) {
-          const bPeriods = allPeriods.filter((p: BudgetPeriod) => p.budget_id === b.id && p.period_end < curPeriod.period_start);
+          const curYear = new Date().getFullYear();
+          const bPeriods = allPeriods.filter((p: BudgetPeriod) =>
+            p.budget_id === b.id &&
+            p.period_end < curPeriod.period_start &&
+            p.period_start >= `${curYear}-01-01`
+          );
           if (bPeriods.length > 0 && expandedSet.size > 0) {
             prevAccumulated = bPeriods.reduce((acc, p: BudgetPeriod) => {
               const pAmt = (p as any).amount ?? b.amount;
@@ -318,9 +324,15 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
               });
               return acc + (pAmt - pSpent);
             }, 0);
+            const sorted = [...bPeriods].sort((a, b) => a.period_start.localeCompare(b.period_start));
+            const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+            const fmt = (d: string) => cap(format(parseISO(d), 'MMM', { locale: es }));
+            const first = fmt(sorted[0].period_start);
+            const last = fmt(sorted[sorted.length - 1].period_start);
+            prevAccumMonths = first === last ? first : `${first} - ${last}`;
           }
         }
-        return { ...b, category_ids: catIds, categories: bCats, spent, prevAccumulated } as any;
+        return { ...b, category_ids: catIds, categories: bCats, spent, prevAccumulated, prevAccumMonths } as any;
       });
             setBudgets(enriched);
     } catch (err) { console.error(err); setLoading(false); }
@@ -594,7 +606,7 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
                 {(budget as any).prevAccumulated !== null && (budget as any).prevAccumulated < 0 && (
                   <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-red-500/10">
                     <div className="w-1.5 h-1.5 rounded-full bg-red-400 flex-shrink-0" />
-                    <span className="text-[11px] text-red-400">{formatCurrency(Math.abs((budget as any).prevAccumulated))} excedido en meses previos</span>
+                    <span className="text-[11px] text-red-400">{formatCurrency(Math.abs((budget as any).prevAccumulated))} excedido acumulado en {new Date().getFullYear()}{(budget as any).prevAccumMonths ? ` (${(budget as any).prevAccumMonths})` : ''}</span>
                   </div>
                 )}
               </button>
