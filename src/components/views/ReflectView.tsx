@@ -264,10 +264,7 @@ export default function ReflectView({ user }: Props) {
           <div className="flex-1 min-w-0">
             <div className="flex justify-between mb-1">
               <span className={`font-semibold ${depth === 0 ? 'text-[12px] text-white' : 'text-[11px] text-dark-200'}`}>{cat.name}</span>
-              <div className="flex items-center gap-1.5">
-                {depth > 0 && subPct > 0 && <span className="text-[10px] text-dark-500">{subPct}%</span>}
-                <span className={`${depth === 0 ? 'text-[12px]' : 'text-[11px]'} text-dark-400`}>{formatCurrency(Math.round(cat.amount))}</span>
-              </div>
+              <span className={`${depth === 0 ? 'text-[12px]' : 'text-[11px]'} text-dark-400`}>{formatCurrency(Math.round(cat.amount))}</span>
             </div>
             {depth === 0 && (
               <div className="w-full bg-dark-700 rounded-full h-1 overflow-hidden">
@@ -275,7 +272,7 @@ export default function ReflectView({ user }: Props) {
               </div>
             )}
           </div>
-          {depth === 0 && <span className="text-[10px] text-dark-500 w-7 text-right flex-shrink-0">{totalPct}%</span>}
+          <span className="text-[10px] text-dark-500 w-7 text-right flex-shrink-0">{totalPct > 0 ? `${totalPct}%` : ''}</span>
           {hasChildren && depth === 0 ? (
             <button onClick={() => toggleCat(cat.id)} className="text-dark-500 p-0.5 ml-0.5">
               {isExp ? <span style={{ fontSize: 14 }}>˅</span> : <ChevronRight size={13} />}
