@@ -5,7 +5,7 @@ import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, getMonthRange, CATEGORY_ICONS, CATEGORY_COLORS } from '@/lib/utils';
 import { Category } from '@/types';
-import { Plus, Trash2, X, FolderPlus, GripVertical } from 'lucide-react';
+import { Plus, Trash2, X, FolderPlus, GripVertical, ArrowLeft } from 'lucide-react';
 
 // ── Tree node (up to 3 levels) ────────────────────────────────────────────────
 interface CatNode extends Category {
@@ -139,7 +139,7 @@ function deriveChildColor(parentHex: string, siblingCount: number): string {
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function CategoriesView({ user }: { user: User }) {
+export default function CategoriesView({ user, onBack }: { user: User; onBack?: () => void }) {
   const [flatCats, setFlatCats] = useState<Category[]>([]);
   const [roots, setRoots] = useState<CatNode[]>([]);
   const [loading, setLoading] = useState(true);
@@ -344,7 +344,12 @@ export default function CategoriesView({ user }: { user: User }) {
   return (
     <div className="px-4 pt-6 pb-4 max-w-lg mx-auto page-transition">
       <div className="flex items-center justify-between mb-5">
-        <h1 className="text-xl font-bold">Categorías</h1>
+        <div className="flex items-center gap-2">
+          {onBack && (
+            <button onClick={onBack} className="p-1 text-dark-300 -ml-1"><ArrowLeft size={20} /></button>
+          )}
+          <h1 className="text-xl font-bold">Categorías</h1>
+        </div>
         <button onClick={() => openForm()}
           className="bg-brand-600 hover:bg-brand-500 text-white p-2.5 rounded-xl transition-colors shadow-lg shadow-brand-600/20">
           <Plus size={18} />
