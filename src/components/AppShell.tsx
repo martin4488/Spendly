@@ -10,12 +10,13 @@ import DashboardView from '@/components/views/DashboardView';
 import CategoriesView from '@/components/views/CategoriesView';
 import BudgetsView from '@/components/views/BudgetsView';
 import BudgetDetailView from '@/components/views/BudgetDetailView';
+import GlobalBudgetDetailView from '@/components/views/GlobalBudgetDetailView';
 import RecurringView from '@/components/views/RecurringView';
 import SettingsView from '@/components/views/SettingsView';
 import SpendingOverview from '@/components/views/SpendingOverview';
 import type { CurrencyCode } from '@/lib/currency';
 
-type Tab = 'dashboard' | 'categories' | 'budgets' | 'recurring' | 'settings' | 'overview' | 'budget-detail';
+type Tab = 'dashboard' | 'categories' | 'budgets' | 'recurring' | 'settings' | 'overview' | 'budget-detail' | 'global-budget-detail';
 
 const tabs = [
   { id: 'dashboard' as Tab, label: 'Inicio', icon: LayoutDashboard },
@@ -51,7 +52,7 @@ export default function AppShell({ user, initialCurrency }: AppShellProps) {
     setActiveTab('budgets');
   };
 
-  const hideNav = activeTab === 'overview' || activeTab === 'budget-detail';
+  const hideNav = activeTab === 'overview' || activeTab === 'budget-detail' || activeTab === 'global-budget-detail';
 
   return (
     <div className="min-h-screen pb-20">
@@ -60,7 +61,7 @@ export default function AppShell({ user, initialCurrency }: AppShellProps) {
           <DashboardView user={user} onNavigate={setActiveTab} defaultCurrency={defaultCurrency} />
         )}
         {activeTab === 'categories' && <CategoriesView user={user} />}
-        {activeTab === 'budgets' && <BudgetsView user={user} onOpenBudget={openBudget} />}
+        {activeTab === 'budgets' && <BudgetsView user={user} onOpenBudget={openBudget} onOpenGlobalBudget={() => setActiveTab('global-budget-detail')} />}
         {activeTab === 'budget-detail' && selectedBudget && (
           <BudgetDetailView
             user={user}
@@ -71,6 +72,13 @@ export default function AppShell({ user, initialCurrency }: AppShellProps) {
               setActiveTab('budgets');
               setTimeout(() => setActiveTab('budget-detail'), 50);
             }}
+          />
+        )}
+        {activeTab === 'global-budget-detail' && (
+          <GlobalBudgetDetailView
+            user={user}
+            onBack={() => setActiveTab('budgets')}
+            defaultCurrency={defaultCurrency}
           />
         )}
         {activeTab === 'recurring' && <RecurringView user={user} />}
