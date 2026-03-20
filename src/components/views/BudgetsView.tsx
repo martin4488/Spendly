@@ -100,6 +100,7 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
   const [monthlyBudget, setMonthlyBudget] = useState<number | null>(null);
   const [globalStats, setGlobalStats] = useState<{ spent: number; prevSpent: number } | null>(null);
   const [globalAccumulated, setGlobalAccumulated] = useState<number | null>(null);
+  const [globalAccumMonths, setGlobalAccumMonths] = useState<string>('');
   const [showBudgetModal, setShowBudgetModal] = useState(false);
   const [budgetInput, setBudgetInput] = useState('');
   const [budgetStartMonth, setBudgetStartMonth] = useState(format(startOfMonth(new Date()), 'yyyy-MM'));
@@ -261,7 +262,14 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
             const mSpent = rows.filter(e => e.date >= mStart && e.date <= mEnd).reduce((s, e) => s + Number(e.amount), 0);
             acc += Number(p.amount) - mSpent;
           });
-          if (closedMonths.length > 0) setGlobalAccumulated(acc);
+          if (closedMonths.length > 0) {
+            setGlobalAccumulated(acc);
+            const sorted = [...closedMonths].sort((a, b) => a.month.localeCompare(b.month));
+            const first = format(new Date(`${sorted[0].month}-01`), 'MMM', { locale: es });
+            const last = format(new Date(`${sorted[sorted.length - 1].month}-01`), 'MMM', { locale: es });
+            const label = first === last ? first : `${first} - ${last}`;
+            setGlobalAccumMonths(label.charAt(0).toUpperCase() + label.slice(1));
+          }
         }
       });
 
@@ -498,7 +506,7 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
                     <div className="flex items-center gap-1.5 pt-2 border-t border-white/5">
                       <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: globalAccumulated >= 0 ? '#22c55e' : '#ef4444' }} />
                       <span className="text-[11px] font-medium" style={{ color: globalAccumulated >= 0 ? '#22c55e' : '#ef4444' }}>
-                        {formatCurrency(Math.abs(globalAccumulated))} {globalAccumulated >= 0 ? 'ahorro acumulado' : 'excedido acumulado'} en {now.getFullYear()}
+                        {formatCurrency(Math.abs(globalAccumulated))} {globalAccumulated >= 0 ? 'ahorro acumulado' : 'excedido acumulado'} en {now.getFullYear()}{globalAccumMonths ? ` (${globalAccumMonths})` : ''}
                       </span>
                     </div>
                   )}
