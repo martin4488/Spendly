@@ -71,7 +71,6 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
   async function init() {
     setLoading(true);
     try {
-      // Load all global budget periods for this user
       const { data: periodsData } = await supabase
         .from('global_budget_periods')
         .select('*')
@@ -82,10 +81,24 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
       const periodMap: Record<string, number> = {};
       periods.forEach((p: any) => { periodMap[p.month] = p.amount; });
 
-      // Build month list from first budget month to now
-      const firstMonth = periods.length > 0
-        ? periods[periods.length - 1].month
-        : currentMonth;
+      const firstMonth = periods.length > 0 ? periods[periods.length - 1].month : currentMonth;
+
+      // Load ALL expenses from firstMonth to now in one query
+      const firstDate = `${firstMonth}-01`;
+      const lastDate = format(endOfMonth(new Date()), 'yyyy-MM-dd');
+      const { data: expData } = await supabase
+        .from('expenses')
+        .select('date, amount')
+        .eq('user_id', user.id)
+        .gte('date', firstDate)
+        .lte('date', lastDate);
+
+      // Aggregate by month
+      const spentByMonth: Record<string, number> = {};
+      (expData || []).forEach((e: any) => {
+        const mo = e.date.slice(0, 7);
+        spentByMonth[mo] = (spentByMonth[mo] || 0) + Number(e.amount);
+      });
 
       const monthList: MonthPeriod[] = [];
       let m = currentMonth;
@@ -93,7 +106,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
         monthList.push({
           month: m,
           amount: periodMap[m] ?? 0,
-          spent: 0,
+          spent: spentByMonth[m] || 0,
           isCurrent: m === currentMonth,
         });
         const d = subMonths(new Date(`${m}-01`), 1);
