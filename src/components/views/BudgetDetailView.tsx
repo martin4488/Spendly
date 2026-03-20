@@ -348,7 +348,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
         </button>
         <div className="text-center">
           <p className="text-base font-bold capitalize">{periodLabel}</p>
-          {!isCurrentPeriod && <span className="text-[10px] text-dark-500 bg-dark-800 px-2 py-0.5 rounded-full">Histórico</span>}
+
         </div>
         <button onClick={() => navigatePeriod(-1)} disabled={!hasNext}
           className={`p-1.5 rounded-full transition-colors ${hasNext ? 'text-dark-300 active:bg-dark-800' : 'text-dark-700 cursor-not-allowed'}`}>
@@ -410,12 +410,8 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
           {/* PROGRESS BAR */}
           <div className="px-4 mb-5">
             <div className="w-full bg-dark-700 rounded-full h-2.5 overflow-hidden relative">
-              {pct >= 100 ? (
-                <div className="absolute inset-0 bg-red-400 rounded-full" />
-              ) : (
-                <div className="absolute right-0 top-0 h-full rounded-full transition-all duration-500"
-                  style={{ width: `${Math.max(100 - pct, 0)}%`, backgroundColor: budgetColor }} />
-              )}
+              <div className="absolute right-0 top-0 h-full rounded-full transition-all duration-500"
+                style={{ width: `${pct >= 100 ? 0 : Math.max(100 - pct, 0)}%`, backgroundColor: budgetColor }} />
             </div>
             <div className="flex justify-between mt-1.5">
               <span className="text-[10px] text-dark-500">{format(periodStart, 'MMM d', { locale: es })}</span>
@@ -572,14 +568,10 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
                         </div>
                         <span className={`text-[11px] ${isOver ? 'text-red-400' : 'text-dark-400'}`}>{sPct.toFixed(1)}% gastado</span>
                       </div>
-                      {isOver ? (
-                        <div className="w-full rounded-full h-1.5 mb-1.5" style={{ backgroundColor: '#ef4444' }} />
-                      ) : (
-                        <div className="w-full bg-dark-700 rounded-full h-1.5 mb-1.5 overflow-hidden relative">
-                          <div className="absolute right-0 top-0 h-full rounded-full"
-                            style={{ width: `${availPct}%`, backgroundColor: dotColor }} />
-                        </div>
-                      )}
+                      <div className="w-full bg-dark-700 rounded-full h-1.5 mb-1.5 overflow-hidden relative">
+                        {!isOver && <div className="absolute right-0 top-0 h-full rounded-full"
+                          style={{ width: `${availPct}%`, backgroundColor: dotColor }} />}
+                      </div>
                       <div className="flex justify-between">
                         <span className="text-[11px] font-medium" style={{ color: dotColor }}>
                           {isOver ? `${formatCurrency(s.spent - pAmt)} sobre el límite` : s.isCurrent ? `${formatCurrency(sLeft)} disponible` : `${formatCurrency(sLeft)} sin usar`}
