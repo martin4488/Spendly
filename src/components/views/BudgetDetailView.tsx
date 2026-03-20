@@ -324,9 +324,17 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
   });
   const historyYears = Object.keys(historyByYear).map(Number).sort((a, b) => b - a);
   const historyYearData = historyByYear[historyYear] || [];
-  const historyAccumulated = historyYearData
-    .filter(({ summary: s }) => !s.isCurrent)
-    .reduce((sum, { summary: s }) => sum + ((s.period.amount ?? budget.amount) - s.spent), 0);
+  const closedHistItems = historyYearData.filter(({ summary: s }) => !s.isCurrent);
+  const historyAccumulated = closedHistItems.reduce((sum, { summary: s }) => sum + ((s.period.amount ?? budget.amount) - s.spent), 0);
+  const histAccumMonths = (() => {
+    if (closedHistItems.length === 0) return '';
+    const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+    const sorted = [...closedHistItems].sort((a, b) => a.summary.period.period_start.localeCompare(b.summary.period.period_start));
+    const fmt = (d: string) => cap(format(parseISO(d), 'MMM', { locale: es }));
+    const first = fmt(sorted[0].summary.period.period_start);
+    const last = fmt(sorted[sorted.length - 1].summary.period.period_start);
+    return first === last ? first : `${first} - ${last}`;
+  })();
   const left = Math.max(periodAmount - totalSpent, 0);
   const totalDays = differenceInDays(periodEnd, periodStart) + 1;
   const daysPassed = isCurrentPeriod ? Math.min(differenceInDays(now, periodStart) + 1, totalDays) : totalDays;
@@ -547,7 +555,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
               <p className="text-base font-bold">{historyYear}</p>
               {historyYearData.some(({ summary: s }) => !s.isCurrent) && (
                 <p className={`text-[11px] font-medium mt-0.5 ${historyAccumulated >= 0 ? 'text-brand-400' : 'text-red-400'}`}>
-                  {formatCurrency(Math.abs(historyAccumulated))} {historyAccumulated >= 0 ? 'sin usar' : 'excedido'} (acumulado meses previos)
+                  {formatCurrency(Math.abs(historyAccumulated))} {historyAccumulated >= 0 ? 'ahorro acumulado' : 'excedido acumulado'} en {historyYear}{histAccumMonths ? ` (${histAccumMonths})` : ''}
                 </p>
               )}
             </div>
