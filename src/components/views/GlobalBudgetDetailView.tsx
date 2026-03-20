@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/utils';
-import { ArrowLeft, ChevronLeft, ChevronRight, Edit3, Delete, X, Trash2 } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, ChevronDown, Edit3, Delete, X, Trash2 } from 'lucide-react';
 import { format, parseISO, startOfMonth, endOfMonth, subMonths } from 'date-fns';
 import { es } from 'date-fns/locale';
 import type { CurrencyCode } from '@/lib/currency';
@@ -28,6 +28,28 @@ interface CatSpend {
   icon: string;
   color: string;
   spent: number;
+  children: CatSpend[];
+}
+
+interface RawCat { id: string; name: string; icon: string; color: string; parent_id: string | null; }
+interface CatNode extends RawCat { children: CatNode[]; }
+
+function buildCatTree(flat: RawCat[]): CatNode[] {
+  const map = new Map<string, CatNode>();
+  flat.forEach(c => map.set(c.id, { ...c, children: [] }));
+  const roots: CatNode[] = [];
+  flat.forEach(c => {
+    if (c.parent_id && map.has(c.parent_id)) map.get(c.parent_id)!.children.push(map.get(c.id)!);
+    else roots.push(map.get(c.id)!);
+  });
+  return roots;
+}
+
+function buildCatSpend(node: CatNode, spendMap: Record<string, number>): CatSpend {
+  const children = node.children.map(c => buildCatSpend(c, spendMap)).filter(c => c.spent > 0);
+  const ownSpent = spendMap[node.id] || 0;
+  const spent = ownSpent + children.reduce((s, c) => s + c.spent, 0);
+  return { id: node.id, name: node.name, icon: node.icon, color: node.color, spent, children };
 }
 
 interface ExpenseRow {
@@ -57,6 +79,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
   const [showHistory, setShowHistory] = useState(false);
   const [historyYear, setHistoryYear] = useState(now.getFullYear());
   const [showEditForm, setShowEditForm] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [editAmount, setEditAmount] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -83,7 +106,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
 
       const firstMonth = periods.length > 0 ? periods[periods.length - 1].month : currentMonth;
 
-      // Load ALL expenses from firstMonth to now in one query
+      // Load ALL expenses from firstMonth to now in one query (categories loaded per-month in loadMonthData)
       const firstDate = `${firstMonth}-01`;
       const lastDate = format(endOfMonth(new Date()), 'yyyy-MM-dd');
       const { data: expData } = await supabase
@@ -157,17 +180,16 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
         category: e.category,
       }));
 
-      const spentByCat: Record<string, { name: string; icon: string; color: string; spent: number }> = {};
+      const spendMap: Record<string, number> = {};
       exps.forEach(e => {
-        if (e.category_id && e.category) {
-          if (!spentByCat[e.category_id]) {
-            spentByCat[e.category_id] = { name: e.category.name, icon: e.category.icon, color: e.category.color, spent: 0 };
-          }
-          spentByCat[e.category_id].spent += e.amount;
-        }
+        if (e.category_id) spendMap[e.category_id] = (spendMap[e.category_id] || 0) + e.amount;
       });
-      const cats: CatSpend[] = Object.entries(spentByCat)
-        .map(([id, v]) => ({ id, ...v }))
+      // Load categories to build tree
+      const { data: catsData } = await supabase.from('categories').select('id, name, icon, color, parent_id').eq('user_id', user.id).neq('deleted', true);
+      const tree = buildCatTree(catsData || []);
+      const cats: CatSpend[] = tree
+        .map(node => buildCatSpend(node, spendMap))
+        .filter(c => c.spent > 0)
         .sort((a, b) => b.spent - a.spent);
 
       const totalSpent = exps.reduce((s, e) => s + e.amount, 0);
@@ -233,6 +255,39 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
   function navigate(dir: 1 | -1) {
     const next = currentIndex + dir;
     if (next >= 0 && next < months.length) setCurrentIndex(next);
+  }
+
+  function renderCatRow(cat: CatSpend, depth: number): React.ReactNode {
+    const activeChildren = cat.children.filter(c => c.spent > 0);
+    const hasChildren = activeChildren.length > 0;
+    const isExpanded = expanded.has(cat.id);
+    const indent = depth * 16;
+    return (
+      <div key={cat.id} className="border-b border-dark-800/40">
+        <div className="flex items-center gap-2.5 py-2.5" style={{ paddingLeft: `${12 + indent}px`, paddingRight: 12 }}>
+          <div className="rounded-xl flex items-center justify-center flex-shrink-0"
+            style={{ width: depth === 0 ? 36 : 28, height: depth === 0 ? 36 : 28, fontSize: depth === 0 ? 16 : 13, backgroundColor: cat.color }}>
+            {cat.icon}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className={`font-semibold truncate ${depth === 0 ? 'text-[12px]' : 'text-[11px] text-dark-200'}`}>{cat.name}</p>
+          </div>
+          <span className={`font-bold text-red-400 flex-shrink-0 ${depth === 0 ? 'text-[12px]' : 'text-[11px]'}`}>
+            -{formatCurrency(cat.spent)}
+          </span>
+          {hasChildren ? (
+            <button onClick={() => setExpanded(prev => { const n = new Set(prev); n.has(cat.id) ? n.delete(cat.id) : n.add(cat.id); return n; })} className="p-0.5 text-dark-500 ml-0.5">
+              {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+            </button>
+          ) : <div className="w-5" />}
+        </div>
+        {hasChildren && isExpanded && (
+          <div className="border-l border-dark-700/40 ml-8">
+            {activeChildren.map(child => renderCatRow(child, depth + 1))}
+          </div>
+        )}
+      </div>
+    );
   }
 
   if (loading && months.length === 0) {
@@ -403,67 +458,16 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
             </div>
           )}
 
-          {/* CATEGORY BREAKDOWN */}
-          {catSpending.length > 0 && (
-            <div className="px-4 mb-5">
-              <p className="text-xs text-dark-500 font-medium uppercase tracking-wider mb-3">Por categoría</p>
-              <div className="space-y-2">
-                {catSpending.map(cat => {
-                  const catPct = period.amount > 0 ? (cat.spent / period.amount) * 100 : 0;
-                  return (
-                    <div key={cat.id} className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-xl flex items-center justify-center text-sm flex-shrink-0" style={{ backgroundColor: cat.color }}>{cat.icon}</div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex justify-between mb-0.5">
-                          <span className="text-xs font-medium truncate">{cat.name}</span>
-                          <span className="text-xs text-dark-400 flex-shrink-0 ml-2">{formatCurrency(cat.spent)}</span>
-                        </div>
-                        <div className="w-full bg-dark-700 rounded-full h-1.5">
-                          <div className="h-1.5 rounded-full" style={{ width: `${Math.min(catPct, 100)}%`, backgroundColor: cat.color }} />
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
           {/* TOTAL */}
           <div className="flex items-center justify-between px-4 py-3 border-t border-b border-dark-800/60 mb-1">
             <span className="text-xs text-dark-400 font-medium uppercase tracking-wider">Total gastado</span>
             <span className="text-base font-bold text-red-400">-{formatCurrency(period.spent)}</span>
           </div>
 
-          {/* TRANSACTIONS */}
-          {grouped.length === 0 ? (
-            <div className="text-center py-10"><p className="text-dark-500 text-sm">Sin gastos en este período</p></div>
-          ) : (
-            <div>
-              <p className="px-4 pt-3 pb-1 text-sm font-bold">Transacciones</p>
-              {grouped.map(group => (
-                <div key={group.date}>
-                  <div className="flex items-center justify-between px-4 py-1.5 bg-dark-800/60">
-                    <span className="text-[10px] font-semibold text-dark-500 uppercase tracking-wider capitalize">{group.label}</span>
-                    <span className="text-[10px] font-semibold text-dark-500">-{formatCurrency(group.total)}</span>
-                  </div>
-                  {group.expenses.map(exp => (
-                    <div key={exp.id} className="flex items-center gap-2.5 px-4 py-2.5 border-b border-dark-800/40">
-                      <div className="w-8 h-8 rounded-xl flex items-center justify-center text-base flex-shrink-0"
-                        style={{ backgroundColor: exp.category?.color || '#475569' }}>
-                        {exp.category?.icon || '💸'}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-[12px] font-semibold truncate">{exp.category?.name || 'Sin categoría'}</p>
-                        {exp.description && exp.description !== exp.category?.name && (
-                          <p className="text-[10px] text-dark-500 truncate">{exp.description}</p>
-                        )}
-                      </div>
-                      <span className="text-[12px] font-bold text-red-400 flex-shrink-0">-{formatCurrency(exp.amount)}</span>
-                    </div>
-                  ))}
-                </div>
-              ))}
+          {/* CATEGORY BREAKDOWN */}
+          {catSpending.length > 0 && (
+            <div className="mb-5">
+              {catSpending.map(cat => renderCatRow(cat, 0))}
             </div>
           )}
         </>
