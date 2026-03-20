@@ -356,7 +356,7 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
                     {pct >= 100 ? (
                       <>
                         <span className="text-lg font-extrabold text-red-400">-{formatCurrency(Math.abs(left - budget.amount + left))}</span>
-                        <span className="text-xs text-red-400/70">sobre el límite</span>
+                        <span className="text-xs text-red-400/70">excedido</span>
                       </>
                     ) : (
                       <>
