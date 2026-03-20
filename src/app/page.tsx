@@ -19,20 +19,7 @@ export default function Home() {
   const [unauthenticated, setUnauthenticated] = useState(false);
 
   useEffect(() => {
-    async function boot() {
-      // Kick off session + rates in parallel immediately
-      const [{ data: { session } }] = await Promise.all([
-        supabase.auth.getSession(),
-        prefetchRates(),
-      ]);
-
-      if (!session?.user) {
-        setUnauthenticated(true);
-        return;
-      }
-
-      const user = session.user;
-
+    async function bootWithSession(user: User) {
       // Fire recurring generation without blocking render
       Promise.resolve(supabase.rpc('generate_recurring_expenses', { p_user_id: user.id })).catch(console.error);
 
@@ -47,12 +34,26 @@ export default function Home() {
       if (settings) {
         currency = settings.default_currency as CurrencyCode;
       } else {
-        // Create defaults without awaiting — don't block render
         supabase.from('user_settings').insert({ user_id: user.id, default_currency: 'EUR' }).then(() => {});
       }
 
       setDefaultCurrency(currency);
+      setUnauthenticated(false);
       setBootData({ user, currency });
+    }
+
+    async function boot() {
+      const [{ data: { session } }] = await Promise.all([
+        supabase.auth.getSession(),
+        prefetchRates(),
+      ]);
+
+      if (!session?.user) {
+        setUnauthenticated(true);
+        return;
+      }
+
+      await bootWithSession(session.user);
     }
 
     boot();
@@ -62,7 +63,7 @@ export default function Home() {
         setBootData(null);
         setUnauthenticated(true);
       } else if (event === 'SIGNED_IN' && session?.user) {
-        boot();
+        bootWithSession(session.user);
       }
     });
 
