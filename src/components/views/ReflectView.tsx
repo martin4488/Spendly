@@ -230,12 +230,15 @@ export default function ReflectView({ user }: Props) {
           if (Math.abs(diff) < 10) return null;
           return { name: cat.name, icon: cat.icon, diff: Math.round(diff), prev, curr: cat.amount };
         })
-        .filter(Boolean)
-        .sort((a, b) => Math.abs(b!.diff) - Math.abs(a!.diff)) as { name: string; icon: string; diff: number; prev: number; curr: number }[];
+        .filter(Boolean) as { name: string; icon: string; diff: number; prev: number; curr: number }[];
 
-      if (changes.length > 0) {
+      const increased = changes.filter(c => c.diff > 0).sort((a, b) => b.diff - a.diff);
+      const decreased = changes.filter(c => c.diff < 0).sort((a, b) => a.diff - b.diff);
+      const sortedChanges = [...increased, ...decreased];
+
+      if (sortedChanges.length > 0) {
         insights.push({ color: '#475569', text: `<span style="color:#64748b;font-weight:500;">Vs ${yr - 1} — categorías con ≥10% de cambio</span>`, isHeader: true });
-        changes.forEach(c => {
+        sortedChanges.forEach(c => {
           const up = c.diff > 0;
           insights.push({
             color: up ? '#ef4444' : '#22c55e',
