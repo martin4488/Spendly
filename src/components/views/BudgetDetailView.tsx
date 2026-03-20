@@ -526,7 +526,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
               <p className="text-base font-bold">{historyYear}</p>
               {historyYearData.some(({ summary: s }) => !s.isCurrent) && (
                 <p className={`text-[11px] font-medium mt-0.5 ${historyAccumulated >= 0 ? 'text-brand-400' : 'text-red-400'}`}>
-                  {formatCurrency(Math.abs(historyAccumulated))} {historyAccumulated >= 0 ? 'sin usar' : 'excedido'} (meses previos)
+                  {formatCurrency(Math.abs(historyAccumulated))} {historyAccumulated >= 0 ? 'sin usar' : 'excedido'} (acumulado meses previos)
                 </p>
               )}
             </div>
