@@ -260,9 +260,30 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
     try {
       const newAmount = parseFloat(editAmount);
       const currentPeriod = periods[currentPeriodIndex];
+      const oldAmount = currentPeriod.amount ?? budget.amount;
+
+      // Update this period
       const { error } = await supabase.from('budget_periods').update({ amount: newAmount }).eq('id', currentPeriod.id);
       if (error) throw error;
-      setPeriods(prev => prev.map((p, i) => i === currentPeriodIndex ? { ...p, amount: newAmount } : p));
+
+      // Also update future periods that inherited the same amount (or have null = using budget default)
+      const futurePeriods = periods.filter((p, i) =>
+        i < currentPeriodIndex && // periods is newest-first, so lower index = newer
+        p.period_start > currentPeriod.period_start &&
+        (p.amount == null || p.amount === oldAmount)
+      );
+      if (futurePeriods.length > 0) {
+        await supabase.from('budget_periods')
+          .update({ amount: newAmount })
+          .in('id', futurePeriods.map(p => p.id));
+      }
+
+      setPeriods(prev => prev.map((p, i) => {
+        if (i === currentPeriodIndex) return { ...p, amount: newAmount };
+        if (futurePeriods.some(fp => fp.id === p.id)) return { ...p, amount: newAmount };
+        return p;
+      }));
+      futurePeriods.forEach(p => periodCache.current.delete(p.id));
       periodCache.current.delete(currentPeriod.id);
       setShowEditForm(false);
       onRefresh();
