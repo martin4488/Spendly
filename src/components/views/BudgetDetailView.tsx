@@ -380,7 +380,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
             {pct >= 100 ? (
               <>
                 <p className="text-4xl font-extrabold text-red-400">{formatCurrency(totalSpent - periodAmount)}</p>
-                <p className="text-red-400/70 text-sm mt-0.5">sobre el límite · de {formatCurrency(periodAmount)}</p>
+                <p className="text-red-400/70 text-sm mt-0.5">excedido de {formatCurrency(periodAmount)}</p>
               </>
             ) : (
               <>
@@ -526,7 +526,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
               <p className="text-base font-bold">{historyYear}</p>
               {historyYearData.some(({ summary: s }) => !s.isCurrent) && (
                 <p className={`text-[11px] font-medium mt-0.5 ${historyAccumulated >= 0 ? 'text-brand-400' : 'text-red-400'}`}>
-                  {formatCurrency(Math.abs(historyAccumulated))} {historyAccumulated >= 0 ? 'sin usar' : 'sobre el límite'} (meses previos)
+                  {formatCurrency(Math.abs(historyAccumulated))} {historyAccumulated >= 0 ? 'sin usar' : 'excedido'} (meses previos)
                 </p>
               )}
             </div>
@@ -575,7 +575,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
                       </div>
                       <div className="flex justify-between">
                         <span className="text-[11px] font-medium" style={{ color: dotColor }}>
-                          {isOver ? `${formatCurrency(s.spent - pAmt)} sobre el límite` : s.isCurrent ? `${formatCurrency(sLeft)} disponible` : `${formatCurrency(sLeft)} sin usar`}
+                          {isOver ? `${formatCurrency(s.spent - pAmt)} excedido` : s.isCurrent ? `${formatCurrency(sLeft)} disponible` : `${formatCurrency(sLeft)} sin usar`}
                         </span>
                         <span className="text-[11px] text-dark-500">de {formatCurrency(pAmt)}</span>
                       </div>
