@@ -159,7 +159,7 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
       });
 
       // Batch-insert any missing periods (one insert, not N)
-      const missingInserts: { budget_id: string; period_start: string; period_end: string; user_id: string }[] = [];
+      const missingInserts: { budget_id: string; period_start: string; period_end: string }[] = [];
       for (const b of allBudgets) {
         generateMissingPeriods(b as Budget, periodsByBudget[b.id] || []).forEach(m =>
           missingInserts.push({ budget_id: b.id, period_start: m.start, period_end: m.end })
