@@ -57,10 +57,15 @@ export default function Home() {
 
     boot();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!session) {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT') {
         setBootData(null);
         setUnauthenticated(true);
+      } else if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+        // Session refreshed on another device — update user if needed
+        if (session?.user && !bootData) {
+          boot();
+        }
       }
     });
 
