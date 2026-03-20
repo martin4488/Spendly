@@ -368,9 +368,7 @@ export default function BudgetsView({ user, onOpenBudget }: Props) {
                   <span className="text-xs text-dark-500">de {formatCurrency(budget.amount)}</span>
                 </div>
                 <div className="w-full bg-dark-700 rounded-full h-1.5 mb-2 overflow-hidden relative">
-                  {pct >= 100 ? (
-                    <div className="absolute inset-0 bg-red-400 rounded-full" />
-                  ) : (
+                  {pct < 100 && (
                     <div className="absolute right-0 top-0 h-full rounded-full transition-all duration-500"
                       style={{ width: `${Math.max(100 - pct, 0)}%`, backgroundColor: pct >= 80 ? '#f59e0b' : '#22c55e' }} />
                   )}
