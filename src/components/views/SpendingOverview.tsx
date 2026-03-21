@@ -12,6 +12,7 @@ import {
 } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { ArrowLeft, ChevronDown, ChevronRight, Trash2 } from 'lucide-react';
+import AddExpenseModal from '@/components/AddExpenseModal';
 
 type ViewMode = 'months' | 'years';
 
@@ -390,6 +391,8 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
   const [loading, setLoading] = useState(true);
   const [allCats, setAllCats] = useState<RawCat[]>([]);
   const swipeStartX = useRef<number | null>(null);
+  const [editingExpense, setEditingExpense] = useState<any>(null);
+  const [showExpenseModal, setShowExpenseModal] = useState(false);
 
   useEffect(() => { loadData(); }, [viewMode, currentDate]);
 
@@ -492,6 +495,17 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
     return undefined;
   }
 
+  function openEdit(exp: ExpenseDetail) {
+    setEditingExpense({
+      id: exp.id,
+      amount: Number(exp.amount),
+      description: exp.description,
+      category_id: exp.category_id,
+      date: exp.date,
+    });
+    setShowExpenseModal(true);
+  }
+
   async function deleteExpense(id: string) {
     if (!confirm('¿Eliminar este gasto?')) return;
     await supabase.from('expenses').delete().eq('id', id);
@@ -552,7 +566,7 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
                     const displayName = cat?.name || drillDown.name;
                     return (
                       <SwipeableExpenseRow key={exp.id} onDelete={() => deleteExpense(exp.id)}>
-                        <div className="flex items-center gap-2.5 px-4 py-2.5 border-b border-dark-800/40 bg-dark-900">
+                        <div onClick={() => openEdit(exp)} className="flex items-center gap-2.5 px-4 py-2.5 border-b border-dark-800/40 bg-dark-900 active:bg-dark-700/40 cursor-pointer transition-colors">
                           <div className="w-8 h-8 rounded-xl flex items-center justify-center text-base flex-shrink-0" style={{ backgroundColor: displayColor }}>{displayIcon}</div>
                           <div className="flex-1 min-w-0">
                             <p className="text-[12px] font-semibold truncate">{displayName}</p>
@@ -570,6 +584,15 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
             </div>
           )}
         </>
+      )}
+      {showExpenseModal && (
+        <AddExpenseModal
+          user={user}
+          defaultCurrency={'EUR' as any}
+          onClose={() => { setShowExpenseModal(false); setEditingExpense(null); }}
+          onSaved={() => { setShowExpenseModal(false); setEditingExpense(null); loadData(); }}
+          editingExpense={editingExpense}
+        />
       )}
     </div>
   );
