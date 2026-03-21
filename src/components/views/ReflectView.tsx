@@ -389,7 +389,7 @@ export default function ReflectView({ user }: Props) {
           {/* Category breakdown */}
           {d.cats.length > 0 && (
             <div className="bg-dark-800 rounded-2xl mb-3 overflow-hidden">
-              <p className="text-[10px] text-dark-500 uppercase tracking-wider px-4 pt-4 pb-2">Por categoría · promedio mensual</p>
+              <p className="text-[10px] text-dark-500 uppercase tracking-wider px-4 pt-4 pb-2">Promedio mensual · meses cerrados</p>
               <div className="px-4">
                 {d.cats.map(cat => renderCatRow(cat, 0))}
               </div>
