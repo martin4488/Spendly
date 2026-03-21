@@ -8,6 +8,7 @@ import { Budget, Category } from '@/types';
 import { ArrowLeft, ChevronLeft, ChevronRight, Edit3, Trash2, X, Delete, History, CheckCircle2, XCircle, Clock } from 'lucide-react';
 import { format, parseISO, differenceInDays, isWithinInterval } from 'date-fns';
 import { es } from 'date-fns/locale';
+import AddExpenseModal from '@/components/AddExpenseModal';
 import type { BudgetPeriod } from './BudgetsView';
 
 interface Props {
@@ -98,6 +99,10 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
   const [showEditForm, setShowEditForm] = useState(false);
   const [editAmount, setEditAmount] = useState('');
   const [saving, setSaving] = useState(false);
+
+  // Expense editing
+  const [editingExpense, setEditingExpense] = useState<any>(null);
+  const [showExpenseModal, setShowExpenseModal] = useState(false);
 
   const swipeStartX = useRef<number | null>(null);
   const now = new Date();
@@ -344,6 +349,17 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
   const periodLabel = format(periodStart, budget.recurrence === 'monthly' ? 'MMMM yyyy' : 'yyyy', { locale: es });
   const todayStr = format(now, 'yyyy-MM-dd');
   const yestStr = format(new Date(now.getTime() - 86400000), 'yyyy-MM-dd');
+  function openExpenseEdit(exp: ExpenseRow) {
+    setEditingExpense({
+      id: exp.id,
+      amount: Number(exp.amount),
+      description: exp.description,
+      category_id: exp.category_id,
+      date: exp.date,
+    });
+    setShowExpenseModal(true);
+  }
+
   const dayMap = new Map<string, ExpenseRow[]>();
   expenses.forEach(e => { if (!dayMap.has(e.date)) dayMap.set(e.date, []); dayMap.get(e.date)!.push(e); });
   const grouped = Array.from(dayMap.entries())
@@ -515,7 +531,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
                   {group.expenses.map(exp => {
                     const cat = categories.find(c => c.id === exp.category_id);
                     return (
-                      <div key={exp.id} className="flex items-center gap-2.5 px-4 py-2.5 border-b border-dark-800/40">
+                      <div key={exp.id} onClick={() => openExpenseEdit(exp)} className="flex items-center gap-2.5 px-4 py-2.5 border-b border-dark-800/40 active:bg-dark-700/40 cursor-pointer transition-colors">
                         <div className="w-8 h-8 rounded-xl flex items-center justify-center text-base flex-shrink-0" style={{ backgroundColor: cat?.color || '#475569' }}>
                           {cat?.icon || '💸'}
                         </div>
@@ -653,6 +669,19 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
             </div>
           </div>
         </div>
+      )}
+      {showExpenseModal && (
+        <AddExpenseModal
+          user={user}
+          defaultCurrency={budget.currency as any}
+          onClose={() => { setShowExpenseModal(false); setEditingExpense(null); }}
+          onSaved={() => {
+            periodCache.current.clear();
+            loadPeriodData(currentPeriodIndex);
+            onRefresh();
+          }}
+          editingExpense={editingExpense}
+        />
       )}
     </div>
   );
