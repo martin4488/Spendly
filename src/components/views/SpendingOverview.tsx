@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/utils';
@@ -12,7 +12,7 @@ import {
 } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { ArrowLeft, ChevronDown, ChevronRight, Trash2 } from 'lucide-react';
-import AddExpenseModal from '@/components/AddExpenseModal';
+const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
 
 type ViewMode = 'months' | 'years';
 
@@ -586,13 +586,15 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
         </>
       )}
       {showExpenseModal && (
-        <AddExpenseModal
-          user={user}
-          defaultCurrency={'EUR' as any}
-          onClose={() => { setShowExpenseModal(false); setEditingExpense(null); }}
-          onSaved={() => { setShowExpenseModal(false); setEditingExpense(null); loadData(); }}
-          editingExpense={editingExpense}
-        />
+        <Suspense fallback={null}>
+          <AddExpenseModal
+            user={user}
+            defaultCurrency={'EUR' as any}
+            onClose={() => { setShowExpenseModal(false); setEditingExpense(null); }}
+            onSaved={() => { setShowExpenseModal(false); setEditingExpense(null); loadData(); }}
+            editingExpense={editingExpense}
+          />
+        </Suspense>
       )}
     </div>
   );
