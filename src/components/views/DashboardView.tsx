@@ -297,10 +297,10 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
   async function loadExtended() {
     if (extendedLoaded) return;
     try {
-      const startDate = `${new Date().getFullYear() - 2}-01-01`;
+      const startDate = `${new Date().getFullYear() - 5}-01-01`;
       const { data: exp } = await supabase
         .from('expenses')
-        .select('date, amount')
+        .select('*, category:categories(*)')
         .eq('user_id', user.id)
         .gte('date', startDate)
         .order('date', { ascending: false });
@@ -315,7 +315,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
   const loadData = useCallback(async () => {
     try {
       const now = new Date();
-      const startStr = extendedLoaded ? `${now.getFullYear() - 2}-01-01` : oldestDate.current;
+      const startStr = extendedLoaded ? `${now.getFullYear() - 5}-01-01` : oldestDate.current;
       const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
       const chartStart = `${sixMonthsAgo.getFullYear()}-${String(sixMonthsAgo.getMonth() + 1).padStart(2, '0')}-01`;
 
@@ -377,7 +377,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       return data;
     } else {
       const data: { name: string; year: string; total: number; isCurrent: boolean }[] = [];
-      for (let i = 2; i >= 0; i--) {
+      for (let i = 5; i >= 0; i--) {
         const year = now.getFullYear() - i;
         const start = `${year}-01-01`;
         const end = `${year}-12-31`;
