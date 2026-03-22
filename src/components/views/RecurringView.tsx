@@ -5,6 +5,7 @@ import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, CATEGORY_ICONS, CATEGORY_COLORS } from '@/lib/utils';
 import { Category, RecurringExpense } from '@/types';
+import { CatNode, FlatEntry, buildTree, flattenTree } from '@/lib/categoryTree';
 import { Plus, X, CalendarOff, Delete, Search, Settings, ArrowLeft, Check, Trash2 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -277,22 +278,8 @@ export default function RecurringView({ user }: { user: User }) {
     }
   }
 
-  // Category picker helpers
-  // ── Tree helpers ─────────────────────────────────────────────────────────
-  interface FlatEntryR { cat: Category & { children: any[] }; ancestors: (Category & { children: any[] })[] }
-  function buildTreeR(flat: Category[]): (Category & { children: any[] })[] {
-    const map = new Map<string, any>();
-    flat.forEach(c => map.set(c.id, { ...c, children: [] }));
-    const roots: any[] = [];
-    flat.forEach(c => {
-      if (c.parent_id && map.has(c.parent_id)) map.get(c.parent_id).children.push(map.get(c.id));
-      else roots.push(map.get(c.id));
-    });
-    return roots;
-  }
-  function flattenTreeR(nodes: any[], ancestors: any[] = []): FlatEntryR[] {
-    return nodes.flatMap((n: any) => [{ cat: n, ancestors }, ...flattenTreeR(n.children, [...ancestors, n])]);
-  }
+  // Category picker helpers — use shared tree utils
+  // (buildTree and flattenTree imported at top of file)
 
   const parentCats = categories.filter(c => !c.parent_id);
   const getSubcats = (pid: string) => categories.filter(c => c.parent_id === pid);
@@ -571,8 +558,8 @@ export default function RecurringView({ user }: { user: User }) {
 
       {/* ── Category Picker — same as AddExpenseModal ── */}
       {showForm && showCategoryPicker && !showCreateCategory && (() => {
-        const pickerRoots = buildTreeR(categories);
-        const allPickerEntries = flattenTreeR(pickerRoots);
+        const pickerRoots = buildTree(categories);
+        const allPickerEntries = flattenTree(pickerRoots);
         const pq = searchQuery.trim().toLowerCase();
         const pickerResults = pq ? allPickerEntries.filter(e => e.cat.name.toLowerCase().includes(pq)) : [];
         return (
@@ -622,7 +609,7 @@ export default function RecurringView({ user }: { user: User }) {
               ) : (
                 <div className="pb-8">
                   {pickerRoots.map((root: any) => {
-                    const entries = flattenTreeR(root.children, [root]);
+                    const entries = flattenTree(root.children, [root]);
                     if (entries.length === 0) return null;
                     return (
                       <div key={root.id} className="mb-6">
