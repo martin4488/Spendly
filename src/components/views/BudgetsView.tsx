@@ -26,28 +26,7 @@ export interface BudgetPeriod {
   amount?: number;
 }
 
-// ── Tree ──────────────────────────────────────────────────────────────────────
-interface CatNode extends Category { children: CatNode[] }
-
-function buildTree(flat: Category[]): CatNode[] {
-  const map = new Map<string, CatNode>();
-  flat.forEach(c => map.set(c.id, { ...c, children: [] }));
-  const roots: CatNode[] = [];
-  flat.forEach(c => {
-    if (c.parent_id && map.has(c.parent_id)) map.get(c.parent_id)!.children.push(map.get(c.id)!);
-    else if (!c.parent_id) roots.push(map.get(c.id)!);
-  });
-  return roots;
-}
-
-interface FlatEntry { cat: CatNode; ancestors: CatNode[] }
-function flattenTree(nodes: CatNode[], ancestors: CatNode[] = []): FlatEntry[] {
-  return nodes.flatMap(n => [{ cat: n, ancestors }, ...flattenTree(n.children, [...ancestors, n])]);
-}
-
-function allDescendantIds(node: CatNode): string[] {
-  return [node.id, ...node.children.flatMap(allDescendantIds)];
-}
+import { CatNode, FlatEntry, buildTree, flattenTree, allDescendantIds } from '@/lib/categoryTree';
 
 // ── Period generation ─────────────────────────────────────────────────────────
 function getPeriodBounds(startDate: string, recurrence: 'monthly' | 'yearly', offset: number = 0): { start: string; end: string } {
