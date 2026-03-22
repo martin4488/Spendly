@@ -8,23 +8,7 @@ import { Category } from '@/types';
 import { Plus, Trash2, X, FolderPlus, GripVertical, ArrowLeft } from 'lucide-react';
 
 // ── Tree node (up to 3 levels) ────────────────────────────────────────────────
-interface CatNode extends Category {
-  children: CatNode[];
-}
-
-function buildTree(flat: Category[]): CatNode[] {
-  const map = new Map<string, CatNode>();
-  flat.forEach(c => map.set(c.id, { ...c, children: [] }));
-  const roots: CatNode[] = [];
-  flat.forEach(c => {
-    if (c.parent_id && map.has(c.parent_id)) {
-      map.get(c.parent_id)!.children.push(map.get(c.id)!);
-    } else if (!c.parent_id) {
-      roots.push(map.get(c.id)!);
-    }
-  });
-  return roots;
-}
+import { CatNode, buildTree } from '@/lib/categoryTree';
 
 // ── Swipeable row ─────────────────────────────────────────────────────────────
 function SwipeableCatRow({
