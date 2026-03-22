@@ -52,27 +52,7 @@ function deriveChildColor(parentHex: string, siblingCount: number): string {
   return hslToHex(h, newS, newL);
 }
 
-// ── Tree node ─────────────────────────────────────────────────────────────────
-interface CatNode extends Category {
-  children: CatNode[];
-}
-
-function buildTree(flat: Category[]): CatNode[] {
-  const map = new Map<string, CatNode>();
-  flat.forEach(c => map.set(c.id, { ...c, children: [] }));
-  const roots: CatNode[] = [];
-  flat.forEach(c => {
-    if (c.parent_id && map.has(c.parent_id)) map.get(c.parent_id)!.children.push(map.get(c.id)!);
-    else if (!c.parent_id) roots.push(map.get(c.id)!);
-  });
-  return roots;
-}
-
-// ── Flatten tree to searchable list ──────────────────────────────────────────
-interface FlatEntry { cat: CatNode; ancestors: CatNode[] }
-function flattenTree(nodes: CatNode[], ancestors: CatNode[] = []): FlatEntry[] {
-  return nodes.flatMap(n => [{ cat: n, ancestors }, ...flattenTree(n.children, [...ancestors, n])]);
-}
+import { CatNode, FlatEntry, buildTree, flattenTree } from '@/lib/categoryTree';
 
 export default function AddExpenseModal({ user, defaultCurrency, onClose, onSaved, editingExpense }: Props) {
   const [categories, setCategories] = useState<Category[]>([]);
