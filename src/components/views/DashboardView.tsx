@@ -46,7 +46,7 @@ function WalletChart({
 
   const n = data.length;
   const slotW = plotW / n;
-  const barW = slotW * 0.28;
+  const barW = slotW * 0.45;
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} style={{ display: 'block' }}>
@@ -66,7 +66,7 @@ function WalletChart({
         return (
           <g key={i}>
             <rect x={barX} y={barY} width={barW} height={barH} rx={2}
-              fill={entry.isCurrent ? '#ef4444' : 'rgba(239,68,68,0.18)'} />
+              fill={entry.isCurrent ? '#ef4444' : 'rgba(239,68,68,0.55)'} />
             <text x={cx} y={baseY + 13} textAnchor="middle"
               fill={entry.isCurrent ? '#94a3b8' : '#64748b'} fontSize={11}
               fontWeight={entry.isCurrent ? 600 : 400}>
@@ -182,6 +182,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);
   const [chartTotals, setChartTotals] = useState<Record<string, number>>({});
+  const [yearTotals, setYearTotals] = useState<Record<number, number>>({});
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>('months');
@@ -297,14 +298,23 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
   async function loadExtended() {
     if (extendedLoaded) return;
     try {
-      const startDate = `${new Date().getFullYear() - 5}-01-01`;
-      const { data: exp } = await supabase
-        .from('expenses')
-        .select('*, category:categories(*)')
-        .eq('user_id', user.id)
-        .gte('date', startDate)
-        .order('date', { ascending: false });
+      const currentYear = new Date().getFullYear();
+      const startDate = `${currentYear - 5}-01-01`;
+
+      const [{ data: exp }, { data: yearExp }] = await Promise.all([
+        supabase.from('expenses').select('*, category:categories(*)').eq('user_id', user.id).gte('date', startDate).order('date', { ascending: false }),
+        supabase.from('expenses').select('date, amount').eq('user_id', user.id).gte('date', startDate),
+      ]);
+
       setExpenses(exp as any || []);
+
+      // Build year totals directly from DB data
+      const totals: Record<number, number> = {};
+      (yearExp || []).forEach((e: any) => {
+        const yr = parseInt(e.date.slice(0, 4));
+        totals[yr] = (totals[yr] || 0) + Number(e.amount);
+      });
+      setYearTotals(totals);
       setExtendedLoaded(true);
       setHasMore(false);
     } catch (err) {
@@ -379,16 +389,14 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       const data: { name: string; year: string; total: number; isCurrent: boolean }[] = [];
       for (let i = 5; i >= 0; i--) {
         const year = now.getFullYear() - i;
-        const start = `${year}-01-01`;
-        const end = `${year}-12-31`;
-        const total = expenses
-          .filter(e => e.date >= start && e.date <= end)
+        const total = yearTotals[year] || expenses
+          .filter(e => e.date >= `${year}-01-01` && e.date <= `${year}-12-31`)
           .reduce((sum, e) => sum + Number(e.amount), 0);
         data.push({ name: String(year), year: '', total, isCurrent: i === 0 });
       }
       return data;
     }
-  }, [viewMode, chartTotals, expenses, currentMonth, currentYear]);
+  }, [viewMode, chartTotals, yearTotals, expenses, currentMonth, currentYear]);
 
   const displayExpenses = viewMode === 'months' ? currentMonthExp : currentYearExp;
 
