@@ -1,21 +1,22 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, lazy, Suspense } from 'react';
 import { User } from '@supabase/supabase-js';
-import { supabase } from '@/lib/supabase';
-import { LayoutDashboard, FolderTree, Wallet, RefreshCcw, Settings, BarChart2 } from 'lucide-react';
+import { LayoutDashboard, Wallet, RefreshCcw, Settings, BarChart2 } from 'lucide-react';
 import { setDefaultCurrency } from '@/lib/utils';
 import { Budget } from '@/types';
 import DashboardView from '@/components/views/DashboardView';
-import CategoriesView from '@/components/views/CategoriesView';
-import BudgetsView from '@/components/views/BudgetsView';
-import BudgetDetailView from '@/components/views/BudgetDetailView';
-import GlobalBudgetDetailView from '@/components/views/GlobalBudgetDetailView';
-import RecurringView from '@/components/views/RecurringView';
-import ReflectView from '@/components/views/ReflectView';
-import SettingsView from '@/components/views/SettingsView';
-import SpendingOverview from '@/components/views/SpendingOverview';
 import type { CurrencyCode } from '@/lib/currency';
+
+// Lazy-load all views except Dashboard (the initial view)
+const CategoriesView = lazy(() => import('@/components/views/CategoriesView'));
+const BudgetsView = lazy(() => import('@/components/views/BudgetsView'));
+const BudgetDetailView = lazy(() => import('@/components/views/BudgetDetailView'));
+const GlobalBudgetDetailView = lazy(() => import('@/components/views/GlobalBudgetDetailView'));
+const RecurringView = lazy(() => import('@/components/views/RecurringView'));
+const ReflectView = lazy(() => import('@/components/views/ReflectView'));
+const SettingsView = lazy(() => import('@/components/views/SettingsView'));
+const SpendingOverview = lazy(() => import('@/components/views/SpendingOverview'));
 
 type Tab = 'dashboard' | 'categories' | 'budgets' | 'recurring' | 'settings' | 'overview' | 'budget-detail' | 'global-budget-detail' | 'reflect';
 
@@ -26,6 +27,14 @@ const tabs = [
   { id: 'recurring' as Tab, label: 'Fijos', icon: RefreshCcw },
   { id: 'settings' as Tab, label: 'Más', icon: Settings },
 ];
+
+function ViewFallback() {
+  return (
+    <div className="flex items-center justify-center min-h-[60vh]">
+      <div className="w-7 h-7 border-2 border-brand-500/30 border-t-brand-500 rounded-full animate-spin" />
+    </div>
+  );
+}
 
 interface AppShellProps {
   user: User;
@@ -38,8 +47,6 @@ export default function AppShell({ user, initialCurrency }: AppShellProps) {
   const [selectedPeriodId, setSelectedPeriodId] = useState<string>('');
   const [defaultCurrency, _setDefaultCurrency] = useState<CurrencyCode>(initialCurrency);
   function updateCurrency(c: CurrencyCode) { _setDefaultCurrency(c); setDefaultCurrency(c); }
-
-  // No loading state needed — currency is passed in from page.tsx boot
 
   const openBudget = (budget: Budget, periodId: string = '') => {
     setSelectedBudget(budget);
@@ -61,35 +68,37 @@ export default function AppShell({ user, initialCurrency }: AppShellProps) {
         {activeTab === 'dashboard' && (
           <DashboardView user={user} onNavigate={setActiveTab} defaultCurrency={defaultCurrency} />
         )}
-        {activeTab === 'categories' && <CategoriesView user={user} onBack={() => setActiveTab('settings')} />}
-        {activeTab === 'budgets' && <BudgetsView user={user} onOpenBudget={openBudget} onOpenGlobalBudget={() => setActiveTab('global-budget-detail')} />}
-        {activeTab === 'budget-detail' && selectedBudget && (
-          <BudgetDetailView
-            user={user}
-            budget={selectedBudget}
-            initialPeriodId={selectedPeriodId}
-            onBack={backFromBudgetDetail}
-            onRefresh={() => {
-              setActiveTab('budgets');
-              setTimeout(() => setActiveTab('budget-detail'), 50);
-            }}
-          />
-        )}
-        {activeTab === 'global-budget-detail' && (
-          <GlobalBudgetDetailView
-            user={user}
-            onBack={() => setActiveTab('budgets')}
-            defaultCurrency={defaultCurrency}
-          />
-        )}
-        {activeTab === 'reflect' && <ReflectView user={user} />}
-        {activeTab === 'recurring' && <RecurringView user={user} />}
-        {activeTab === 'settings' && (
-          <SettingsView user={user} defaultCurrency={defaultCurrency} onCurrencyChange={updateCurrency} onOpenCategories={() => setActiveTab('categories')} />
-        )}
-        {activeTab === 'overview' && (
-          <SpendingOverview user={user} onBack={() => setActiveTab('dashboard')} />
-        )}
+        <Suspense fallback={<ViewFallback />}>
+          {activeTab === 'categories' && <CategoriesView user={user} onBack={() => setActiveTab('settings')} />}
+          {activeTab === 'budgets' && <BudgetsView user={user} onOpenBudget={openBudget} onOpenGlobalBudget={() => setActiveTab('global-budget-detail')} />}
+          {activeTab === 'budget-detail' && selectedBudget && (
+            <BudgetDetailView
+              user={user}
+              budget={selectedBudget}
+              initialPeriodId={selectedPeriodId}
+              onBack={backFromBudgetDetail}
+              onRefresh={() => {
+                setActiveTab('budgets');
+                setTimeout(() => setActiveTab('budget-detail'), 50);
+              }}
+            />
+          )}
+          {activeTab === 'global-budget-detail' && (
+            <GlobalBudgetDetailView
+              user={user}
+              onBack={() => setActiveTab('budgets')}
+              defaultCurrency={defaultCurrency}
+            />
+          )}
+          {activeTab === 'reflect' && <ReflectView user={user} />}
+          {activeTab === 'recurring' && <RecurringView user={user} />}
+          {activeTab === 'settings' && (
+            <SettingsView user={user} defaultCurrency={defaultCurrency} onCurrencyChange={updateCurrency} onOpenCategories={() => setActiveTab('categories')} />
+          )}
+          {activeTab === 'overview' && (
+            <SpendingOverview user={user} onBack={() => setActiveTab('dashboard')} />
+          )}
+        </Suspense>
       </main>
 
       {!hideNav && (
