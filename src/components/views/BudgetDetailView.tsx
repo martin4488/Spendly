@@ -42,22 +42,7 @@ interface PeriodSummary {
   isCurrent: boolean;
 }
 
-interface CatNode extends Category { children: CatNode[] }
-
-function buildTree(flat: Category[]): CatNode[] {
-  const map = new Map<string, CatNode>();
-  flat.forEach(c => map.set(c.id, { ...c, children: [] }));
-  const roots: CatNode[] = [];
-  flat.forEach(c => {
-    if (c.parent_id && map.has(c.parent_id)) map.get(c.parent_id)!.children.push(map.get(c.id)!);
-    else if (!c.parent_id) roots.push(map.get(c.id)!);
-  });
-  return roots;
-}
-
-function allDescendantIds(node: CatNode): string[] {
-  return [node.id, ...node.children.flatMap(allDescendantIds)];
-}
+import { CatNode, buildTree, allDescendantIds } from '@/lib/categoryTree';
 
 function expandCatIds(catIds: string[], categories: Category[]): string[] {
   const tree = buildTree(categories);
