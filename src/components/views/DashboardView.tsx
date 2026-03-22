@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense, memo } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, getMonthRange, getYearRange } from '@/lib/utils';
@@ -8,8 +8,10 @@ import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { Expense, Category } from '@/types';
 import { Plus, Trash2, ChevronRight, PieChart, Search, X } from 'lucide-react';
-import AddExpenseModal from '@/components/AddExpenseModal';
 import type { CurrencyCode } from '@/lib/currency';
+
+// Lazy-load the heavy modal — not needed until user taps +
+const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
 
 type ViewMode = 'months' | 'years';
 
@@ -21,23 +23,21 @@ function formatCompact(value: number): string {
 // ── Custom chart matching Wallet iOS style ────────────────────────────────────
 function WalletChart({
   data,
-  formatValue,
 }: {
   data: { name: string; year: string; total: number; isCurrent: boolean }[];
-  formatValue: (v: number) => string;
 }) {
-  const W = 340; // viewBox width
-  const H = 130; // viewBox height
+  const W = 340;
+  const H = 130;
   const padL = 4;
   const padR = 4;
-  const padTop = 24; // space for top label
-  const padBottom = 32; // space for x-axis labels
+  const padTop = 24;
+  const padBottom = 32;
   const plotH = H - padTop - padBottom;
   const plotW = W - padL - padR;
 
   const maxVal = Math.max(...data.map(d => d.total), 1);
   const midVal = maxVal / 2;
-  const topVal = maxVal * 1.05; // slight headroom
+  const topVal = maxVal * 1.05;
 
   const toY = (v: number) => padTop + plotH - (v / topVal) * plotH;
   const baseY = toY(0);
@@ -46,26 +46,18 @@ function WalletChart({
 
   const n = data.length;
   const slotW = plotW / n;
-  const barW = slotW * 0.28; // thin bars like Wallet
+  const barW = slotW * 0.28;
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} style={{ display: 'block' }}>
-      {/* Top dashed line + label */}
       <line x1={padL} y1={topY} x2={W - padR} y2={topY} stroke="#2d3f55" strokeDasharray="3 3" strokeWidth={1} />
       <text x={padL + 2} y={topY - 3} fill="#64748b" fontSize={10}>{formatCompact(topVal)}</text>
-
-      {/* Mid dashed line + label */}
       <line x1={padL} y1={midY} x2={W - padR} y2={midY} stroke="#2d3f55" strokeDasharray="3 3" strokeWidth={1} />
       <text x={padL + 2} y={midY - 3} fill="#64748b" fontSize={10}>{formatCompact(midVal)}</text>
-
-      {/* Zero dashed line + label */}
       <line x1={padL} y1={baseY} x2={W - padR} y2={baseY} stroke="#2d3f55" strokeDasharray="3 3" strokeWidth={1} />
       <text x={padL + 2} y={baseY - 3} fill="#64748b" fontSize={10}>0</text>
-
-      {/* Solid baseline */}
       <line x1={padL} y1={baseY} x2={W - padR} y2={baseY} stroke="#3d5068" strokeWidth={1.5} />
 
-      {/* Bars + x labels */}
       {data.map((entry, i) => {
         const cx = padL + i * slotW + slotW / 2;
         const barH = Math.max((entry.total / topVal) * plotH, entry.total > 0 ? 2 : 0);
@@ -73,27 +65,13 @@ function WalletChart({
         const barY = baseY - barH;
         return (
           <g key={i}>
-            {/* Bar */}
-            <rect
-              x={barX}
-              y={barY}
-              width={barW}
-              height={barH}
-              rx={2}
-              fill={entry.isCurrent ? '#ef4444' : 'rgba(239,68,68,0.18)'}
-            />
-            {/* Month label */}
-            <text
-              x={cx}
-              y={baseY + 13}
-              textAnchor="middle"
-              fill={entry.isCurrent ? '#94a3b8' : '#64748b'}
-              fontSize={11}
-              fontWeight={entry.isCurrent ? 600 : 400}
-            >
+            <rect x={barX} y={barY} width={barW} height={barH} rx={2}
+              fill={entry.isCurrent ? '#ef4444' : 'rgba(239,68,68,0.18)'} />
+            <text x={cx} y={baseY + 13} textAnchor="middle"
+              fill={entry.isCurrent ? '#94a3b8' : '#64748b'} fontSize={11}
+              fontWeight={entry.isCurrent ? 600 : 400}>
               {entry.name}
             </text>
-            {/* Year label (only for months mode) */}
             {entry.year && (
               <text x={cx} y={baseY + 24} textAnchor="middle" fill="#475569" fontSize={9}>
                 {entry.year}
@@ -106,8 +84,8 @@ function WalletChart({
   );
 }
 
-// ─── Swipeable expense row ────────────────────────────────────────────────────
-function SwipeableExpenseRow({
+// ─── Memoized swipeable expense row ───────────────────────────────────────────
+const SwipeableExpenseRow = memo(function SwipeableExpenseRow({
   expense,
   onEdit,
   onDelete,
@@ -120,12 +98,11 @@ function SwipeableExpenseRow({
   const [isDragging, setIsDragging] = useState(false);
   const startXRef = useRef<number | null>(null);
   const currentXRef = useRef<number>(0);
-  const DELETE_THRESHOLD = 72; // px – how far you need to swipe to reveal the button
-  const SNAP_THRESHOLD = 36;   // px – snap open if you've swiped past this
+  const DELETE_THRESHOLD = 72;
+  const SNAP_THRESHOLD = 36;
 
   const cat = (expense as any).category;
 
-  // ── touch handlers ──────────────────────────────────────────────────────────
   function onTouchStart(e: React.TouchEvent) {
     startXRef.current = e.touches[0].clientX;
     setIsDragging(false);
@@ -133,13 +110,12 @@ function SwipeableExpenseRow({
 
   function onTouchMove(e: React.TouchEvent) {
     if (startXRef.current === null) return;
-    const dx = startXRef.current - e.touches[0].clientX; // positive = swipe left
+    const dx = startXRef.current - e.touches[0].clientX;
     if (dx > 5) setIsDragging(true);
     if (dx > 0) {
       currentXRef.current = Math.min(dx, DELETE_THRESHOLD);
       setOffset(currentXRef.current);
     } else if (dx < 0 && offset > 0) {
-      // swiping back right
       currentXRef.current = Math.max(0, offset + dx);
       setOffset(currentXRef.current);
     }
@@ -147,40 +123,31 @@ function SwipeableExpenseRow({
 
   function onTouchEnd() {
     if (currentXRef.current > SNAP_THRESHOLD) {
-      setOffset(DELETE_THRESHOLD); // snap open
+      setOffset(DELETE_THRESHOLD);
     } else {
-      setOffset(0); // snap closed
+      setOffset(0);
     }
     startXRef.current = null;
   }
 
   function handleRowClick() {
-    if (isDragging) return; // ignore tap if we were swiping
-    if (offset > 0) {
-      setOffset(0); // close swipe on tap
-    } else {
-      onEdit();
-    }
+    if (isDragging) return;
+    if (offset > 0) { setOffset(0); } else { onEdit(); }
   }
 
   return (
     <div className="relative overflow-hidden border-b border-dark-800/40">
-      {/* Red delete button revealed underneath */}
-      <div
-        className="absolute right-0 top-0 bottom-0 flex items-center justify-center bg-red-500"
-        style={{ width: DELETE_THRESHOLD }}
-      >
+      <div className="absolute right-0 top-0 bottom-0 flex items-center justify-center bg-red-500"
+        style={{ width: DELETE_THRESHOLD }}>
         <button
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => { e.stopPropagation(); onDelete(); }}
-          className="flex flex-col items-center justify-center w-full h-full gap-1 active:bg-red-600 transition-colors"
-        >
+          className="flex flex-col items-center justify-center w-full h-full gap-1 active:bg-red-600 transition-colors">
           <Trash2 size={18} className="text-white" />
           <span className="text-[10px] text-white font-medium">Borrar</span>
         </button>
       </div>
 
-      {/* Foreground row */}
       <div
         className="flex items-center gap-2.5 px-3 py-2 bg-dark-900 active:bg-dark-800/60 transition-colors cursor-pointer select-none"
         style={{
@@ -190,29 +157,25 @@ function SwipeableExpenseRow({
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
-        onClick={handleRowClick}
-      >
-        <div
-          className="w-9 h-9 rounded-xl flex items-center justify-center text-base flex-shrink-0"
-          style={{ backgroundColor: cat?.color ?? '#475569' }}
-        >
+        onClick={handleRowClick}>
+        <div className="w-9 h-9 rounded-xl flex items-center justify-center text-base flex-shrink-0"
+          style={{ backgroundColor: cat?.color ?? '#475569' }}>
           {cat?.icon || '💵'}
         </div>
-
         <div className="flex-1 min-w-0">
           <p className="text-[12px] font-semibold truncate leading-tight">{cat?.name || 'Sin categoría'}{expense.is_recurring && ' 🔄'}</p>
           {expense.description && expense.description !== (cat?.name || '') && (
             <p className="text-[10px] text-dark-500 mt-0.5 leading-tight truncate">{expense.description}</p>
           )}
         </div>
-
         <span className="text-[12px] font-bold text-red-400 flex-shrink-0">
           -{formatCurrency(Number(expense.amount))}
         </span>
       </div>
     </div>
   );
-}
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function DashboardView({ user, onNavigate, defaultCurrency }: { user: User; onNavigate: (tab: any) => void; defaultCurrency: CurrencyCode }) {
@@ -223,7 +186,6 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
   const [hasMore, setHasMore] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>('months');
   const [extendedLoaded, setExtendedLoaded] = useState(false);
-  // oldestDate tracks how far back we've loaded for the months list
   const oldestDate = useRef<string>('');
   const sentinelRef = useRef<HTMLDivElement>(null);
   const [showAddExpense, setShowAddExpense] = useState(false);
@@ -238,7 +200,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     if (showSearch && searchRef.current) searchRef.current.focus();
   }, [showSearch]);
 
-  // Infinite scroll observer — fires when sentinel enters viewport
+  // Infinite scroll observer
   useEffect(() => {
     if (!sentinelRef.current) return;
     const observer = new IntersectionObserver(
@@ -253,7 +215,6 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     return () => observer.disconnect();
   }, [loadingMore, hasMore, viewMode, oldestDate.current]);
 
-  // Load last 30 days on startup
   async function loadInitial() {
     try {
       const now = new Date();
@@ -263,7 +224,6 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       const chartStart = `${sixMonthsAgo.getFullYear()}-${String(sixMonthsAgo.getMonth() + 1).padStart(2, '0')}-01`;
       oldestDate.current = startStr;
 
-      // Both queries in parallel
       const [{ data: exp }, { data: chartExp }] = await Promise.all([
         supabase.from('expenses').select('*, category:categories(*)').eq('user_id', user.id).gte('date', startStr).order('date', { ascending: false }),
         supabase.from('expenses').select('date, amount').eq('user_id', user.id).gte('date', chartStart),
@@ -283,7 +243,6 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     }
   }
 
-  // Load the previous 30-day chunk when user scrolls to the bottom
   async function loadMoreMonths() {
     if (loadingMore || !hasMore) return;
     setLoadingMore(true);
@@ -298,7 +257,6 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       let newOldest = oldestDate.current;
       let reachedEnd = false;
 
-      // Keep scanning 30-day chunks until we find expenses or hit the hard stop
       while (accumulated.length === 0) {
         const chunkEnd = new Date(cursor);
         chunkEnd.setDate(chunkEnd.getDate() - 1);
@@ -336,19 +294,16 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     }
   }
 
-  // Load full 3-year history for yearly chart
   async function loadExtended() {
     if (extendedLoaded) return;
     try {
       const startDate = `${new Date().getFullYear() - 2}-01-01`;
-      // Lightweight: only date+amount needed for the yearly chart bars
       const { data: exp } = await supabase
         .from('expenses')
         .select('date, amount')
         .eq('user_id', user.id)
         .gte('date', startDate)
         .order('date', { ascending: false });
-      // Store as minimal objects — yearly view doesn't show transaction list
       setExpenses(exp as any || []);
       setExtendedLoaded(true);
       setHasMore(false);
@@ -357,8 +312,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     }
   }
 
-  async function loadData() {
-    // Full reload after add/edit/delete — respect current loaded range
+  const loadData = useCallback(async () => {
     try {
       const now = new Date();
       const startStr = extendedLoaded ? `${now.getFullYear() - 2}-01-01` : oldestDate.current;
@@ -380,7 +334,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     } catch (err) {
       console.error(err);
     }
-  }
+  }, [extendedLoaded, user.id]);
 
   function handleViewModeChange(mode: ViewMode) {
     setViewMode(mode);
@@ -388,8 +342,12 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
   }
 
   const now = new Date();
-  const monthRange = useMemo(() => getMonthRange(now), [now.getMonth(), now.getFullYear()]);
-  const yearRange = useMemo(() => getYearRange(now), [now.getFullYear()]);
+  // Stable keys for useMemo — won't change within the same month/year
+  const currentMonth = now.getMonth();
+  const currentYear = now.getFullYear();
+
+  const monthRange = useMemo(() => getMonthRange(now), [currentMonth, currentYear]);
+  const yearRange = useMemo(() => getYearRange(now), [currentYear]);
 
   const currentMonthExp = useMemo(
     () => expenses.filter(e => e.date >= monthRange.start && e.date <= monthRange.end),
@@ -407,31 +365,30 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     [viewMode, currentMonthExp, currentYearExp]
   );
 
-  const chartData = viewMode === 'months'
-    ? (() => {
-        const data: { name: string; year: string; total: number; isCurrent: boolean }[] = [];
-        for (let i = 5; i >= 0; i--) {
-          const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-          const monthKey = format(d, 'yyyy-MM');
-          // Use dedicated chartTotals (always covers 6 months) instead of filtered expenses
-          const total = chartTotals[monthKey] || 0;
-          data.push({ name: format(d, 'MMM', { locale: es }), year: format(d, 'yyyy'), total, isCurrent: i === 0 });
-        }
-        return data;
-      })()
-    : (() => {
-        const data: { name: string; year: string; total: number; isCurrent: boolean }[] = [];
-        for (let i = 2; i >= 0; i--) {
-          const year = now.getFullYear() - i;
-          const start = `${year}-01-01`;
-          const end = `${year}-12-31`;
-          const total = expenses
-            .filter(e => e.date >= start && e.date <= end)
-            .reduce((sum, e) => sum + Number(e.amount), 0);
-          data.push({ name: String(year), year: '', total, isCurrent: i === 0 });
-        }
-        return data;
-      })();
+  const chartData = useMemo(() => {
+    if (viewMode === 'months') {
+      const data: { name: string; year: string; total: number; isCurrent: boolean }[] = [];
+      for (let i = 5; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const monthKey = format(d, 'yyyy-MM');
+        const total = chartTotals[monthKey] || 0;
+        data.push({ name: format(d, 'MMM', { locale: es }), year: format(d, 'yyyy'), total, isCurrent: i === 0 });
+      }
+      return data;
+    } else {
+      const data: { name: string; year: string; total: number; isCurrent: boolean }[] = [];
+      for (let i = 2; i >= 0; i--) {
+        const year = now.getFullYear() - i;
+        const start = `${year}-01-01`;
+        const end = `${year}-12-31`;
+        const total = expenses
+          .filter(e => e.date >= start && e.date <= end)
+          .reduce((sum, e) => sum + Number(e.amount), 0);
+        data.push({ name: String(year), year: '', total, isCurrent: i === 0 });
+      }
+      return data;
+    }
+  }, [viewMode, chartTotals, expenses, currentMonth, currentYear]);
 
   const displayExpenses = viewMode === 'months' ? currentMonthExp : currentYearExp;
 
@@ -460,7 +417,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       .sort((a, b) => b.date.localeCompare(a.date));
   }, [displayExpenses, searchQuery, today, yesterday]);
 
-  function openEdit(expense: Expense) {
+  const openEdit = useCallback((expense: Expense) => {
     setEditingExpense({
       id: expense.id,
       amount: Number(expense.amount),
@@ -469,14 +426,14 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       date: expense.date,
     });
     setShowAddExpense(true);
-  }
+  }, []);
 
-  async function handleDelete(id: string) {
+  const handleDelete = useCallback(async (id: string) => {
     if (confirm('¿Eliminar este gasto?')) {
       await supabase.from('expenses').delete().eq('id', id);
       loadData();
     }
-  }
+  }, [loadData]);
 
   if (loading) {
     return (
@@ -551,7 +508,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       {/* Bar chart */}
       {!showSearch && (
         <div className="px-3 mb-0">
-          <WalletChart data={chartData} formatValue={formatCurrency} />
+          <WalletChart data={chartData} />
         </div>
       )}
 
@@ -631,15 +588,17 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
         <Plus size={24} strokeWidth={2.5} />
       </button>
 
-      {/* Modal */}
+      {/* Modal — lazy loaded */}
       {showAddExpense && (
-        <AddExpenseModal
-          user={user}
-          defaultCurrency={defaultCurrency}
-          onClose={() => { setShowAddExpense(false); setEditingExpense(null); }}
-          onSaved={() => loadData()}
-          editingExpense={editingExpense}
-        />
+        <Suspense fallback={null}>
+          <AddExpenseModal
+            user={user}
+            defaultCurrency={defaultCurrency}
+            onClose={() => { setShowAddExpense(false); setEditingExpense(null); }}
+            onSaved={() => loadData()}
+            editingExpense={editingExpense}
+          />
+        </Suspense>
       )}
     </div>
   );
