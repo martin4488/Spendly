@@ -51,11 +51,11 @@ function WalletChart({
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} style={{ display: 'block' }}>
       <line x1={padL} y1={topY} x2={W - padR} y2={topY} stroke="#2d3f55" strokeDasharray="3 3" strokeWidth={1} />
-      <text x={padL + 2} y={topY - 3} fill="#64748b" fontSize={10}>{formatCompact(topVal)}</text>
+      <text x={padL - 4} y={topY - 3} textAnchor="end" fill="#64748b" fontSize={10}>{formatCompact(topVal)}</text>
       <line x1={padL} y1={midY} x2={W - padR} y2={midY} stroke="#2d3f55" strokeDasharray="3 3" strokeWidth={1} />
-      <text x={padL + 2} y={midY - 3} fill="#64748b" fontSize={10}>{formatCompact(midVal)}</text>
+      <text x={padL - 4} y={midY - 3} textAnchor="end" fill="#64748b" fontSize={10}>{formatCompact(midVal)}</text>
       <line x1={padL} y1={baseY} x2={W - padR} y2={baseY} stroke="#2d3f55" strokeDasharray="3 3" strokeWidth={1} />
-      <text x={padL + 2} y={baseY - 3} fill="#64748b" fontSize={10}>0</text>
+      <text x={padL - 4} y={baseY - 3} textAnchor="end" fill="#64748b" fontSize={10}>0</text>
       <line x1={padL} y1={baseY} x2={W - padR} y2={baseY} stroke="#3d5068" strokeWidth={1.5} />
 
       {data.map((entry, i) => {
