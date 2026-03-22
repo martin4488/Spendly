@@ -28,7 +28,7 @@ function WalletChart({
 }) {
   const W = 340;
   const H = 130;
-  const padL = 4;
+  const padL = 36;
   const padR = 4;
   const padTop = 24;
   const padBottom = 32;
