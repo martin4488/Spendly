@@ -302,15 +302,37 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       const yearStart = `${currentYear}-01-01`;
       const yearEnd = `${currentYear}-12-31`;
 
-      // Run both queries in parallel: lightweight year totals + current year expenses with categories
-      const [{ data: yearExp }, { data: currentYearExpData }] = await Promise.all([
-        supabase.from('expenses').select('date, amount').eq('user_id', user.id).gte('date', startDate).limit(10000),
-        supabase.from('expenses').select('*, category:categories(*)').eq('user_id', user.id).gte('date', yearStart).lte('date', yearEnd).order('date', { ascending: false }),
-      ]);
+      // Paginate through ALL expenses for year totals (no row limit)
+      // Supabase caps at 1000 per request by default, so we paginate
+      let allYearExp: { date: string; amount: number }[] = [];
+      let from = 0;
+      const pageSize = 5000;
+      while (true) {
+        const { data: batch } = await supabase
+          .from('expenses')
+          .select('date, amount')
+          .eq('user_id', user.id)
+          .gte('date', startDate)
+          .order('date', { ascending: true })
+          .range(from, from + pageSize - 1);
+        if (!batch || batch.length === 0) break;
+        allYearExp = allYearExp.concat(batch);
+        if (batch.length < pageSize) break;
+        from += pageSize;
+      }
 
-      // Build year totals
+      // Current year expenses with categories for the list view
+      const { data: currentYearExpData } = await supabase
+        .from('expenses')
+        .select('*, category:categories(*)')
+        .eq('user_id', user.id)
+        .gte('date', yearStart)
+        .lte('date', yearEnd)
+        .order('date', { ascending: false });
+
+      // Build year totals from ALL fetched rows
       const totals: Record<number, number> = {};
-      (yearExp || []).forEach((e: any) => {
+      allYearExp.forEach((e) => {
         const yr = parseInt(e.date.slice(0, 4));
         totals[yr] = (totals[yr] || 0) + Number(e.amount);
       });
@@ -389,17 +411,17 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       }
       return data;
     } else {
+      // In year mode, use ONLY yearTotals (populated by loadExtended).
+      // Don't fall back to filtering expenses[] — it only has current year data.
       const data: { name: string; year: string; total: number; isCurrent: boolean }[] = [];
       for (let i = 5; i >= 0; i--) {
         const year = now.getFullYear() - i;
-        const total = yearTotals[year] ?? expenses
-          .filter(e => e.date >= `${year}-01-01` && e.date <= `${year}-12-31`)
-          .reduce((sum, e) => sum + Number(e.amount), 0);
+        const total = yearTotals[year] || 0;
         data.push({ name: String(year), year: '', total, isCurrent: i === 0 });
       }
       return data;
     }
-  }, [viewMode, chartTotals, yearTotals, expenses, currentMonth, currentYear]);
+  }, [viewMode, chartTotals, yearTotals, currentMonth, currentYear]);
 
   const displayExpenses = viewMode === 'months' ? currentMonthExp : currentYearExp;
 
