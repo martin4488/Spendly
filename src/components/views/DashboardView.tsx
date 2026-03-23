@@ -298,43 +298,29 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
   async function loadExtended() {
     try {
       const currentYear = new Date().getFullYear();
-      const startDate = `${currentYear - 5}-01-01`;
       const yearStart = `${currentYear}-01-01`;
       const yearEnd = `${currentYear}-12-31`;
 
-      // Paginate through ALL expenses for year totals (no row limit)
-      // Supabase caps at 1000 per request by default, so we paginate
-      let allYearExp: { date: string; amount: number }[] = [];
-      let from = 0;
-      const pageSize = 5000;
-      while (true) {
-        const { data: batch } = await supabase
+      // Server-side aggregation via RPC — no row limits, single round trip
+      const [{ data: rpcData }, { data: currentYearExpData }] = await Promise.all([
+        supabase.rpc('get_yearly_totals', {
+          p_user_id: user.id,
+          p_start_year: currentYear - 5,
+          p_end_year: currentYear,
+        }),
+        supabase
           .from('expenses')
-          .select('date, amount')
+          .select('*, category:categories(*)')
           .eq('user_id', user.id)
-          .gte('date', startDate)
-          .order('date', { ascending: true })
-          .range(from, from + pageSize - 1);
-        if (!batch || batch.length === 0) break;
-        allYearExp = allYearExp.concat(batch);
-        if (batch.length < pageSize) break;
-        from += pageSize;
-      }
+          .gte('date', yearStart)
+          .lte('date', yearEnd)
+          .order('date', { ascending: false }),
+      ]);
 
-      // Current year expenses with categories for the list view
-      const { data: currentYearExpData } = await supabase
-        .from('expenses')
-        .select('*, category:categories(*)')
-        .eq('user_id', user.id)
-        .gte('date', yearStart)
-        .lte('date', yearEnd)
-        .order('date', { ascending: false });
-
-      // Build year totals from ALL fetched rows
+      // Build year totals from RPC result
       const totals: Record<number, number> = {};
-      allYearExp.forEach((e) => {
-        const yr = parseInt(e.date.slice(0, 4));
-        totals[yr] = (totals[yr] || 0) + Number(e.amount);
+      (rpcData || []).forEach((row: { year: number; total: number }) => {
+        totals[row.year] = Number(row.total);
       });
       setYearTotals(totals);
 
@@ -411,8 +397,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       }
       return data;
     } else {
-      // In year mode, use ONLY yearTotals (populated by loadExtended).
-      // Don't fall back to filtering expenses[] — it only has current year data.
+      // Year mode: use only yearTotals from RPC (server-side aggregation)
       const data: { name: string; year: string; total: number; isCurrent: boolean }[] = [];
       for (let i = 5; i >= 0; i--) {
         const year = now.getFullYear() - i;
