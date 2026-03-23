@@ -296,25 +296,28 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
   }
 
   async function loadExtended() {
-    if (extendedLoaded) return;
     try {
       const currentYear = new Date().getFullYear();
       const startDate = `${currentYear - 5}-01-01`;
+      const yearStart = `${currentYear}-01-01`;
+      const yearEnd = `${currentYear}-12-31`;
 
-      const [{ data: exp }, { data: yearExp }] = await Promise.all([
-        supabase.from('expenses').select('*, category:categories(*)').eq('user_id', user.id).gte('date', startDate).order('date', { ascending: false }),
+      // Run both queries in parallel: lightweight year totals + current year expenses with categories
+      const [{ data: yearExp }, { data: currentYearExpData }] = await Promise.all([
         supabase.from('expenses').select('date, amount').eq('user_id', user.id).gte('date', startDate),
+        supabase.from('expenses').select('*, category:categories(*)').eq('user_id', user.id).gte('date', yearStart).lte('date', yearEnd).order('date', { ascending: false }),
       ]);
 
-      setExpenses(exp as any || []);
-
-      // Build year totals directly from DB data
+      // Build year totals
       const totals: Record<number, number> = {};
       (yearExp || []).forEach((e: any) => {
         const yr = parseInt(e.date.slice(0, 4));
         totals[yr] = (totals[yr] || 0) + Number(e.amount);
       });
       setYearTotals(totals);
+
+      // Set current year expenses for the list view
+      setExpenses(currentYearExpData as any || []);
       setExtendedLoaded(true);
       setHasMore(false);
     } catch (err) {
@@ -389,7 +392,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       const data: { name: string; year: string; total: number; isCurrent: boolean }[] = [];
       for (let i = 5; i >= 0; i--) {
         const year = now.getFullYear() - i;
-        const total = yearTotals[year] || expenses
+        const total = yearTotals[year] ?? expenses
           .filter(e => e.date >= `${year}-01-01` && e.date <= `${year}-12-31`)
           .reduce((sum, e) => sum + Number(e.amount), 0);
         data.push({ name: String(year), year: '', total, isCurrent: i === 0 });
