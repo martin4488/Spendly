@@ -226,8 +226,8 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       oldestDate.current = startStr;
 
       const [{ data: exp }, { data: chartExp }] = await Promise.all([
-        supabase.from('expenses').select('*, category:categories(*)').eq('user_id', user.id).gte('date', startStr).order('date', { ascending: false }),
-        supabase.from('expenses').select('date, amount').eq('user_id', user.id).gte('date', chartStart),
+        supabase.from('expenses').select('*, category:categories(*)').eq('user_id', user.id).gte('date', startStr).order('date', { ascending: false }).limit(500),
+        supabase.from('expenses').select('date, amount').eq('user_id', user.id).gte('date', chartStart).limit(10000),
       ]);
 
       setExpenses(exp || []);
@@ -304,7 +304,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
 
       // Run both queries in parallel: lightweight year totals + current year expenses with categories
       const [{ data: yearExp }, { data: currentYearExpData }] = await Promise.all([
-        supabase.from('expenses').select('date, amount').eq('user_id', user.id).gte('date', startDate),
+        supabase.from('expenses').select('date, amount').eq('user_id', user.id).gte('date', startDate).limit(10000),
         supabase.from('expenses').select('*, category:categories(*)').eq('user_id', user.id).gte('date', yearStart).lte('date', yearEnd).order('date', { ascending: false }),
       ]);
 
@@ -333,8 +333,8 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       const chartStart = `${sixMonthsAgo.getFullYear()}-${String(sixMonthsAgo.getMonth() + 1).padStart(2, '0')}-01`;
 
       const [{ data: exp }, { data: chartExp }] = await Promise.all([
-        supabase.from('expenses').select('*, category:categories(*)').eq('user_id', user.id).gte('date', startStr).order('date', { ascending: false }),
-        supabase.from('expenses').select('date, amount').eq('user_id', user.id).gte('date', chartStart),
+        supabase.from('expenses').select('*, category:categories(*)').eq('user_id', user.id).gte('date', startStr).order('date', { ascending: false }).limit(500),
+        supabase.from('expenses').select('date, amount').eq('user_id', user.id).gte('date', chartStart).limit(10000),
       ]);
 
       setExpenses(exp || []);
