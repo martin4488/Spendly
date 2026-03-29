@@ -8,13 +8,24 @@ export function setDefaultCurrency(code: string) {
   _defaultCurrency = code;
 }
 
+// Cache Intl.NumberFormat instances — avoids re-instantiation on every render
+const _fmtCache = new Map<string, Intl.NumberFormat>();
+function getCurrencyFormatter(code: string): Intl.NumberFormat {
+  let fmt = _fmtCache.get(code);
+  if (!fmt) {
+    fmt = new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: code,
+      minimumFractionDigits: 2,
+    });
+    _fmtCache.set(code, fmt);
+  }
+  return fmt;
+}
+
 export function formatCurrency(amount: number, currency?: string): string {
   const code = currency || _defaultCurrency;
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: code,
-    minimumFractionDigits: 2,
-  }).format(amount);
+  return getCurrencyFormatter(code).format(amount);
 }
 
 export function formatDate(date: string): string {
