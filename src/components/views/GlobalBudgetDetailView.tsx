@@ -8,6 +8,7 @@ import { ArrowLeft, ChevronLeft, ChevronRight, ChevronDown, Edit3, Delete, X, Tr
 import { format, parseISO, startOfMonth, endOfMonth, subMonths } from 'date-fns';
 import { es } from 'date-fns/locale';
 import type { CurrencyCode } from '@/lib/currency';
+import { getCategories } from '@/lib/categoryCache';
 
 interface Props {
   user: User;
@@ -185,8 +186,8 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
         if (e.category_id) spendMap[e.category_id] = (spendMap[e.category_id] || 0) + e.amount;
       });
       // Load categories to build tree
-      const { data: catsData } = await supabase.from('categories').select('id, name, icon, color, parent_id').eq('user_id', user.id).neq('deleted', true);
-      const tree = buildCatTree(catsData || []);
+      const catsMap = await getCategories(user.id);
+      const tree = buildCatTree(Array.from(catsMap.values()));
       const cats: CatSpend[] = tree
         .map(node => buildCatSpend(node, spendMap))
         .filter(c => c.spent > 0)
