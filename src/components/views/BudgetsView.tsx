@@ -27,6 +27,7 @@ export interface BudgetPeriod {
 }
 
 import { CatNode, FlatEntry, buildTree, flattenTree, allDescendantIds } from '@/lib/categoryTree';
+import { getCategories } from '@/lib/categoryCache';
 
 // ── Period generation ─────────────────────────────────────────────────────────
 function getPeriodBounds(startDate: string, recurrence: 'monthly' | 'yearly', offset: number = 0): { start: string; end: string } {
@@ -111,14 +112,12 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
       const today = format(new Date(), 'yyyy-MM-dd');
 
       // Roundtrip 1a: budgets + categories (indexed by user_id)
-      const [{ data: budgetsData }, { data: catsData }] = await Promise.all([
+      const [{ data: budgetsData }, catsMap] = await Promise.all([
         supabase.from('budgets').select('*').eq('user_id', user.id).order('name'),
-        supabase.from('categories').select('*').eq('user_id', user.id).neq('deleted', true).order('position').order('created_at'),
+        getCategories(user.id),
       ]);
       const budgetIds = (budgetsData || []).map((b: any) => b.id);
 
-      // Roundtrip 1b: bc + periods filtered by budget IDs — fire immediately after budgetIds known,
-      // overlaps with the in-memory work below so effectively free
       const [{ data: bcData }, { data: periodsData }] = budgetIds.length > 0
         ? await Promise.all([
             supabase.from('budget_categories').select('*').in('budget_id', budgetIds),
@@ -127,7 +126,7 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
         : [{ data: [] as any[] }, { data: [] as any[] }];
 
       const allBudgets = budgetsData || [];
-      const allCats = catsData || [];
+      const allCats = Array.from(catsMap.values());
       const allPeriods = periodsData || [];
       setCategories(allCats);
       const tree = buildTree(allCats);
