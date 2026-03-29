@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { prefetchRates } from '@/lib/currency';
 import { setDefaultCurrency } from '@/lib/utils';
+import { getCategories } from '@/lib/categoryCache';
 import { User } from '@supabase/supabase-js';
 import AuthPage from '@/app/auth/AuthPage';
 import AppShell from '@/components/AppShell';
@@ -20,10 +21,8 @@ function getCachedSession(): User | null {
     const raw = localStorage.getItem('spendly-auth');
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    // Supabase stores session under the key directly
     const session = parsed?.currentSession ?? parsed;
     if (!session?.user || !session?.access_token) return null;
-    // Check expiry
     if (session.expires_at && session.expires_at * 1000 < Date.now()) return null;
     return session.user as User;
   } catch {
@@ -31,8 +30,21 @@ function getCachedSession(): User | null {
   }
 }
 
+// Throttle generate_recurring_expenses to once per day — saves a Supabase roundtrip on every open
+function shouldRunRecurring(userId: string): boolean {
+  try {
+    const key = `spendly_recurring_run_${userId}`;
+    const last = localStorage.getItem(key);
+    if (last && new Date(last).toDateString() === new Date().toDateString()) return false;
+    localStorage.setItem(key, new Date().toISOString());
+    return true;
+  } catch {
+    return true;
+  }
+}
+
 export default function Home() {
-  // Try to boot instantly from cache — avoids blank screen while Supabase initializes
+  // Boot instantly from cached session — avoids blank screen while Supabase initializes
   const [bootData, setBootData] = useState<BootData | null>(() => {
     if (typeof window === 'undefined') return null;
     const cached = getCachedSession();
@@ -43,19 +55,22 @@ export default function Home() {
   const [unauthenticated, setUnauthenticated] = useState(false);
 
   useEffect(() => {
-    let booted = !!bootData; // already booted from cache
+    let booted = !!bootData;
 
     async function bootWithSession(user: User) {
       if (booted) {
-        // Already showing app — just update currency in background
-        supabase.from('user_settings').select('default_currency').eq('user_id', user.id).single()
-          .then(({ data: settings }) => {
-            if (settings?.default_currency) {
-              const currency = settings.default_currency as CurrencyCode;
-              setDefaultCurrency(currency);
-              setBootData(prev => prev ? { ...prev, currency } : null);
-            }
-          });
+        // App already visible from cache — update currency & warm category cache in background
+        Promise.all([
+          supabase.from('user_settings').select('default_currency').eq('user_id', user.id).single()
+            .then(({ data: settings }) => {
+              if (settings?.default_currency) {
+                const currency = settings.default_currency as CurrencyCode;
+                setDefaultCurrency(currency);
+                setBootData(prev => prev ? { ...prev, currency } : null);
+              }
+            }),
+          getCategories(user.id), // pre-warm cache so dashboard renders without waiting
+        ]).catch(console.error);
         return;
       }
       booted = true;
@@ -65,9 +80,13 @@ export default function Home() {
       setUnauthenticated(false);
       setBootData({ user, currency: defaultCurr });
 
-      // Load real settings + prefetch rates in background (non-blocking)
-      Promise.resolve(supabase.rpc('generate_recurring_expenses', { p_user_id: user.id })).catch(console.error);
+      // All background tasks — none of these block the UI
       prefetchRates().catch(console.error);
+      getCategories(user.id).catch(console.error); // warm cache before dashboard needs it
+
+      if (shouldRunRecurring(user.id)) {
+        Promise.resolve(supabase.rpc('generate_recurring_expenses', { p_user_id: user.id })).catch(console.error);
+      }
 
       supabase.from('user_settings').select('default_currency').eq('user_id', user.id).single()
         .then(({ data: settings }) => {
