@@ -5,6 +5,7 @@ import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/utils';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { getCategories } from '@/lib/categoryCache';
 import { format, startOfYear, endOfYear, endOfMonth, subYears } from 'date-fns';
 import { es } from 'date-fns/locale';
 
@@ -88,17 +89,17 @@ export default function ReflectView({ user }: Props) {
     const yearStart = format(startOfYear(new Date(yr, 0, 1)), 'yyyy-MM-dd');
     const yearEnd = format(endOfYear(new Date(yr, 0, 1)), 'yyyy-MM-dd');
 
-    const [{ data: expData }, { data: catsData }, prevData] = await Promise.all([
+    const [{ data: expData }, catsMap, prevData] = await Promise.all([
       supabase.from('expenses').select('date, amount, category_id').eq('user_id', user.id)
         .gte('date', yearStart).lte('date', yearEnd),
-      supabase.from('categories').select('id, name, icon, color, parent_id').eq('user_id', user.id).neq('deleted', true),
+      getCategories(user.id),
       prevYr ? supabase.from('expenses').select('date, amount, category_id').eq('user_id', user.id)
         .gte('date', format(startOfYear(new Date(prevYr, 0, 1)), 'yyyy-MM-dd'))
         .lte('date', format(endOfYear(new Date(prevYr, 0, 1)), 'yyyy-MM-dd')) : Promise.resolve({ data: null }),
     ]);
 
     const expenses = expData || [];
-    const cats = catsData || [];
+    const cats = Array.from(catsMap.values());
     const tree = buildTree(cats);
 
     // Group by month
