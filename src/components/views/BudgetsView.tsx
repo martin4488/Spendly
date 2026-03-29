@@ -200,26 +200,14 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
       setBudgets(enrichedPartial);
       setLoading(false);
 
-      // Load global budget from global_budget_periods
-      const curMonth = format(new Date(), 'yyyy-MM');
-      supabase.from('global_budget_periods').select('month, amount').eq('user_id', user.id)
-        .then(({ data }) => {
-          if (!data || data.length === 0) return;
-          const sorted = [...data].sort((a, b) => b.month.localeCompare(a.month));
-          // Current month budget (or most recent)
-          const cur = sorted.find(p => p.month === curMonth) || sorted[0];
-          if (cur) setMonthlyBudget(Number(cur.amount));
-          // Accumulated from closed months this year (budget - spent will be loaded via globalStats)
-        });
-
-      // Load global month stats + accumulated
+      // Load global month stats + accumulated (single query for global_budget_periods)
       const now2 = new Date();
       const curMonth2 = format(now2, 'yyyy-MM');
       const yearStart = `${now2.getFullYear()}-01-01`;
       const curMonthStart = format(startOfMonth(now2), 'yyyy-MM-dd');
       const curMonthEnd = format(endOfMonth(now2), 'yyyy-MM-dd');
 
-      // Load all expenses this year + global_budget_periods for accumulation
+      // Load all expenses this year + global_budget_periods — single query for periods
       Promise.all([
         supabase.from('expenses').select('amount, date').eq('user_id', user.id).gte('date', yearStart).lte('date', curMonthEnd),
         supabase.from('global_budget_periods').select('month, amount').eq('user_id', user.id),
@@ -228,8 +216,13 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
         const curSpent = rows.filter(e => e.date >= curMonthStart && e.date <= curMonthEnd).reduce((s, e) => s + Number(e.amount), 0);
         setGlobalStats({ spent: curSpent, prevSpent: 0 });
 
-        // Compute accumulated for closed months this year
+        // Set monthly budget from periods (replaces the old separate query)
         if (periods && periods.length > 0) {
+          const sorted = [...(periods as any[])].sort((a: any, b: any) => b.month.localeCompare(a.month));
+          const curOrRecent = sorted.find((p: any) => p.month === curMonth2) || sorted[0];
+          if (curOrRecent) setMonthlyBudget(Number(curOrRecent.amount));
+
+          // Also compute accumulated for closed months this year
           const cur = (periods as any[]).find(p => p.month === curMonth2);
           if (cur) setMonthlyBudget(Number(cur.amount));
           const closedMonths = (periods as any[]).filter(p => p.month < curMonth2 && p.month >= `${now2.getFullYear()}-01`);
