@@ -9,6 +9,7 @@ import { es } from 'date-fns/locale';
 import { Expense, Category } from '@/types';
 import { Plus, Trash2, ChevronRight, PieChart, Search, X } from 'lucide-react';
 import type { CurrencyCode } from '@/lib/currency';
+import { getCategories } from '@/lib/categoryCache';
 
 // Lazy-load the heavy modal — not needed until user taps +
 const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
@@ -243,16 +244,13 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       const chartStart = `${sixMonthsAgo.getFullYear()}-${String(sixMonthsAgo.getMonth() + 1).padStart(2, '0')}-01`;
       oldestDate.current = startStr;
 
-      const [{ data: exp }, { data: chartExp }, { data: cats }] = await Promise.all([
+      const [{ data: exp }, { data: chartExp }, map] = await Promise.all([
         supabase.from('expenses').select('*').eq('user_id', user.id).gte('date', startStr).order('date', { ascending: false }).limit(500),
         supabase.from('expenses').select('date, amount').eq('user_id', user.id).gte('date', chartStart).limit(10000),
-        supabase.from('categories').select('*').eq('user_id', user.id),
+        getCategories(user.id),
       ]);
 
       setExpenses(exp || []);
-
-      const map = new Map<string, Category>();
-      (cats || []).forEach((c: Category) => map.set(c.id, c));
       setCategoriesMap(map);
 
       const totals: Record<string, number> = {};
@@ -361,16 +359,13 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
       const chartStart = `${sixMonthsAgo.getFullYear()}-${String(sixMonthsAgo.getMonth() + 1).padStart(2, '0')}-01`;
 
-      const [{ data: exp }, { data: chartExp }, { data: cats }] = await Promise.all([
+      const [{ data: exp }, { data: chartExp }, map] = await Promise.all([
         supabase.from('expenses').select('*').eq('user_id', user.id).gte('date', startStr).order('date', { ascending: false }).limit(500),
         supabase.from('expenses').select('date, amount').eq('user_id', user.id).gte('date', chartStart).limit(10000),
-        supabase.from('categories').select('*').eq('user_id', user.id),
+        getCategories(user.id),
       ]);
 
       setExpenses(exp || []);
-
-      const map = new Map<string, Category>();
-      (cats || []).forEach((c: Category) => map.set(c.id, c));
       setCategoriesMap(map);
 
       const totals: Record<string, number> = {};
