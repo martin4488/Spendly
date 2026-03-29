@@ -12,6 +12,7 @@ import {
 } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { ArrowLeft, ChevronDown, ChevronRight, Trash2 } from 'lucide-react';
+import { getCategories } from '@/lib/categoryCache';
 const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
 
 type ViewMode = 'months' | 'years';
@@ -243,12 +244,12 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
     setLoading(true);
     try {
       const range = getRange(currentDate, viewMode);
-      const [{ data: expenses }, { data: cats }] = await Promise.all([
+      const [{ data: expenses }, catsMap] = await Promise.all([
         supabase.from('expenses').select('id, amount, category_id, description, date').eq('user_id', user.id).gte('date', range.start).lte('date', range.end).order('date', { ascending: false }),
-        supabase.from('categories').select('*').eq('user_id', user.id).neq('deleted', true),
+        getCategories(user.id),
       ]);
       const allExp = expenses || [];
-      const allCats = cats || [];
+      const allCats = Array.from(catsMap.values());
       const total = allExp.reduce((s: number, e: any) => s + Number(e.amount), 0);
       setTotalSpent(total);
 
@@ -402,8 +403,8 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
       const range = getRange(currentDate, viewMode);
 
       // Load cats and expenses in parallel — cats needed for color map
-      const { data: catsData } = await supabase.from('categories').select('*').eq('user_id', user.id).neq('deleted', true);
-      const cats = catsData || [];
+      const catsMap = await getCategories(user.id);
+      const cats = Array.from(catsMap.values());
       setAllCats(cats);
 
       let list: ExpenseDetail[] = [];
