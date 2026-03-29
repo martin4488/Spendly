@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/utils';
@@ -8,8 +8,10 @@ import { Budget, Category } from '@/types';
 import { ArrowLeft, ChevronLeft, ChevronRight, Edit3, Trash2, X, Delete, History, CheckCircle2, XCircle, Clock } from 'lucide-react';
 import { format, parseISO, differenceInDays, isWithinInterval } from 'date-fns';
 import { es } from 'date-fns/locale';
-import AddExpenseModal from '@/components/AddExpenseModal';
 import type { BudgetPeriod } from './BudgetsView';
+
+// Lazy-load AddExpenseModal — not needed until user edits an expense
+const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
 
 interface Props {
   user: User;
@@ -657,17 +659,19 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
         </div>
       )}
       {showExpenseModal && (
-        <AddExpenseModal
-          user={user}
-          defaultCurrency={budget.currency as any}
-          onClose={() => { setShowExpenseModal(false); setEditingExpense(null); }}
-          onSaved={() => {
-            periodCache.current.clear();
-            loadPeriodData(currentPeriodIndex);
-            onRefresh();
-          }}
-          editingExpense={editingExpense}
-        />
+        <Suspense fallback={null}>
+          <AddExpenseModal
+            user={user}
+            defaultCurrency={budget.currency as any}
+            onClose={() => { setShowExpenseModal(false); setEditingExpense(null); }}
+            onSaved={() => {
+              periodCache.current.clear();
+              loadPeriodData(currentPeriodIndex);
+              onRefresh();
+            }}
+            editingExpense={editingExpense}
+          />
+        </Suspense>
       )}
     </div>
   );
