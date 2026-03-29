@@ -14,19 +14,52 @@ interface BootData {
   currency: CurrencyCode;
 }
 
+// Read cached session synchronously from localStorage — zero latency
+function getCachedSession(): User | null {
+  try {
+    const raw = localStorage.getItem('spendly-auth');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    // Supabase stores session under the key directly
+    const session = parsed?.currentSession ?? parsed;
+    if (!session?.user || !session?.access_token) return null;
+    // Check expiry
+    if (session.expires_at && session.expires_at * 1000 < Date.now()) return null;
+    return session.user as User;
+  } catch {
+    return null;
+  }
+}
+
 export default function Home() {
-  const [bootData, setBootData] = useState<BootData | null>(null);
+  // Try to boot instantly from cache — avoids blank screen while Supabase initializes
+  const [bootData, setBootData] = useState<BootData | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const cached = getCachedSession();
+    if (!cached) return null;
+    setDefaultCurrency('EUR');
+    return { user: cached, currency: 'EUR' };
+  });
   const [unauthenticated, setUnauthenticated] = useState(false);
 
   useEffect(() => {
-    // Track if we've already booted to avoid double-boot from INITIAL_SESSION + SIGNED_IN
-    let booted = false;
+    let booted = !!bootData; // already booted from cache
 
     async function bootWithSession(user: User) {
-      if (booted) return;
+      if (booted) {
+        // Already showing app — just update currency in background
+        supabase.from('user_settings').select('default_currency').eq('user_id', user.id).single()
+          .then(({ data: settings }) => {
+            if (settings?.default_currency) {
+              const currency = settings.default_currency as CurrencyCode;
+              setDefaultCurrency(currency);
+              setBootData(prev => prev ? { ...prev, currency } : null);
+            }
+          });
+        return;
+      }
       booted = true;
 
-      // Show app immediately with default currency — don't wait for settings
       const defaultCurr: CurrencyCode = 'EUR';
       setDefaultCurrency(defaultCurr);
       setUnauthenticated(false);
@@ -53,7 +86,6 @@ export default function Home() {
         if (session?.user) {
           bootWithSession(session.user);
         } else if (event === 'INITIAL_SESSION') {
-          // No session cached — show login immediately
           setUnauthenticated(true);
         }
       } else if (event === 'SIGNED_OUT') {
