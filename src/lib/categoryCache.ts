@@ -33,13 +33,14 @@ export async function getCategories(userId: string): Promise<Map<string, Categor
   }
 
   // Miss or different user: start fresh fetch
-  const fetchPromise: Promise<Map<string, Category>> = supabase
-    .from('categories')
-    .select('*')
-    .eq('user_id', userId)
-    .order('position')
-    .order('created_at')
-    .then(({ data }) => {
+  const fetchPromise: Promise<Map<string, Category>> = Promise.resolve(
+    supabase
+      .from('categories')
+      .select('*')
+      .eq('user_id', userId)
+      .order('position')
+      .order('created_at')
+  ).then(({ data }) => {
       const list: Category[] = data || [];
       const map = new Map<string, Category>();
       list.forEach(c => map.set(c.id, c));
