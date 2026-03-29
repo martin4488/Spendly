@@ -43,6 +43,7 @@ interface PeriodSummary {
 }
 
 import { CatNode, buildTree, allDescendantIds } from '@/lib/categoryTree';
+import { getCategories } from '@/lib/categoryCache';
 
 function expandCatIds(catIds: string[], categories: Category[]): string[] {
   const tree = buildTree(categories);
@@ -105,13 +106,13 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
     setError(null);
     periodCache.current.clear();
     try {
-      const [{ data: periodsData }, { data: catsData }, { data: bcData }] = await Promise.all([
+      const [{ data: periodsData }, catsMap, { data: bcData }] = await Promise.all([
         supabase.from('budget_periods').select('*').eq('budget_id', budget.id).order('period_start', { ascending: false }),
-        supabase.from('categories').select('*').eq('user_id', user.id).neq('deleted', true),
+        getCategories(user.id),
         supabase.from('budget_categories').select('category_id').eq('budget_id', budget.id),
       ]);
       const allPeriods = periodsData || [];
-      const allCats = catsData || [];
+      const allCats = Array.from(catsMap.values());
       const catIds = (bcData || []).map((bc: any) => bc.category_id);
       const expanded = expandCatIds(catIds, allCats);
       setPeriods(allPeriods);
