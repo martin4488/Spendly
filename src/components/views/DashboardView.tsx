@@ -87,10 +87,12 @@ function WalletChart({
 // ─── Memoized swipeable expense row ───────────────────────────────────────────
 const SwipeableExpenseRow = memo(function SwipeableExpenseRow({
   expense,
+  categoriesMap,
   onEdit,
   onDelete,
 }: {
   expense: Expense;
+  categoriesMap: Map<string, Category>;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -101,12 +103,16 @@ const SwipeableExpenseRow = memo(function SwipeableExpenseRow({
   const DELETE_THRESHOLD = 72;
   const SNAP_THRESHOLD = 36;
 
-  const cat = (expense as any).category;
-  const parentCat = cat?.parent as any;
+  const cat = expense.category_id ? categoriesMap.get(expense.category_id) : null;
+  const parentCat = cat?.parent_id ? categoriesMap.get(cat.parent_id) : null;
 
-  // If cat has a parent, show "Parent · Child"; otherwise just the cat name
+  // "Groceries" (white) · "Supermercado" (lighter gray)
   const primaryLabel = parentCat ? parentCat.name : (cat?.name || 'Sin categoría');
-  const secondaryLabel = parentCat ? cat?.name : null;
+  const subLabel = parentCat ? cat?.name : null;
+
+  // Description only if non-empty and different from the displayed cat name
+  const catDisplayName = subLabel || cat?.name || '';
+  const showDescription = !!expense.description && expense.description !== catDisplayName;
 
   function onTouchStart(e: React.TouchEvent) {
     startXRef.current = e.touches[0].clientX;
@@ -170,12 +176,12 @@ const SwipeableExpenseRow = memo(function SwipeableExpenseRow({
         <div className="flex-1 min-w-0">
           <p className="text-[12px] font-semibold truncate leading-tight">
             {primaryLabel}
-            {secondaryLabel && (
-              <span className="text-dark-400 font-normal"> · {secondaryLabel}</span>
+            {subLabel && (
+              <span className="text-dark-400 font-normal"> · {subLabel}</span>
             )}
             {expense.is_recurring && ' 🔄'}
           </p>
-          {expense.description && (
+          {showDescription && (
             <p className="text-[10px] text-dark-500 mt-0.5 leading-tight truncate">{expense.description}</p>
           )}
         </div>
@@ -191,6 +197,7 @@ const SwipeableExpenseRow = memo(function SwipeableExpenseRow({
 
 export default function DashboardView({ user, onNavigate, defaultCurrency }: { user: User; onNavigate: (tab: any) => void; defaultCurrency: CurrencyCode }) {
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [categoriesMap, setCategoriesMap] = useState<Map<string, Category>>(new Map());
   const [loading, setLoading] = useState(true);
   const [chartTotals, setChartTotals] = useState<Record<string, number>>({});
   const [yearTotals, setYearTotals] = useState<Record<number, number>>({});
@@ -236,12 +243,18 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       const chartStart = `${sixMonthsAgo.getFullYear()}-${String(sixMonthsAgo.getMonth() + 1).padStart(2, '0')}-01`;
       oldestDate.current = startStr;
 
-      const [{ data: exp }, { data: chartExp }] = await Promise.all([
-        supabase.from('expenses').select('*, category:categories(*, parent:categories!parent_id(*))').eq('user_id', user.id).gte('date', startStr).order('date', { ascending: false }).limit(500),
+      const [{ data: exp }, { data: chartExp }, { data: cats }] = await Promise.all([
+        supabase.from('expenses').select('*').eq('user_id', user.id).gte('date', startStr).order('date', { ascending: false }).limit(500),
         supabase.from('expenses').select('date, amount').eq('user_id', user.id).gte('date', chartStart).limit(10000),
+        supabase.from('categories').select('*').eq('user_id', user.id),
       ]);
 
       setExpenses(exp || []);
+
+      const map = new Map<string, Category>();
+      (cats || []).forEach((c: Category) => map.set(c.id, c));
+      setCategoriesMap(map);
+
       const totals: Record<string, number> = {};
       (chartExp || []).forEach((e: any) => {
         const month = e.date.slice(0, 7);
@@ -283,7 +296,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
 
         const { data: exp } = await supabase
           .from('expenses')
-          .select('*, category:categories(*, parent:categories!parent_id(*))')
+          .select('*')
           .eq('user_id', user.id)
           .gte('date', startStr)
           .lte('date', endStr)
@@ -320,7 +333,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
         }),
         supabase
           .from('expenses')
-          .select('*, category:categories(*, parent:categories!parent_id(*))')
+          .select('*')
           .eq('user_id', user.id)
           .gte('date', yearStart)
           .lte('date', yearEnd)
@@ -333,7 +346,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       });
       setYearTotals(totals);
 
-      setExpenses(currentYearExpData as any || []);
+      setExpenses(currentYearExpData || []);
       setExtendedLoaded(true);
       setHasMore(false);
     } catch (err) {
@@ -348,12 +361,18 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
       const chartStart = `${sixMonthsAgo.getFullYear()}-${String(sixMonthsAgo.getMonth() + 1).padStart(2, '0')}-01`;
 
-      const [{ data: exp }, { data: chartExp }] = await Promise.all([
-        supabase.from('expenses').select('*, category:categories(*, parent:categories!parent_id(*))').eq('user_id', user.id).gte('date', startStr).order('date', { ascending: false }).limit(500),
+      const [{ data: exp }, { data: chartExp }, { data: cats }] = await Promise.all([
+        supabase.from('expenses').select('*').eq('user_id', user.id).gte('date', startStr).order('date', { ascending: false }).limit(500),
         supabase.from('expenses').select('date, amount').eq('user_id', user.id).gte('date', chartStart).limit(10000),
+        supabase.from('categories').select('*').eq('user_id', user.id),
       ]);
 
       setExpenses(exp || []);
+
+      const map = new Map<string, Category>();
+      (cats || []).forEach((c: Category) => map.set(c.id, c));
+      setCategoriesMap(map);
+
       const totals: Record<string, number> = {};
       (chartExp || []).forEach((e: any) => {
         const month = e.date.slice(0, 7);
@@ -421,11 +440,16 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
 
   const groupedByDay = useMemo(() => {
     const filtered = searchQuery
-      ? displayExpenses.filter(e =>
-          e.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          ((e as any).category?.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-          ((e as any).category?.parent?.name || '').toLowerCase().includes(searchQuery.toLowerCase())
-        )
+      ? displayExpenses.filter(e => {
+          const cat = e.category_id ? categoriesMap.get(e.category_id) : null;
+          const parentCat = cat?.parent_id ? categoriesMap.get(cat.parent_id) : null;
+          const q = searchQuery.toLowerCase();
+          return (
+            (e.description || '').toLowerCase().includes(q) ||
+            (cat?.name || '').toLowerCase().includes(q) ||
+            (parentCat?.name || '').toLowerCase().includes(q)
+          );
+        })
       : displayExpenses;
     const dayMap = new Map<string, Expense[]>();
     filtered.forEach(exp => {
@@ -440,7 +464,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
         expenses: exps,
       }))
       .sort((a, b) => b.date.localeCompare(a.date));
-  }, [displayExpenses, searchQuery, today, yesterday]);
+  }, [displayExpenses, searchQuery, today, yesterday, categoriesMap]);
 
   const openEdit = useCallback((expense: Expense) => {
     setEditingExpense({
@@ -584,6 +608,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
                 <SwipeableExpenseRow
                   key={expense.id}
                   expense={expense}
+                  categoriesMap={categoriesMap}
                   onEdit={() => openEdit(expense)}
                   onDelete={() => handleDelete(expense.id)}
                 />
