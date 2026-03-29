@@ -102,6 +102,11 @@ const SwipeableExpenseRow = memo(function SwipeableExpenseRow({
   const SNAP_THRESHOLD = 36;
 
   const cat = (expense as any).category;
+  const parentCat = cat?.parent as any;
+
+  // If cat has a parent, show "Parent · Child"; otherwise just the cat name
+  const primaryLabel = parentCat ? parentCat.name : (cat?.name || 'Sin categoría');
+  const secondaryLabel = parentCat ? cat?.name : null;
 
   function onTouchStart(e: React.TouchEvent) {
     startXRef.current = e.touches[0].clientX;
@@ -163,8 +168,14 @@ const SwipeableExpenseRow = memo(function SwipeableExpenseRow({
           {cat?.icon || '💵'}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-[12px] font-semibold truncate leading-tight">{cat?.name || 'Sin categoría'}{expense.is_recurring && ' 🔄'}</p>
-          {expense.description && expense.description !== (cat?.name || '') && (
+          <p className="text-[12px] font-semibold truncate leading-tight">
+            {primaryLabel}
+            {secondaryLabel && (
+              <span className="text-dark-400 font-normal"> · {secondaryLabel}</span>
+            )}
+            {expense.is_recurring && ' 🔄'}
+          </p>
+          {expense.description && (
             <p className="text-[10px] text-dark-500 mt-0.5 leading-tight truncate">{expense.description}</p>
           )}
         </div>
@@ -226,7 +237,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       oldestDate.current = startStr;
 
       const [{ data: exp }, { data: chartExp }] = await Promise.all([
-        supabase.from('expenses').select('*, category:categories(*)').eq('user_id', user.id).gte('date', startStr).order('date', { ascending: false }).limit(500),
+        supabase.from('expenses').select('*, category:categories(*, parent:categories!parent_id(*))').eq('user_id', user.id).gte('date', startStr).order('date', { ascending: false }).limit(500),
         supabase.from('expenses').select('date, amount').eq('user_id', user.id).gte('date', chartStart).limit(10000),
       ]);
 
@@ -272,7 +283,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
 
         const { data: exp } = await supabase
           .from('expenses')
-          .select('*, category:categories(*)')
+          .select('*, category:categories(*, parent:categories!parent_id(*))')
           .eq('user_id', user.id)
           .gte('date', startStr)
           .lte('date', endStr)
@@ -301,7 +312,6 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       const yearStart = `${currentYear}-01-01`;
       const yearEnd = `${currentYear}-12-31`;
 
-      // Server-side aggregation via RPC — no row limits, single round trip
       const [{ data: rpcData }, { data: currentYearExpData }] = await Promise.all([
         supabase.rpc('get_yearly_totals', {
           p_user_id: user.id,
@@ -310,21 +320,19 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
         }),
         supabase
           .from('expenses')
-          .select('*, category:categories(*)')
+          .select('*, category:categories(*, parent:categories!parent_id(*))')
           .eq('user_id', user.id)
           .gte('date', yearStart)
           .lte('date', yearEnd)
           .order('date', { ascending: false }),
       ]);
 
-      // Build year totals from RPC result
       const totals: Record<number, number> = {};
       (rpcData || []).forEach((row: { year: number; total: number }) => {
         totals[row.year] = Number(row.total);
       });
       setYearTotals(totals);
 
-      // Set current year expenses for the list view
       setExpenses(currentYearExpData as any || []);
       setExtendedLoaded(true);
       setHasMore(false);
@@ -341,7 +349,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       const chartStart = `${sixMonthsAgo.getFullYear()}-${String(sixMonthsAgo.getMonth() + 1).padStart(2, '0')}-01`;
 
       const [{ data: exp }, { data: chartExp }] = await Promise.all([
-        supabase.from('expenses').select('*, category:categories(*)').eq('user_id', user.id).gte('date', startStr).order('date', { ascending: false }).limit(500),
+        supabase.from('expenses').select('*, category:categories(*, parent:categories!parent_id(*))').eq('user_id', user.id).gte('date', startStr).order('date', { ascending: false }).limit(500),
         supabase.from('expenses').select('date, amount').eq('user_id', user.id).gte('date', chartStart).limit(10000),
       ]);
 
@@ -363,7 +371,6 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
   }
 
   const now = new Date();
-  // Stable keys for useMemo — won't change within the same month/year
   const currentMonth = now.getMonth();
   const currentYear = now.getFullYear();
 
@@ -397,7 +404,6 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       }
       return data;
     } else {
-      // Year mode: use only yearTotals from RPC (server-side aggregation)
       const data: { name: string; year: string; total: number; isCurrent: boolean }[] = [];
       for (let i = 5; i >= 0; i--) {
         const year = now.getFullYear() - i;
@@ -417,7 +423,8 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     const filtered = searchQuery
       ? displayExpenses.filter(e =>
           e.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          ((e as any).category?.name || '').toLowerCase().includes(searchQuery.toLowerCase())
+          ((e as any).category?.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+          ((e as any).category?.parent?.name || '').toLowerCase().includes(searchQuery.toLowerCase())
         )
       : displayExpenses;
     const dayMap = new Map<string, Expense[]>();
