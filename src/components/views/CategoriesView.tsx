@@ -9,6 +9,7 @@ import { Plus, Trash2, X, FolderPlus, GripVertical, ArrowLeft } from 'lucide-rea
 
 // ── Tree node (up to 3 levels) ────────────────────────────────────────────────
 import { CatNode, buildTree } from '@/lib/categoryTree';
+import { invalidateCategories } from '@/lib/categoryCache';
 
 // ── Swipeable row ─────────────────────────────────────────────────────────────
 function SwipeableCatRow({
@@ -245,6 +246,7 @@ export default function CategoriesView({ user, onBack }: { user: User; onBack?: 
       } else {
         await supabase.from('categories').insert({ ...data, position: 999 });
       }
+      invalidateCategories();
       setShowForm(false);
       loadData();
     } catch (err) { console.error(err); }
@@ -276,6 +278,7 @@ export default function CategoriesView({ user, onBack }: { user: User; onBack?: 
   async function handleDelete(id: string) {
     if (confirm('¿Eliminar esta categoría? Los gastos asociados se conservan.')) {
       await supabase.from('categories').update({ deleted: true }).eq('id', id);
+      invalidateCategories();
       loadData();
     }
   }
