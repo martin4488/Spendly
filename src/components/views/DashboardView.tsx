@@ -7,9 +7,10 @@ import { formatCurrency, getMonthRange, getYearRange } from '@/lib/utils';
 import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { Expense, Category } from '@/types';
-import { Plus, Trash2, ChevronRight, PieChart, Search, X } from 'lucide-react';
+import { Plus, ChevronRight, PieChart, Search, X } from 'lucide-react';
 import type { CurrencyCode } from '@/lib/currency';
 import { getCategories } from '@/lib/categoryCache';
+import SwipeableRow from '@/components/SwipeableRow';
 
 // Lazy-load the heavy modal — not needed until user taps +
 const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
@@ -85,8 +86,8 @@ function WalletChart({
   );
 }
 
-// ─── Memoized swipeable expense row ───────────────────────────────────────────
-const SwipeableExpenseRow = memo(function SwipeableExpenseRow({
+// ─── Memoized expense row using shared SwipeableRow ─────────────────────────
+const ExpenseRow = memo(function ExpenseRow({
   expense,
   categoriesMap,
   onEdit,
@@ -97,79 +98,18 @@ const SwipeableExpenseRow = memo(function SwipeableExpenseRow({
   onEdit: () => void;
   onDelete: () => void;
 }) {
-  const [offset, setOffset] = useState(0);
-  const [isDragging, setIsDragging] = useState(false);
-  const startXRef = useRef<number | null>(null);
-  const currentXRef = useRef<number>(0);
-  const DELETE_THRESHOLD = 72;
-  const SNAP_THRESHOLD = 36;
-
   const cat = expense.category_id ? categoriesMap.get(expense.category_id) : null;
   const parentCat = cat?.parent_id ? categoriesMap.get(cat.parent_id) : null;
 
-  // "Groceries" (white) · "Supermercado" (lighter gray)
   const primaryLabel = parentCat ? parentCat.name : (cat?.name || 'Sin categoría');
   const subLabel = parentCat ? cat?.name : null;
 
-  // Description only if non-empty and different from the displayed cat name
   const catDisplayName = subLabel || cat?.name || '';
   const showDescription = !!expense.description && expense.description !== catDisplayName;
 
-  function onTouchStart(e: React.TouchEvent) {
-    startXRef.current = e.touches[0].clientX;
-    setIsDragging(false);
-  }
-
-  function onTouchMove(e: React.TouchEvent) {
-    if (startXRef.current === null) return;
-    const dx = startXRef.current - e.touches[0].clientX;
-    if (dx > 5) setIsDragging(true);
-    if (dx > 0) {
-      currentXRef.current = Math.min(dx, DELETE_THRESHOLD);
-      setOffset(currentXRef.current);
-    } else if (dx < 0 && offset > 0) {
-      currentXRef.current = Math.max(0, offset + dx);
-      setOffset(currentXRef.current);
-    }
-  }
-
-  function onTouchEnd() {
-    if (currentXRef.current > SNAP_THRESHOLD) {
-      setOffset(DELETE_THRESHOLD);
-    } else {
-      setOffset(0);
-    }
-    startXRef.current = null;
-  }
-
-  function handleRowClick() {
-    if (isDragging) return;
-    if (offset > 0) { setOffset(0); } else { onEdit(); }
-  }
-
   return (
-    <div className="relative overflow-hidden border-b border-dark-800/40">
-      <div className="absolute right-0 top-0 bottom-0 flex items-center justify-center bg-red-500"
-        style={{ width: DELETE_THRESHOLD }}>
-        <button
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => { e.stopPropagation(); onDelete(); }}
-          className="flex flex-col items-center justify-center w-full h-full gap-1 active:bg-red-600 transition-colors">
-          <Trash2 size={18} className="text-white" />
-          <span className="text-[10px] text-white font-medium">Borrar</span>
-        </button>
-      </div>
-
-      <div
-        className="flex items-center gap-2.5 px-3 py-2 bg-dark-900 active:bg-dark-800/60 transition-colors cursor-pointer select-none"
-        style={{
-          transform: `translateX(-${offset}px)`,
-          transition: isDragging ? 'none' : 'transform 0.2s ease',
-        }}
-        onTouchStart={onTouchStart}
-        onTouchMove={onTouchMove}
-        onTouchEnd={onTouchEnd}
-        onClick={handleRowClick}>
+    <SwipeableRow onTap={onEdit} onDelete={onDelete} className="border-b border-dark-800/40">
+      <div className="flex items-center gap-2.5 px-3 py-2 bg-dark-900 active:bg-dark-800/60 transition-colors cursor-pointer select-none">
         <div className="w-9 h-9 rounded-xl flex items-center justify-center text-base flex-shrink-0"
           style={{ backgroundColor: cat?.color ?? '#475569' }}>
           {cat?.icon || '💵'}
@@ -190,7 +130,7 @@ const SwipeableExpenseRow = memo(function SwipeableExpenseRow({
           -{formatCurrency(Number(expense.amount))}
         </span>
       </div>
-    </div>
+    </SwipeableRow>
   );
 });
 
@@ -235,6 +175,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     return () => observer.disconnect();
   }, [loadingMore, hasMore, viewMode, oldestDate.current]);
 
+  // ── OPTIMIZED: Single RPC replaces 2 separate queries ─────────────────────
   async function loadInitial() {
     try {
       const now = new Date();
@@ -244,21 +185,40 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       const chartStart = `${sixMonthsAgo.getFullYear()}-${String(sixMonthsAgo.getMonth() + 1).padStart(2, '0')}-01`;
       oldestDate.current = startStr;
 
-      const [{ data: exp }, { data: chartExp }, map] = await Promise.all([
-        supabase.from('expenses').select('*').eq('user_id', user.id).gte('date', startStr).order('date', { ascending: false }).limit(500),
-        supabase.from('expenses').select('date, amount').eq('user_id', user.id).gte('date', chartStart).limit(10000),
+      // Single RPC call for expenses + chart totals, plus categories in parallel
+      const [{ data: rpcResult, error: rpcError }, map] = await Promise.all([
+        supabase.rpc('get_dashboard_data', {
+          p_user_id: user.id,
+          p_recent_start: startStr,
+          p_chart_start: chartStart,
+        }),
         getCategories(user.id),
       ]);
 
-      setExpenses(exp || []);
-      setCategoriesMap(map);
+      if (rpcError || !rpcResult) {
+        // Fallback: if RPC doesn't exist yet, use original 2-query approach
+        const [{ data: exp }, { data: chartExp }] = await Promise.all([
+          supabase.from('expenses').select('*').eq('user_id', user.id).gte('date', startStr).order('date', { ascending: false }).limit(500),
+          supabase.from('expenses').select('date, amount').eq('user_id', user.id).gte('date', chartStart).limit(10000),
+        ]);
+        setExpenses(exp || []);
+        const totals: Record<string, number> = {};
+        (chartExp || []).forEach((e: any) => {
+          const month = e.date.slice(0, 7);
+          totals[month] = (totals[month] || 0) + Number(e.amount);
+        });
+        setChartTotals(totals);
+      } else {
+        // RPC succeeded — parse the combined result
+        setExpenses(rpcResult.recent_expenses || []);
+        const totals: Record<string, number> = {};
+        (rpcResult.monthly_totals || []).forEach((row: { month: string; total: number }) => {
+          totals[row.month] = Number(row.total);
+        });
+        setChartTotals(totals);
+      }
 
-      const totals: Record<string, number> = {};
-      (chartExp || []).forEach((e: any) => {
-        const month = e.date.slice(0, 7);
-        totals[month] = (totals[month] || 0) + Number(e.amount);
-      });
-      setChartTotals(totals);
+      setCategoriesMap(map);
     } catch (err) {
       console.error(err);
     } finally {
@@ -359,21 +319,38 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
       const chartStart = `${sixMonthsAgo.getFullYear()}-${String(sixMonthsAgo.getMonth() + 1).padStart(2, '0')}-01`;
 
-      const [{ data: exp }, { data: chartExp }, map] = await Promise.all([
-        supabase.from('expenses').select('*').eq('user_id', user.id).gte('date', startStr).order('date', { ascending: false }).limit(500),
-        supabase.from('expenses').select('date, amount').eq('user_id', user.id).gte('date', chartStart).limit(10000),
+      // On refresh after save/delete, try RPC first, fallback to 2-query
+      const [{ data: rpcResult, error: rpcError }, map] = await Promise.all([
+        supabase.rpc('get_dashboard_data', {
+          p_user_id: user.id,
+          p_recent_start: startStr,
+          p_chart_start: chartStart,
+        }),
         getCategories(user.id),
       ]);
 
-      setExpenses(exp || []);
-      setCategoriesMap(map);
+      if (rpcError || !rpcResult) {
+        const [{ data: exp }, { data: chartExp }] = await Promise.all([
+          supabase.from('expenses').select('*').eq('user_id', user.id).gte('date', startStr).order('date', { ascending: false }).limit(500),
+          supabase.from('expenses').select('date, amount').eq('user_id', user.id).gte('date', chartStart).limit(10000),
+        ]);
+        setExpenses(exp || []);
+        const totals: Record<string, number> = {};
+        (chartExp || []).forEach((e: any) => {
+          const month = e.date.slice(0, 7);
+          totals[month] = (totals[month] || 0) + Number(e.amount);
+        });
+        setChartTotals(totals);
+      } else {
+        setExpenses(rpcResult.recent_expenses || []);
+        const totals: Record<string, number> = {};
+        (rpcResult.monthly_totals || []).forEach((row: { month: string; total: number }) => {
+          totals[row.month] = Number(row.total);
+        });
+        setChartTotals(totals);
+      }
 
-      const totals: Record<string, number> = {};
-      (chartExp || []).forEach((e: any) => {
-        const month = e.date.slice(0, 7);
-        totals[month] = (totals[month] || 0) + Number(e.amount);
-      });
-      setChartTotals(totals);
+      setCategoriesMap(map);
     } catch (err) {
       console.error(err);
     }
@@ -600,7 +577,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
               </div>
 
               {group.expenses.map((expense) => (
-                <SwipeableExpenseRow
+                <ExpenseRow
                   key={expense.id}
                   expense={expense}
                   categoriesMap={categoriesMap}
