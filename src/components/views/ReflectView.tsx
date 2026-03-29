@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/utils';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { getCategories } from '@/lib/categoryCache';
+import { CatNode, buildTree } from '@/lib/categoryTree';
 import { format, startOfYear, endOfYear, endOfMonth, subYears } from 'date-fns';
 import { es } from 'date-fns/locale';
 
@@ -21,21 +22,7 @@ interface YearData {
   months: MonthData[];
   cats: CatData[];
   prevYearCats: Record<string, number> | null;
-  prevYearMonths: Record<string, number> | null; // month label -> amount
-}
-
-interface RawCat { id: string; name: string; icon: string; color: string; parent_id: string | null; }
-interface CatNode extends RawCat { children: CatNode[]; }
-
-function buildTree(flat: RawCat[]): CatNode[] {
-  const map = new Map<string, CatNode>();
-  flat.forEach(c => map.set(c.id, { ...c, children: [] }));
-  const roots: CatNode[] = [];
-  flat.forEach(c => {
-    if (c.parent_id && map.has(c.parent_id)) map.get(c.parent_id)!.children.push(map.get(c.id)!);
-    else roots.push(map.get(c.id)!);
-  });
-  return roots;
+  prevYearMonths: Record<string, number> | null;
 }
 
 function sumNode(node: CatNode, spendMap: Record<string, number>): number {
