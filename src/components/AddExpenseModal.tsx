@@ -170,7 +170,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
       const converted = convertCurrency(amt, currency, defaultCurrency);
       if (converted !== null) { finalAmount = converted; originalCurrency = currency; originalAmount = amt; }
     }
-    const data = { user_id: user.id, amount: finalAmount, description: description || headerName, notes: null, category_id: categoryId, date, original_currency: originalCurrency, original_amount: originalAmount };
+    const data = { user_id: user.id, amount: finalAmount, description: description || null, notes: null, category_id: categoryId, date, original_currency: originalCurrency, original_amount: originalAmount };
     try {
       if (editingExpense) await supabase.from('expenses').update(data).eq('id', editingExpense.id);
       else await supabase.from('expenses').insert(data);
