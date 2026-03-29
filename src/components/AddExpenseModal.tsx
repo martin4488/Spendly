@@ -85,7 +85,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
 
   async function loadCategories() {
     const catsMap = await getCategories(user.id);
-    const flat = Array.from(catsMap.values()).filter(c => !c.deleted && !c.hidden);
+    const flat = Array.from(catsMap.values()).filter(c => !c.hidden);
     setCategories(flat);
     setRoots(buildTree(flat));
   }
