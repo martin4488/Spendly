@@ -38,6 +38,7 @@ export async function getCategories(userId: string): Promise<Map<string, Categor
       .from('categories')
       .select('*')
       .eq('user_id', userId)
+      .neq('deleted', true)
       .order('position')
       .order('created_at')
   ).then(({ data }) => {
