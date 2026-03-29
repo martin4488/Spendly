@@ -235,14 +235,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
           <input type="text" placeholder="Descripción" value={description} onChange={(e) => setDescription(e.target.value)}
             className="flex-1 bg-transparent text-sm placeholder:text-dark-500 focus:outline-none" />
         </div>
-        {!categoryId && (
-          <button onClick={() => setShowCategoryPicker(true)}
-            className="flex items-center gap-3 px-5 py-4 border-b border-dark-800 w-full">
-            <span className="text-dark-400 text-lg">🏷️</span>
-            <span className="text-sm text-dark-500 flex-1 text-left">Elegir categoría</span>
-            <span className="text-xs text-brand-400 font-medium">Requerido</span>
-          </button>
-        )}
+
       </div>
 
       {/* ── BOTTOM ── */}
