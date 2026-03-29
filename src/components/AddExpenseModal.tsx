@@ -53,6 +53,7 @@ function deriveChildColor(parentHex: string, siblingCount: number): string {
 }
 
 import { CatNode, FlatEntry, buildTree, flattenTree } from '@/lib/categoryTree';
+import { getCategories, invalidateCategories } from '@/lib/categoryCache';
 
 export default function AddExpenseModal({ user, defaultCurrency, onClose, onSaved, editingExpense }: Props) {
   const [categories, setCategories] = useState<Category[]>([]);
@@ -83,8 +84,8 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
   useEffect(() => { loadCategories(); }, [user.id]);
 
   async function loadCategories() {
-    const { data } = await supabase.from('categories').select('*').eq('user_id', user.id).neq('deleted', true).neq('hidden', true).order('position').order('created_at');
-    const flat = data || [];
+    const catsMap = await getCategories(user.id);
+    const flat = Array.from(catsMap.values()).filter(c => !c.deleted && !c.hidden);
     setCategories(flat);
     setRoots(buildTree(flat));
   }
@@ -155,6 +156,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
       const { data } = await supabase.from('categories')
         .insert({ user_id: user.id, name: newCatName, icon: newCatIcon, color: newCatColor, parent_id: newCatParentId })
         .select().single();
+      invalidateCategories();
       await loadCategories();
       if (data) { setCategoryId(data.id); setShowCreateCategory(false); setShowCategoryPicker(false); setSearchQuery(''); }
     } catch (err) { console.error(err); }
