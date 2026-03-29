@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase';
 import { formatCurrency, CATEGORY_ICONS, CATEGORY_COLORS } from '@/lib/utils';
 import { Category, RecurringExpense } from '@/types';
 import { CatNode, FlatEntry, buildTree, flattenTree } from '@/lib/categoryTree';
+import { getCategories, invalidateCategories } from '@/lib/categoryCache';
 import { Plus, X, CalendarOff, Delete, Search, Settings, ArrowLeft, Check, Trash2 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -129,8 +130,9 @@ function CategoryPicker({
         .insert({ user_id, name: newCatName, icon: newCatIcon, color: newCatColor, parent_id: newCatParentId })
         .select().single();
       if (data) {
-        const { data: cats } = await supabase.from('categories').select('*').eq('user_id', user_id).neq('deleted', true).order('position').order('created_at');
-        setLocalCats(cats || []);
+        invalidateCategories();
+        const catsMap = await getCategories(user_id);
+        setLocalCats(Array.from(catsMap.values()));
         onSelect(data.id);
         setShowCreateCategory(false);
         onClose();
@@ -176,12 +178,12 @@ export default function RecurringView({ user }: { user: User }) {
 
   async function loadData() {
     setLoading(true);
-    const [{ data: rec }, { data: cats }] = await Promise.all([
+    const [{ data: rec }, catsMap] = await Promise.all([
       supabase.from('recurring_expenses').select('*, category:categories(*)').eq('user_id', user.id).eq('is_active', true).order('description'),
-      supabase.from('categories').select('*').eq('user_id', user.id).neq('deleted', true).order('position').order('created_at'),
+      getCategories(user.id),
     ]);
     setItems(rec || []);
-    setCategories(cats || []);
+    setCategories(Array.from(catsMap.values()));
     setLoading(false);
   }
 
@@ -314,8 +316,9 @@ export default function RecurringView({ user }: { user: User }) {
         .insert({ user_id: user.id, name: newCatName, icon: newCatIcon, color: newCatColor, parent_id: newCatParentId })
         .select().single();
       if (data) {
-        const { data: cats } = await supabase.from('categories').select('*').eq('user_id', user.id).neq('deleted', true).order('position').order('created_at');
-        setCategories(cats || []);
+        invalidateCategories();
+        const catsMap = await getCategories(user.id);
+        setCategories(Array.from(catsMap.values()));
         setCategoryId(data.id);
         setShowCreateCategory(false);
         setShowCategoryPicker(false);
