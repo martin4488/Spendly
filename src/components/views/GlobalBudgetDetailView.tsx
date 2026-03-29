@@ -9,6 +9,7 @@ import { format, parseISO, startOfMonth, endOfMonth, subMonths } from 'date-fns'
 import { es } from 'date-fns/locale';
 import type { CurrencyCode } from '@/lib/currency';
 import { getCategories } from '@/lib/categoryCache';
+import { CatNode, buildTree } from '@/lib/categoryTree';
 
 interface Props {
   user: User;
@@ -30,20 +31,6 @@ interface CatSpend {
   color: string;
   spent: number;
   children: CatSpend[];
-}
-
-interface RawCat { id: string; name: string; icon: string; color: string; parent_id: string | null; }
-interface CatNode extends RawCat { children: CatNode[]; }
-
-function buildCatTree(flat: RawCat[]): CatNode[] {
-  const map = new Map<string, CatNode>();
-  flat.forEach(c => map.set(c.id, { ...c, children: [] }));
-  const roots: CatNode[] = [];
-  flat.forEach(c => {
-    if (c.parent_id && map.has(c.parent_id)) map.get(c.parent_id)!.children.push(map.get(c.id)!);
-    else roots.push(map.get(c.id)!);
-  });
-  return roots;
 }
 
 function buildCatSpend(node: CatNode, spendMap: Record<string, number>): CatSpend {
@@ -187,7 +174,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
       });
       // Load categories to build tree
       const catsMap = await getCategories(user.id);
-      const tree = buildCatTree(Array.from(catsMap.values()));
+      const tree = buildTree(Array.from(catsMap.values()));
       const cats: CatSpend[] = tree
         .map(node => buildCatSpend(node, spendMap))
         .filter(c => c.spent > 0)
