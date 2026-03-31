@@ -377,12 +377,15 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     [expenses, yearRange.start, yearRange.end]
   );
 
-  const accumulatedTotal = useMemo(
-    () => viewMode === 'months'
-      ? currentMonthExp.reduce((sum, e) => sum + Number(e.amount), 0)
-      : currentYearExp.reduce((sum, e) => sum + Number(e.amount), 0),
-    [viewMode, currentMonthExp, currentYearExp]
-  );
+  // ── FIX: Use server-side aggregated totals instead of summing loaded expenses ──
+  const accumulatedTotal = useMemo(() => {
+    if (viewMode === 'months') {
+      const monthKey = format(now, 'yyyy-MM');
+      return chartTotals[monthKey] || 0;
+    } else {
+      return yearTotals[currentYear] || 0;
+    }
+  }, [viewMode, chartTotals, yearTotals, currentMonth, currentYear]);
 
   const chartData = useMemo(() => {
     if (viewMode === 'months') {
