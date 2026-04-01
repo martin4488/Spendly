@@ -3,8 +3,8 @@
 import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense, memo } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
-import { formatCurrency, getMonthRange, getYearRange } from '@/lib/utils';
-import { format, parseISO } from 'date-fns';
+import { formatCurrency, getYearRange } from '@/lib/utils';
+import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { Expense, Category } from '@/types';
 import { Plus, ChevronRight, PieChart, Search, X } from 'lucide-react';
@@ -12,17 +12,32 @@ import type { CurrencyCode } from '@/lib/currency';
 import { getCategories } from '@/lib/categoryCache';
 import SwipeableRow from '@/components/SwipeableRow';
 
-// Lazy-load the heavy modal — not needed until user taps +
 const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
 
 type ViewMode = 'months' | 'years';
+
+const MONTHS_ES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+const MONTHS_SHORT_ES = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
 
 function formatCompact(value: number): string {
   if (value >= 1000) return `${(value / 1000).toFixed(1)}k`;
   return String(Math.round(value));
 }
 
-// ── Custom chart matching Wallet iOS style ────────────────────────────────────
+function toDateStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** Parse 'yyyy-MM-dd' into day/month label without date-fns */
+function formatDayLabel(dateStr: string, todayStr: string, yesterdayStr: string): string {
+  if (dateStr === todayStr) return 'Hoy';
+  if (dateStr === yesterdayStr) return 'Ayer';
+  const [, m, d] = dateStr.split('-');
+  const month = MONTHS_ES[parseInt(m, 10) - 1];
+  return `${parseInt(d, 10)} de ${month}`;
+}
+
+// ── Custom chart ──────────────────────────────────────────────────────────────
 function WalletChart({
   data,
 }: {
@@ -86,7 +101,7 @@ function WalletChart({
   );
 }
 
-// ─── Memoized expense row using shared SwipeableRow ─────────────────────────
+// ─── Memoized expense row ───────────────────────────────────────────────────
 const ExpenseRow = memo(function ExpenseRow({
   expense,
   categoriesMap,
@@ -142,50 +157,35 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
   const [loading, setLoading] = useState(true);
   const [chartTotals, setChartTotals] = useState<Record<string, number>>({});
   const [yearTotals, setYearTotals] = useState<Record<number, number>>({});
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>('months');
   const [extendedLoaded, setExtendedLoaded] = useState(false);
-  const oldestDate = useRef<string>('');
-  const sentinelRef = useRef<HTMLDivElement>(null);
   const [showAddExpense, setShowAddExpense] = useState(false);
   const [editingExpense, setEditingExpense] = useState<any>(null);
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const searchRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => { loadInitial(); }, []);
+  // Stable date values — recalculated only on re-mount, not every render
+  const currentMonth = new Date().getMonth();
+  const currentYear = new Date().getFullYear();
+
+  useEffect(() => { loadDashboard(); }, []);
 
   useEffect(() => {
     if (showSearch && searchRef.current) searchRef.current.focus();
   }, [showSearch]);
 
-  // Infinite scroll observer
-  useEffect(() => {
-    if (!sentinelRef.current) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting && !loadingMore && hasMore && viewMode === 'months') {
-          loadMoreMonths();
-        }
-      },
-      { threshold: 0.1 }
-    );
-    observer.observe(sentinelRef.current);
-    return () => observer.disconnect();
-  }, [loadingMore, hasMore, viewMode, oldestDate.current]);
-
-  // ── OPTIMIZED: Single RPC replaces 2 separate queries ─────────────────────
-  async function loadInitial() {
+  // ── Unified load: used both on mount and after save/delete ────────────────
+  const loadDashboard = useCallback(async () => {
     try {
       const now = new Date();
-      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29);
-      const startStr = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`;
+      const start31 = new Date(now);
+      start31.setDate(start31.getDate() - 30); // 31 days inclusive
+      const startStr = toDateStr(start31);
+
       const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
       const chartStart = `${sixMonthsAgo.getFullYear()}-${String(sixMonthsAgo.getMonth() + 1).padStart(2, '0')}-01`;
-      oldestDate.current = startStr;
 
-      // Single RPC call for expenses + chart totals, plus categories in parallel
       const [{ data: rpcResult, error: rpcError }, map] = await Promise.all([
         supabase.rpc('get_dashboard_data', {
           p_user_id: user.id,
@@ -196,7 +196,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       ]);
 
       if (rpcError || !rpcResult) {
-        // Fallback: if RPC doesn't exist yet, use original 2-query approach
+        // Fallback: 2-query approach
         const [{ data: exp }, { data: chartExp }] = await Promise.all([
           supabase.from('expenses').select('*').eq('user_id', user.id).gte('date', startStr).order('date', { ascending: false }).limit(500),
           supabase.from('expenses').select('date, amount').eq('user_id', user.id).gte('date', chartStart).limit(10000),
@@ -209,7 +209,6 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
         });
         setChartTotals(totals);
       } else {
-        // RPC succeeded — parse the combined result
         setExpenses(rpcResult.recent_expenses || []);
         const totals: Record<string, number> = {};
         (rpcResult.monthly_totals || []).forEach((row: { month: string; total: number }) => {
@@ -224,70 +223,19 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     } finally {
       setLoading(false);
     }
-  }
-
-  async function loadMoreMonths() {
-    if (loadingMore || !hasMore) return;
-    setLoadingMore(true);
-    try {
-      const hardStop = new Date();
-      hardStop.setFullYear(hardStop.getFullYear() - 3);
-      const toStr = (d: Date) =>
-        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-
-      let accumulated: any[] = [];
-      let cursor = new Date(oldestDate.current);
-      let newOldest = oldestDate.current;
-      let reachedEnd = false;
-
-      while (accumulated.length === 0) {
-        const chunkEnd = new Date(cursor);
-        chunkEnd.setDate(chunkEnd.getDate() - 1);
-        if (chunkEnd < hardStop) { reachedEnd = true; break; }
-
-        const chunkStart = new Date(chunkEnd);
-        chunkStart.setDate(chunkStart.getDate() - 29);
-        const clampedStart = chunkStart < hardStop ? hardStop : chunkStart;
-
-        const endStr = toStr(chunkEnd);
-        const startStr = toStr(clampedStart);
-
-        const { data: exp } = await supabase
-          .from('expenses')
-          .select('*')
-          .eq('user_id', user.id)
-          .gte('date', startStr)
-          .lte('date', endStr)
-          .order('date', { ascending: false });
-
-        newOldest = startStr;
-        cursor = clampedStart;
-
-        if (exp && exp.length > 0) accumulated = exp;
-        if (clampedStart <= hardStop) { reachedEnd = true; break; }
-      }
-
-      oldestDate.current = newOldest;
-      if (accumulated.length > 0) setExpenses(prev => [...prev, ...accumulated]);
-      if (reachedEnd) setHasMore(false);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoadingMore(false);
-    }
-  }
+  }, [user.id]);
 
   async function loadExtended() {
     try {
-      const currentYear = new Date().getFullYear();
-      const yearStart = `${currentYear}-01-01`;
-      const yearEnd = `${currentYear}-12-31`;
+      const yr = currentYear;
+      const yearStart = `${yr}-01-01`;
+      const yearEnd = `${yr}-12-31`;
 
       const [{ data: rpcData }, { data: currentYearExpData }] = await Promise.all([
         supabase.rpc('get_yearly_totals', {
           p_user_id: user.id,
-          p_start_year: currentYear - 5,
-          p_end_year: currentYear,
+          p_start_year: yr - 5,
+          p_end_year: yr,
         }),
         supabase
           .from('expenses')
@@ -303,104 +251,65 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
         totals[row.year] = Number(row.total);
       });
       setYearTotals(totals);
-
       setExpenses(currentYearExpData || []);
       setExtendedLoaded(true);
-      setHasMore(false);
     } catch (err) {
       console.error(err);
     }
   }
-
-  const loadData = useCallback(async () => {
-    try {
-      const now = new Date();
-      const startStr = extendedLoaded ? `${now.getFullYear() - 5}-01-01` : oldestDate.current;
-      const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
-      const chartStart = `${sixMonthsAgo.getFullYear()}-${String(sixMonthsAgo.getMonth() + 1).padStart(2, '0')}-01`;
-
-      // On refresh after save/delete, try RPC first, fallback to 2-query
-      const [{ data: rpcResult, error: rpcError }, map] = await Promise.all([
-        supabase.rpc('get_dashboard_data', {
-          p_user_id: user.id,
-          p_recent_start: startStr,
-          p_chart_start: chartStart,
-        }),
-        getCategories(user.id),
-      ]);
-
-      if (rpcError || !rpcResult) {
-        const [{ data: exp }, { data: chartExp }] = await Promise.all([
-          supabase.from('expenses').select('*').eq('user_id', user.id).gte('date', startStr).order('date', { ascending: false }).limit(500),
-          supabase.from('expenses').select('date, amount').eq('user_id', user.id).gte('date', chartStart).limit(10000),
-        ]);
-        setExpenses(exp || []);
-        const totals: Record<string, number> = {};
-        (chartExp || []).forEach((e: any) => {
-          const month = e.date.slice(0, 7);
-          totals[month] = (totals[month] || 0) + Number(e.amount);
-        });
-        setChartTotals(totals);
-      } else {
-        setExpenses(rpcResult.recent_expenses || []);
-        const totals: Record<string, number> = {};
-        (rpcResult.monthly_totals || []).forEach((row: { month: string; total: number }) => {
-          totals[row.month] = Number(row.total);
-        });
-        setChartTotals(totals);
-      }
-
-      setCategoriesMap(map);
-    } catch (err) {
-      console.error(err);
-    }
-  }, [extendedLoaded, user.id]);
 
   function handleViewModeChange(mode: ViewMode) {
     setViewMode(mode);
-    if (mode === 'years') loadExtended();
+    if (mode === 'years') {
+      loadExtended();
+    } else if (extendedLoaded) {
+      // Switching back to months — reload 31-day window
+      setExtendedLoaded(false);
+      loadDashboard();
+    }
   }
 
-  const now = new Date();
-  const currentMonth = now.getMonth();
-  const currentYear = now.getFullYear();
+  const yearRange = useMemo(() => getYearRange(new Date(currentYear, currentMonth, 1)), [currentYear]);
 
-  const monthRange = useMemo(() => getMonthRange(now), [currentMonth, currentYear]);
-  const yearRange = useMemo(() => getYearRange(now), [currentYear]);
-
-  const currentMonthExp = useMemo(
-    () => expenses.filter(e => e.date >= monthRange.start && e.date <= monthRange.end),
-    [expenses, monthRange.start, monthRange.end]
-  );
   const currentYearExp = useMemo(
     () => expenses.filter(e => e.date >= yearRange.start && e.date <= yearRange.end),
     [expenses, yearRange.start, yearRange.end]
   );
 
-  // ── FIX: Use server-side aggregated totals instead of summing loaded expenses ──
+  // Months mode: show all loaded expenses (already 31 days from query)
+  // Years mode: filter to current year
+  const displayExpenses = viewMode === 'months' ? expenses : currentYearExp;
+
+  // Header total: always from chartTotals for current month (months mode) or yearTotals (years mode)
+  const monthKey = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}`;
   const accumulatedTotal = useMemo(() => {
     if (viewMode === 'months') {
-      const monthKey = format(now, 'yyyy-MM');
       return chartTotals[monthKey] || 0;
-    } else {
-      return yearTotals[currentYear] || 0;
     }
-  }, [viewMode, chartTotals, yearTotals, currentMonth, currentYear]);
+    return yearTotals[currentYear] || 0;
+  }, [viewMode, chartTotals, yearTotals, monthKey, currentYear]);
 
   const chartData = useMemo(() => {
     if (viewMode === 'months') {
       const data: { name: string; year: string; total: number; isCurrent: boolean }[] = [];
       for (let i = 5; i >= 0; i--) {
-        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-        const monthKey = format(d, 'yyyy-MM');
-        const total = chartTotals[monthKey] || 0;
-        data.push({ name: format(d, 'MMM', { locale: es }), year: format(d, 'yyyy'), total, isCurrent: i === 0 });
+        const m = currentMonth - i;
+        const y = currentYear + Math.floor(m / 12);
+        const mo = ((m % 12) + 12) % 12;
+        const key = `${y}-${String(mo + 1).padStart(2, '0')}`;
+        const total = chartTotals[key] || 0;
+        data.push({
+          name: MONTHS_SHORT_ES[mo],
+          year: String(y),
+          total,
+          isCurrent: i === 0,
+        });
       }
       return data;
     } else {
       const data: { name: string; year: string; total: number; isCurrent: boolean }[] = [];
       for (let i = 5; i >= 0; i--) {
-        const year = now.getFullYear() - i;
+        const year = currentYear - i;
         const total = yearTotals[year] || 0;
         data.push({ name: String(year), year: '', total, isCurrent: i === 0 });
       }
@@ -408,10 +317,12 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     }
   }, [viewMode, chartTotals, yearTotals, currentMonth, currentYear]);
 
-  const displayExpenses = viewMode === 'months' ? currentMonthExp : currentYearExp;
-
-  const today = format(now, 'yyyy-MM-dd');
-  const yesterday = format(new Date(now.getTime() - 86400000), 'yyyy-MM-dd');
+  const todayStr = useMemo(() => toDateStr(new Date()), []);
+  const yesterdayStr = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return toDateStr(d);
+  }, []);
 
   const groupedByDay = useMemo(() => {
     const filtered = searchQuery
@@ -426,20 +337,22 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
           );
         })
       : displayExpenses;
+
     const dayMap = new Map<string, Expense[]>();
     filtered.forEach(exp => {
       if (!dayMap.has(exp.date)) dayMap.set(exp.date, []);
       dayMap.get(exp.date)!.push(exp);
     });
+
     return Array.from(dayMap.entries())
       .map(([dateStr, exps]) => ({
         date: dateStr,
-        label: dateStr === today ? 'Hoy' : dateStr === yesterday ? 'Ayer' : format(parseISO(dateStr), "d 'de' MMMM", { locale: es }),
+        label: formatDayLabel(dateStr, todayStr, yesterdayStr),
         total: exps.reduce((sum, e) => sum + Number(e.amount), 0),
         expenses: exps,
       }))
       .sort((a, b) => b.date.localeCompare(a.date));
-  }, [displayExpenses, searchQuery, today, yesterday, categoriesMap]);
+  }, [displayExpenses, searchQuery, todayStr, yesterdayStr, categoriesMap]);
 
   const openEdit = useCallback((expense: Expense) => {
     setEditingExpense({
@@ -455,9 +368,14 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
   const handleDelete = useCallback(async (id: string) => {
     if (confirm('¿Eliminar este gasto?')) {
       await supabase.from('expenses').delete().eq('id', id);
-      loadData();
+      loadDashboard();
     }
-  }, [loadData]);
+  }, [loadDashboard]);
+
+  // Header subtitle
+  const headerSubtitle = viewMode === 'months'
+    ? `${MONTHS_ES[currentMonth]} ${currentYear}`
+    : String(currentYear);
 
   if (loading) {
     return (
@@ -499,10 +417,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
             -{formatCurrency(accumulatedTotal)}
           </p>
           <p className="text-dark-400 text-[11px] mt-0.5 capitalize">
-            {viewMode === 'months'
-              ? format(now, 'MMMM yyyy', { locale: es })
-              : now.getFullYear().toString()
-            }
+            {headerSubtitle}
           </p>
         </div>
       )}
@@ -550,7 +465,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
         </div>
       )}
 
-      {/* Search results */}
+      {/* Search results count */}
       {searchQuery && (
         <div className="px-3 py-1">
           <p className="text-[11px] text-dark-400">
@@ -591,18 +506,6 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
             </div>
           ))
         )}
-
-        {/* Infinite scroll sentinel */}
-        {viewMode === 'months' && !searchQuery && (
-          <div ref={sentinelRef} className="py-6 flex justify-center">
-            {loadingMore && (
-              <div className="w-5 h-5 border-2 border-brand-500/30 border-t-brand-500 rounded-full animate-spin" />
-            )}
-            {!loadingMore && !hasMore && expenses.length > 0 && (
-              <p className="text-[10px] text-dark-600">— Inicio del historial —</p>
-            )}
-          </div>
-        )}
       </div>
 
       {/* FAB */}
@@ -620,7 +523,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
             user={user}
             defaultCurrency={defaultCurrency}
             onClose={() => { setShowAddExpense(false); setEditingExpense(null); }}
-            onSaved={() => loadData()}
+            onSaved={() => loadDashboard()}
             editingExpense={editingExpense}
           />
         </Suspense>
