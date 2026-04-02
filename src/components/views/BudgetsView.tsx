@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, getBudgetPeriodRange } from '@/lib/utils';
@@ -49,7 +49,6 @@ function getPeriodBounds(startDate: string, recurrence: 'monthly' | 'yearly', of
   };
 }
 
-// Generate all period ranges from budget start_date up to today
 function generateMissingPeriods(budget: Budget, existingPeriods: BudgetPeriod[]): { start: string; end: string }[] {
   const today = format(new Date(), 'yyyy-MM-dd');
   const missing: { start: string; end: string }[] = [];
@@ -63,7 +62,7 @@ function generateMissingPeriods(budget: Budget, existingPeriods: BudgetPeriod[])
     if (!exists) missing.push(bounds);
 
     offset++;
-    if (offset > 120) break; // safety cap: 10 years
+    if (offset > 120) break;
   }
 
   return missing;
@@ -111,7 +110,6 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
     try {
       const today = format(new Date(), 'yyyy-MM-dd');
 
-      // Roundtrip 1a: budgets + categories (indexed by user_id)
       const [{ data: budgetsData }, catsMap] = await Promise.all([
         supabase.from('budgets').select('*').eq('user_id', user.id).order('name'),
         getCategories(user.id),
@@ -132,7 +130,6 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
       const tree = buildTree(allCats);
       setRoots(tree);
 
-      // Index bcData and periods by budget_id up front
       const bcByBudget: Record<string, string[]> = {};
       (bcData || []).forEach((bc: any) => {
         if (!bcByBudget[bc.budget_id]) bcByBudget[bc.budget_id] = [];
@@ -144,7 +141,6 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
         periodsByBudget[p.budget_id].push(p);
       });
 
-      // Batch-insert any missing periods, inheriting amount from most recent existing period
       const missingInserts: { budget_id: string; period_start: string; period_end: string; amount?: number }[] = [];
       for (const b of allBudgets) {
         const existing = (periodsByBudget[b.id] || []).sort((a: BudgetPeriod, b: BudgetPeriod) => b.period_start.localeCompare(a.period_start));
@@ -164,7 +160,6 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
         });
       }
 
-      // Current period per budget
       const curPeriods: Record<string, BudgetPeriod> = {};
       for (const b of allBudgets) {
         const cur = (periodsByBudget[b.id] || []).find(
@@ -174,7 +169,6 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
       }
       setCurrentPeriods(curPeriods);
 
-      // Expand category IDs for each budget using Set for O(1)
       const budgetCatSetMap: Record<string, Set<string>> = {};
       const budgetCatMap: Record<string, string[]> = {};
       for (const b of allBudgets) {
@@ -191,7 +185,7 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
         budgetCatMap[b.id] = Array.from(expandedSet);
       }
 
-      // Show budgets immediately with spent=0 so UI appears fast, then fill in spending
+      // Show budgets immediately with spent=0
       const enrichedPartial: Budget[] = allBudgets.map(b => {
         const catIds = bcByBudget[b.id] || [];
         const bCats = allCats.filter(c => catIds.includes(c.id));
@@ -200,14 +194,13 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
       setBudgets(enrichedPartial);
       setLoading(false);
 
-      // Load global month stats + accumulated (single query for global_budget_periods)
+      // Load global month stats + accumulated (fire-and-forget, non-blocking)
       const now2 = new Date();
       const curMonth2 = format(now2, 'yyyy-MM');
       const yearStart = `${now2.getFullYear()}-01-01`;
       const curMonthStart = format(startOfMonth(now2), 'yyyy-MM-dd');
       const curMonthEnd = format(endOfMonth(now2), 'yyyy-MM-dd');
 
-      // Load all expenses this year + global_budget_periods — single query for periods
       Promise.all([
         supabase.from('expenses').select('amount, date').eq('user_id', user.id).gte('date', yearStart).lte('date', curMonthEnd),
         supabase.from('global_budget_periods').select('month, amount').eq('user_id', user.id),
@@ -216,35 +209,34 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
         const curSpent = rows.filter(e => e.date >= curMonthStart && e.date <= curMonthEnd).reduce((s, e) => s + Number(e.amount), 0);
         setGlobalStats({ spent: curSpent, prevSpent: 0 });
 
-        // Set monthly budget from periods (replaces the old separate query)
         if (periods && periods.length > 0) {
           const sorted = [...(periods as any[])].sort((a: any, b: any) => b.month.localeCompare(a.month));
-          const curOrRecent = sorted.find((p: any) => p.month === curMonth2) || sorted[0];
-          if (curOrRecent) setMonthlyBudget(Number(curOrRecent.amount));
+          // Set monthly budget: prefer current month, fallback to most recent
+          const curPeriod = sorted.find((p: any) => p.month === curMonth2);
+          const effectivePeriod = curPeriod || sorted[0];
+          if (effectivePeriod) setMonthlyBudget(Number(effectivePeriod.amount));
 
-          // Also compute accumulated for closed months this year
-          const cur = (periods as any[]).find(p => p.month === curMonth2);
-          if (cur) setMonthlyBudget(Number(cur.amount));
+          // Compute accumulated for closed months this year
           const closedMonths = (periods as any[]).filter(p => p.month < curMonth2 && p.month >= `${now2.getFullYear()}-01`);
-          let acc = 0;
-          closedMonths.forEach(p => {
-            const mStart = `${p.month}-01`;
-            const mEnd = format(endOfMonth(new Date(`${p.month}-01`)), 'yyyy-MM-dd');
-            const mSpent = rows.filter(e => e.date >= mStart && e.date <= mEnd).reduce((s, e) => s + Number(e.amount), 0);
-            acc += Number(p.amount) - mSpent;
-          });
           if (closedMonths.length > 0) {
+            let acc = 0;
+            closedMonths.forEach(p => {
+              const mStart = `${p.month}-01`;
+              const mEnd = format(endOfMonth(new Date(`${p.month}-01`)), 'yyyy-MM-dd');
+              const mSpent = rows.filter(e => e.date >= mStart && e.date <= mEnd).reduce((s, e) => s + Number(e.amount), 0);
+              acc += Number(p.amount) - mSpent;
+            });
             setGlobalAccumulated(acc);
-            const sorted = [...closedMonths].sort((a, b) => a.month.localeCompare(b.month));
+            const sortedClosed = [...closedMonths].sort((a, b) => a.month.localeCompare(b.month));
             const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-            const first = cap(format(new Date(`${sorted[0].month}-01`), 'MMM', { locale: es }));
-            const last = cap(format(new Date(`${sorted[sorted.length - 1].month}-01`), 'MMM', { locale: es }));
+            const first = cap(format(new Date(`${sortedClosed[0].month}-01`), 'MMM', { locale: es }));
+            const last = cap(format(new Date(`${sortedClosed[sortedClosed.length - 1].month}-01`), 'MMM', { locale: es }));
             setGlobalAccumMonths(first === last ? first : `${first} - ${last}`);
           }
         }
-      });
+      }).catch(err => console.error('Global stats error:', err));
 
-      // Roundtrip 2: expenses — loads in background, UI already visible
+      // Roundtrip 2: expenses for individual budgets (background)
       const allExpandedCatIds = Array.from(new Set(Object.values(budgetCatMap).flat()));
       const globalMinDate = allBudgets.reduce((min, b) => b.start_date < min ? b.start_date : min, today);
       const expByCat: Record<string, { amount: number; date: string }[]> = {};
@@ -305,7 +297,7 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
         }
         return { ...b, category_ids: catIds, categories: bCats, spent, prevAccumulated, prevAccumMonths } as any;
       });
-            setBudgets(enriched);
+      setBudgets(enriched);
     } catch (err) { console.error(err); setLoading(false); }
   }
 
@@ -334,7 +326,6 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
         await supabase.from('budgets').update(budgetData).eq('id', editingBudget.id);
         budgetId = editingBudget.id;
         await supabase.from('budget_categories').delete().eq('budget_id', budgetId);
-        // Propagate new amount to current + future periods that had the old amount
         const today = format(new Date(), 'yyyy-MM-dd');
         const { data: futurePeriods } = await supabase
           .from('budget_periods').select('id, amount').eq('budget_id', budgetId).gte('period_start', today);
@@ -393,7 +384,6 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
     const val = parseFloat(budgetInput);
     if (isNaN(val) || val <= 0) return;
     const curMonth = format(new Date(), 'yyyy-MM');
-    // Upsert from budgetStartMonth forward (propagate to future months with same amount)
     const months: string[] = [];
     let m = budgetStartMonth;
     while (m <= curMonth) {
@@ -407,13 +397,16 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
     setShowBudgetModal(false);
   }
 
-  const allEntries = flattenTree(roots);
+  // ── Memoized derived data ──
+  const allEntries = useMemo(() => flattenTree(roots), [roots]);
+
   const q = searchQuery.trim().toLowerCase();
-  const searchResults = q ? allEntries.filter(e => e.cat.name.toLowerCase().includes(q)) : [];
+  const searchResults = useMemo(
+    () => q ? allEntries.filter(e => e.cat.name.toLowerCase().includes(q)) : [],
+    [allEntries, q]
+  );
 
-  const recurrenceLabels: Record<string, string> = { monthly: 'Mensual', yearly: 'Anual' };
-
-  function buildSelectedLabel(): string {
+  const selectedLabel = useMemo(() => {
     if (selectedCatIds.length === 0) return '';
     const parts: string[] = [];
     roots.forEach(r => {
@@ -428,7 +421,9 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
       }
     });
     return parts.join(', ');
-  }
+  }, [selectedCatIds, roots, categories]);
+
+  const recurrenceLabels: Record<string, string> = { monthly: 'Mensual', yearly: 'Anual' };
 
   return (
     <div className="px-4 pt-6 pb-4 max-w-lg mx-auto page-transition">
@@ -638,7 +633,7 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
               <button onClick={() => setShowCatPicker(true)}
                 className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3.5 px-4 text-sm text-left flex items-center justify-between">
                 <span className={`flex-1 min-w-0 truncate ${selectedCatIds.length > 0 ? 'text-white' : 'text-dark-500'}`}>
-                  {selectedCatIds.length > 0 ? buildSelectedLabel() : 'Seleccionar categorías...'}
+                  {selectedCatIds.length > 0 ? selectedLabel : 'Seleccionar categorías...'}
                 </span>
                 <ChevronRight size={16} className="text-dark-500 flex-shrink-0 ml-2" />
               </button>
