@@ -1,16 +1,15 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/utils';
 import { Budget, Category } from '@/types';
-import { ArrowLeft, ChevronLeft, ChevronRight, Edit3, Trash2, X, Delete, History, CheckCircle2, XCircle, Clock } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, Edit3, Trash2, X, Delete, History } from 'lucide-react';
 import { format, parseISO, differenceInDays, isWithinInterval } from 'date-fns';
 import { es } from 'date-fns/locale';
 import type { BudgetPeriod } from './BudgetsView';
 
-// Lazy-load AddExpenseModal — not needed until user edits an expense
 const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
 
 interface Props {
@@ -68,7 +67,6 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
   const [categories, setCategories] = useState<Category[]>([]);
   const [allCatIds, setAllCatIds] = useState<string[]>([]);
 
-  // Per-period cache: periodId -> data
   const periodCache = useRef<Map<string, { expenses: ExpenseRow[]; total: number; catSpending: CatSpend[] }>>(new Map());
 
   const [expenses, setExpenses] = useState<ExpenseRow[]>([]);
@@ -94,6 +92,8 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
 
   const swipeStartX = useRef<number | null>(null);
   const now = new Date();
+  const todayStr = format(now, 'yyyy-MM-dd');
+  const yestStr = format(new Date(now.getTime() - 86400000), 'yyyy-MM-dd');
 
   useEffect(() => { init(); }, [budget.id, user.id]);
 
@@ -134,7 +134,6 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
     if (periods.length === 0 || allCatIds.length === 0) return;
     const period = periods[index];
 
-    // Serve from cache if available
     const cached = periodCache.current.get(period.id);
     if (cached) {
       setExpenses(cached.expenses);
@@ -186,13 +185,22 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
     }
   }
 
-  async function loadHistorySummaries() {
+  async function loadHistorySummaries(year: number) {
     if (allCatIds.length === 0 || periods.length === 0) return;
     setHistoryLoading(true);
     try {
-      const oldest = periods[periods.length - 1]?.period_start;
-      const newest = periods[0]?.period_end;
-      // Single query for ALL expenses across all periods
+      // Filter periods by selected year first
+      const yearPeriods = periods.filter(p => parseISO(p.period_start).getFullYear() === year);
+      if (yearPeriods.length === 0) {
+        setHistorySummaries([]);
+        setHistoryLoading(false);
+        return;
+      }
+
+      const oldest = yearPeriods[yearPeriods.length - 1]?.period_start;
+      const newest = yearPeriods[0]?.period_end;
+
+      // Query only expenses for the selected year's period range
       const { data: allExp } = await supabase
         .from('expenses')
         .select('amount, date')
@@ -202,12 +210,13 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
         .lte('date', newest);
 
       const expList = (allExp || []).map((e: any) => ({ amount: Number(e.amount), date: e.date as string }));
-      const todayStr = format(now, 'yyyy-MM-dd');
 
+      // Build summaries for ALL periods (needed for year navigation) but only query expenses for selected year
       const summaries: PeriodSummary[] = periods.map(p => {
-        const spent = expList
-          .filter(e => e.date >= p.period_start && e.date <= p.period_end)
-          .reduce((s, e) => s + e.amount, 0);
+        const pYear = parseISO(p.period_start).getFullYear();
+        const spent = pYear === year
+          ? expList.filter(e => e.date >= p.period_start && e.date <= p.period_end).reduce((s, e) => s + e.amount, 0)
+          : 0; // Will be loaded when user navigates to that year
         const isCurrent = todayStr >= p.period_start && todayStr <= p.period_end;
         return { period: p, spent, isCurrent };
       });
@@ -222,7 +231,13 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
 
   function openHistory() {
     setShowHistory(true);
-    loadHistorySummaries();
+    loadHistorySummaries(historyYear);
+  }
+
+  // Reload history when year changes
+  function changeHistoryYear(newYear: number) {
+    setHistoryYear(newYear);
+    loadHistorySummaries(newYear);
   }
 
   function navigatePeriod(dir: 1 | -1) {
@@ -255,13 +270,11 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
       const currentPeriod = periods[currentPeriodIndex];
       const oldAmount = currentPeriod.amount ?? budget.amount;
 
-      // Update this period
       const { error } = await supabase.from('budget_periods').update({ amount: newAmount }).eq('id', currentPeriod.id);
       if (error) throw error;
 
-      // Also update future periods that inherited the same amount (or have null = using budget default)
       const futurePeriods = periods.filter((p, i) =>
-        i < currentPeriodIndex && // periods is newest-first, so lower index = newer
+        i < currentPeriodIndex &&
         p.period_start > currentPeriod.period_start &&
         (p.amount == null || p.amount === oldAmount)
       );
@@ -296,68 +309,82 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
     } catch (err) { console.error(err); }
   }
 
-  if (periods.length === 0 && !loading) return <div className="text-center py-10 text-dark-400">No hay períodos disponibles</div>;
-  const period = periods[currentPeriodIndex];
-  if (!period) return null;
-
-  const periodAmount = period.amount ?? budget.amount;
-  const periodStart = parseISO(period.period_start);
-  const periodEnd = parseISO(period.period_end);
-  const isCurrentPeriod = isWithinInterval(now, { start: periodStart, end: periodEnd });
-  const hasPrev = currentPeriodIndex < periods.length - 1;
-  const hasNext = currentPeriodIndex > 0;
-  const pct = periodAmount > 0 ? (totalSpent / periodAmount) * 100 : 0;
-  const budgetColor = pct >= 100 ? '#ef4444' : (isCurrentPeriod && pct >= 80) ? '#f59e0b' : '#22c55e';
-  const budgetTextColor = pct >= 100 ? 'text-red-400' : (isCurrentPeriod && pct >= 80) ? 'text-amber-400' : 'text-brand-400';
-  const historyByYear: Record<number, { summary: PeriodSummary; originalIndex: number }[]> = {};
-  historySummaries.forEach((s, i) => {
-    const y = parseISO(s.period.period_start).getFullYear();
-    if (!historyByYear[y]) historyByYear[y] = [];
-    historyByYear[y].push({ summary: s, originalIndex: i });
-  });
-  const historyYears = Object.keys(historyByYear).map(Number).sort((a, b) => b - a);
-  const historyYearData = historyByYear[historyYear] || [];
-  const closedHistItems = historyYearData.filter(({ summary: s }) => !s.isCurrent);
-  const historyAccumulated = closedHistItems.reduce((sum, { summary: s }) => sum + ((s.period.amount ?? budget.amount) - s.spent), 0);
-  const histAccumMonths = (() => {
-    if (closedHistItems.length === 0) return '';
-    const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-    const sorted = [...closedHistItems].sort((a, b) => a.summary.period.period_start.localeCompare(b.summary.period.period_start));
-    const fmt = (d: string) => cap(format(parseISO(d), 'MMM', { locale: es }));
-    const first = fmt(sorted[0].summary.period.period_start);
-    const last = fmt(sorted[sorted.length - 1].summary.period.period_start);
-    return first === last ? first : `${first} - ${last}`;
-  })();
-  const left = Math.max(periodAmount - totalSpent, 0);
-  const totalDays = differenceInDays(periodEnd, periodStart) + 1;
-  const daysPassed = isCurrentPeriod ? Math.min(differenceInDays(now, periodStart) + 1, totalDays) : totalDays;
-  const daysLeft = Math.max(differenceInDays(periodEnd, now), 0);
-  const perDay = daysLeft > 0 ? left / daysLeft : 0;
-  const timeProgress = (daysPassed / totalDays) * 100;
-  const periodLabel = format(periodStart, budget.recurrence === 'monthly' ? 'MMMM yyyy' : 'yyyy', { locale: es });
-  const todayStr = format(now, 'yyyy-MM-dd');
-  const yestStr = format(new Date(now.getTime() - 86400000), 'yyyy-MM-dd');
   function openExpenseEdit(exp: ExpenseRow) {
     setEditingExpense({
-      id: exp.id,
-      amount: Number(exp.amount),
-      description: exp.description,
-      category_id: exp.category_id,
-      date: exp.date,
+      id: exp.id, amount: Number(exp.amount), description: exp.description,
+      category_id: exp.category_id, date: exp.date,
     });
     setShowExpenseModal(true);
   }
 
-  const dayMap = new Map<string, ExpenseRow[]>();
-  expenses.forEach(e => { if (!dayMap.has(e.date)) dayMap.set(e.date, []); dayMap.get(e.date)!.push(e); });
-  const grouped = Array.from(dayMap.entries())
-    .map(([dateStr, exps]) => ({
-      date: dateStr,
-      label: dateStr === todayStr ? 'Hoy' : dateStr === yestStr ? 'Ayer' : format(parseISO(dateStr), "d 'de' MMMM", { locale: es }),
-      total: exps.reduce((s, e) => s + e.amount, 0),
-      expenses: exps,
-    }))
-    .sort((a, b) => b.date.localeCompare(a.date));
+  // ── Memoized derived data ──
+  const period = periods[currentPeriodIndex];
+
+  const periodDerived = useMemo(() => {
+    if (!period) return null;
+    const periodAmount = period.amount ?? budget.amount;
+    const periodStart = parseISO(period.period_start);
+    const periodEnd = parseISO(period.period_end);
+    const isCurrentPeriod = isWithinInterval(now, { start: periodStart, end: periodEnd });
+    const pct = periodAmount > 0 ? (totalSpent / periodAmount) * 100 : 0;
+    const budgetColor = pct >= 100 ? '#ef4444' : (isCurrentPeriod && pct >= 80) ? '#f59e0b' : '#22c55e';
+    const budgetTextColor = pct >= 100 ? 'text-red-400' : (isCurrentPeriod && pct >= 80) ? 'text-amber-400' : 'text-brand-400';
+    const left = Math.max(periodAmount - totalSpent, 0);
+    const totalDays = differenceInDays(periodEnd, periodStart) + 1;
+    const daysPassed = isCurrentPeriod ? Math.min(differenceInDays(now, periodStart) + 1, totalDays) : totalDays;
+    const daysLeft = Math.max(differenceInDays(periodEnd, now), 0);
+    const perDay = daysLeft > 0 ? left / daysLeft : 0;
+    const periodLabel = format(periodStart, budget.recurrence === 'monthly' ? 'MMMM yyyy' : 'yyyy', { locale: es });
+
+    return { periodAmount, periodStart, periodEnd, isCurrentPeriod, pct, budgetColor, budgetTextColor, left, totalDays, daysPassed, daysLeft, perDay, periodLabel };
+  }, [period, totalSpent, budget.amount, budget.recurrence]);
+
+  const grouped = useMemo(() => {
+    const dayMap = new Map<string, ExpenseRow[]>();
+    expenses.forEach(e => { if (!dayMap.has(e.date)) dayMap.set(e.date, []); dayMap.get(e.date)!.push(e); });
+    return Array.from(dayMap.entries())
+      .map(([dateStr, exps]) => ({
+        date: dateStr,
+        label: dateStr === todayStr ? 'Hoy' : dateStr === yestStr ? 'Ayer' : format(parseISO(dateStr), "d 'de' MMMM", { locale: es }),
+        total: exps.reduce((s, e) => s + e.amount, 0),
+        expenses: exps,
+      }))
+      .sort((a, b) => b.date.localeCompare(a.date));
+  }, [expenses, todayStr, yestStr]);
+
+  const { historyByYear, historyYears } = useMemo(() => {
+    const byYear: Record<number, { summary: PeriodSummary; originalIndex: number }[]> = {};
+    historySummaries.forEach((s, i) => {
+      const y = parseISO(s.period.period_start).getFullYear();
+      if (!byYear[y]) byYear[y] = [];
+      byYear[y].push({ summary: s, originalIndex: i });
+    });
+    const years = Object.keys(byYear).map(Number).sort((a, b) => b - a);
+    return { historyByYear: byYear, historyYears: years };
+  }, [historySummaries]);
+
+  const { historyYearData, historyAccumulated, histAccumMonths } = useMemo(() => {
+    const yearData = historyByYear[historyYear] || [];
+    const closedItems = yearData.filter(({ summary: s }) => !s.isCurrent);
+    const accumulated = closedItems.reduce((sum, { summary: s }) => sum + ((s.period.amount ?? budget.amount) - s.spent), 0);
+    let accumMonths = '';
+    if (closedItems.length > 0) {
+      const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+      const sorted = [...closedItems].sort((a, b) => a.summary.period.period_start.localeCompare(b.summary.period.period_start));
+      const fmt = (d: string) => cap(format(parseISO(d), 'MMM', { locale: es }));
+      const first = fmt(sorted[0].summary.period.period_start);
+      const last = fmt(sorted[sorted.length - 1].summary.period.period_start);
+      accumMonths = first === last ? first : `${first} - ${last}`;
+    }
+    return { historyYearData: yearData, historyAccumulated: accumulated, histAccumMonths: accumMonths };
+  }, [historyByYear, historyYear, budget.amount]);
+
+  if (periods.length === 0 && !loading) return <div className="text-center py-10 text-dark-400">No hay períodos disponibles</div>;
+  if (!period || !periodDerived) return null;
+
+  const { periodAmount, periodStart, periodEnd, isCurrentPeriod, pct, budgetColor, budgetTextColor, left, daysLeft, perDay, periodLabel } = periodDerived;
+  const hasPrev = currentPeriodIndex < periods.length - 1;
+  const hasNext = currentPeriodIndex > 0;
 
   return (
     <div className="max-w-lg mx-auto pb-8 page-transition" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
@@ -371,7 +398,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
         </div>
       </div>
 
-      {/* PERIOD NAVIGATOR — title centered above date */}
+      {/* PERIOD NAVIGATOR */}
       <div className="text-center mb-1 px-4">
         <h1 className="text-base font-bold truncate">{budget.name}</h1>
       </div>
@@ -382,7 +409,6 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
         </button>
         <div className="text-center">
           <p className="text-base font-bold capitalize">{periodLabel}</p>
-
         </div>
         <button onClick={() => navigatePeriod(-1)} disabled={!hasNext}
           className={`p-1.5 rounded-full transition-colors ${hasNext ? 'text-dark-300 active:bg-dark-800' : 'text-dark-700 cursor-not-allowed'}`}>
@@ -454,7 +480,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
             </div>
           </div>
 
-          {/* PERIOD DOTS — oldest left, newest right; all round; active = budget color */}
+          {/* PERIOD DOTS */}
           {periods.length > 1 && (
             <div className="flex justify-center gap-1.5 mb-5">
               {periods.length > 12 && <span className="text-[10px] text-dark-600">+{periods.length - 12}</span>}
@@ -462,11 +488,10 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
                 const visibleCount = Math.min(periods.length, 12);
                 const reversedI = visibleCount - 1 - i;
                 const isActive = reversedI === currentPeriodIndex;
-                const activeColor = budgetColor;
                 return (
                   <button key={i} onClick={() => setCurrentPeriodIndex(reversedI)}
                     className="w-2 h-2 rounded-full transition-all flex-shrink-0"
-                    style={{ backgroundColor: isActive ? activeColor : '#334155' }} />
+                    style={{ backgroundColor: isActive ? budgetColor : '#334155' }} />
                 );
               })}
             </div>
@@ -550,7 +575,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
           </div>
           <div className="flex items-center justify-between px-4 pt-4 pb-2 flex-shrink-0">
             <button
-              onClick={() => { const i = historyYears.indexOf(historyYear); if (i < historyYears.length - 1) setHistoryYear(historyYears[i + 1]); }}
+              onClick={() => { const i = historyYears.indexOf(historyYear); if (i < historyYears.length - 1) changeHistoryYear(historyYears[i + 1]); }}
               disabled={historyYears.indexOf(historyYear) >= historyYears.length - 1}
               className="p-2 rounded-xl bg-dark-800 text-dark-300 disabled:opacity-30 active:bg-dark-700">
               <ChevronLeft size={18} />
@@ -564,7 +589,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
               )}
             </div>
             <button
-              onClick={() => { const i = historyYears.indexOf(historyYear); if (i > 0) setHistoryYear(historyYears[i - 1]); }}
+              onClick={() => { const i = historyYears.indexOf(historyYear); if (i > 0) changeHistoryYear(historyYears[i - 1]); }}
               disabled={historyYears.indexOf(historyYear) <= 0}
               className="p-2 rounded-xl bg-dark-800 text-dark-300 disabled:opacity-30 active:bg-dark-700">
               <ChevronRight size={18} />
