@@ -14,7 +14,8 @@
 import { Expense, Category } from '@/types';
 
 const CACHE_KEY = 'spendly_dashboard_cache';
-const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days — stale but still useful for instant display
+// No expiration — cache is overwritten with fresh data every time the app opens.
+// Stale data (even weeks old) is always better than a spinner for half a second.
 
 export interface DashboardSnapshot {
   expenses: Expense[];
@@ -24,14 +25,13 @@ export interface DashboardSnapshot {
   userId: string;
 }
 
-/** Read cached dashboard data. Returns null if missing, expired, or wrong user. */
+/** Read cached dashboard data. Returns null if missing or wrong user. */
 export function readDashboardCache(userId: string): DashboardSnapshot | null {
   try {
     const raw = localStorage.getItem(CACHE_KEY);
     if (!raw) return null;
     const parsed: DashboardSnapshot = JSON.parse(raw);
     if (parsed.userId !== userId) return null;
-    if (Date.now() - parsed.timestamp > MAX_AGE_MS) return null;
     return parsed;
   } catch {
     return null;
