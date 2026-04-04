@@ -138,7 +138,6 @@ function BarChart({ data, color, mode }: { data: BarEntry[]; color: string; mode
         const x = PAD_L + i * barGap + barGap / 2 - barW / 2;
         const opacity = i === data.length - 1 && mode === 'months' ? 0.5 : 1;
         const segs = d.segments && d.segments.length > 0 ? d.segments : [{ amount: d.amount, color: d.amount > 0 ? color : '#1e293b' }];
-        // Stack segments from bottom up — use clipPath for unified rounded corners
         const totalBarH2 = totalBarH;
         const clipId = `clip-${i}`;
         let stackY = baseY;
@@ -161,8 +160,6 @@ function BarChart({ data, color, mode }: { data: BarEntry[]; color: string; mode
     </svg>
   );
 }
-
-// ── Swipeable expense row for DrillDown (uses shared SwipeableRow) ──────────
 
 function getRange(date: Date, mode: ViewMode) {
   if (mode === 'months') return { start: format(startOfMonth(date), 'yyyy-MM-dd'), end: format(endOfMonth(date), 'yyyy-MM-dd') };
@@ -187,38 +184,71 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
     setLoading(true);
     try {
       const range = getRange(currentDate, viewMode);
-      const [{ data: expenses }, catsMap] = await Promise.all([
-        supabase.from('expenses').select('id, amount, category_id, description, date').eq('user_id', user.id).gte('date', range.start).lte('date', range.end).order('date', { ascending: false }),
+
+      // Try RPC first (server-side aggregation — no row limit issues)
+      const [{ data: rpcResult, error: rpcError }, catsMap] = await Promise.all([
+        supabase.rpc('get_spending_overview', {
+          p_user_id: user.id,
+          p_start_date: range.start,
+          p_end_date: range.end,
+        }),
         getCategories(user.id),
       ]);
-      const allExp = expenses || [];
+
       const allCats = Array.from(catsMap.values());
-      const total = allExp.reduce((s: number, e: any) => s + Number(e.amount), 0);
-      setTotalSpent(total);
-
-      // Build spend + tx maps
-      const spendMap: Record<string, number> = {};
-      const txMap: Record<string, number> = {};
-      allExp.forEach((e: any) => {
-        if (e.category_id) {
-          spendMap[e.category_id] = (spendMap[e.category_id] || 0) + Number(e.amount);
-          txMap[e.category_id] = (txMap[e.category_id] || 0) + 1;
-        }
-      });
-
       const activeCats = allCats.filter((c: any) => c.deleted !== true);
       const tree = buildTree(activeCats);
+
+      let total = 0;
+      const spendMap: Record<string, number> = {};
+      const txMap: Record<string, number> = {};
+
+      if (!rpcError && rpcResult) {
+        // Use RPC result
+        total = Number(rpcResult.total) || 0;
+        (rpcResult.category_totals || []).forEach((row: any) => {
+          if (row.category_id) {
+            spendMap[row.category_id] = Number(row.total);
+            txMap[row.category_id] = Number(row.tx_count);
+          }
+        });
+      } else {
+        // Fallback: client-side with high limit
+        const { data: expenses } = await supabase.from('expenses')
+          .select('id, amount, category_id, description, date')
+          .eq('user_id', user.id)
+          .gte('date', range.start)
+          .lte('date', range.end)
+          .order('date', { ascending: false })
+          .limit(10000);
+        const allExp = expenses || [];
+        total = allExp.reduce((s: number, e: any) => s + Number(e.amount), 0);
+        allExp.forEach((e: any) => {
+          if (e.category_id) {
+            spendMap[e.category_id] = (spendMap[e.category_id] || 0) + Number(e.amount);
+            txMap[e.category_id] = (txMap[e.category_id] || 0) + 1;
+          }
+        });
+      }
+
+      setTotalSpent(total);
+
       const spending: CatSpend[] = tree
         .map(node => buildSpend(node, spendMap, txMap, total))
         .filter(c => c.spent > 0)
         .sort((a, b) => b.spent - a.spent);
 
-      // Uncategorized: expenses with no category_id, OR category_id not found in ANY cat (active or deleted)
-      const allCatIds = new Set(allCats.filter((c: any) => c.deleted !== true).map((c: any) => c.id));
-      const uncat = allExp.filter((e: any) => !e.category_id || !allCatIds.has(e.category_id));
-      if (uncat.length > 0) {
-        const uncatSpent = uncat.reduce((s: number, e: any) => s + Number(e.amount), 0);
-        spending.push({ id: 'uncategorized', name: 'Sin categoría', icon: '📦', color: '#95A5A6', spent: uncatSpent, percentage: total > 0 ? (uncatSpent / total) * 100 : 0, transactions: uncat.length, children: [], allIds: ['uncategorized'] });
+      // Uncategorized
+      const allCatIds = new Set(activeCats.map((c: any) => c.id));
+      const uncatSpent = (rpcResult?.category_totals || [])
+        .filter((row: any) => !row.category_id || !allCatIds.has(row.category_id))
+        .reduce((s: number, row: any) => s + Number(row.total), 0);
+      const uncatTx = (rpcResult?.category_totals || [])
+        .filter((row: any) => !row.category_id || !allCatIds.has(row.category_id))
+        .reduce((s: number, row: any) => s + Number(row.tx_count), 0);
+
+      if (uncatSpent > 0) {
+        spending.push({ id: 'uncategorized', name: 'Sin categoría', icon: '📦', color: '#95A5A6', spent: uncatSpent, percentage: total > 0 ? (uncatSpent / total) * 100 : 0, transactions: uncatTx, children: [], allIds: ['uncategorized'] });
       }
       setCatSpending(spending);
     } catch (err) { console.error(err); }
@@ -345,7 +375,6 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
     try {
       const range = getRange(currentDate, viewMode);
 
-      // Load cats and expenses in parallel — cats needed for color map
       const catsMap = await getCategories(user.id);
       const cats = Array.from(catsMap.values());
       setAllCats(cats);
@@ -353,10 +382,10 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
       let list: ExpenseDetail[] = [];
       if (drillDown.id === 'uncategorized') {
         const ids = new Set(cats.map((c: any) => c.id));
-        const { data: exp } = await supabase.from('expenses').select('id, amount, description, date, category_id').eq('user_id', user.id).gte('date', range.start).lte('date', range.end).order('date', { ascending: false });
+        const { data: exp } = await supabase.from('expenses').select('id, amount, description, date, category_id').eq('user_id', user.id).gte('date', range.start).lte('date', range.end).order('date', { ascending: false }).limit(10000);
         list = (exp || []).filter((e: any) => !e.category_id || !ids.has(e.category_id)).map((e: any) => ({ id: e.id, date: e.date, description: e.description, amount: Number(e.amount), category_id: e.category_id }));
       } else {
-        const { data: exp } = await supabase.from('expenses').select('id, amount, description, date, category_id').eq('user_id', user.id).in('category_id', drillDown.allIds).gte('date', range.start).lte('date', range.end).order('date', { ascending: false });
+        const { data: exp } = await supabase.from('expenses').select('id, amount, description, date, category_id').eq('user_id', user.id).in('category_id', drillDown.allIds).gte('date', range.start).lte('date', range.end).order('date', { ascending: false }).limit(10000);
         list = (exp || []).map((e: any) => ({ id: e.id, date: e.date, description: e.description, amount: Number(e.amount), category_id: e.category_id }));
       }
       setExpenses(list);
@@ -367,14 +396,12 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
   }
 
   function buildBarData(exp: ExpenseDetail[], date: Date, mode: ViewMode, cats: RawCat[] = allCats): BarEntry[] {
-    // Build a color map: category_id -> color
     const colorMap: Record<string, string> = {};
     cats.forEach(c => { colorMap[c.id] = c.color; });
 
     function makeEntry(label: string, dayExps: ExpenseDetail[]): BarEntry {
       const amount = dayExps.reduce((s, e) => s + e.amount, 0);
       if (amount === 0) return { label, amount, segments: [] };
-      // Group by category, sorted by amount desc
       const bycat: Record<string, number> = {};
       dayExps.forEach(e => {
         const cid = e.category_id || '__none';
@@ -423,20 +450,9 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
     .map(([dateStr, exps]) => ({ date: dateStr, label: dateStr === todayStr ? 'Hoy' : dateStr === yestStr ? 'Ayer' : format(parseISO(dateStr), "d 'de' MMMM", { locale: es }), total: exps.reduce((s, e) => s + e.amount, 0), expenses: exps }))
     .sort((a, b) => b.date.localeCompare(a.date));
 
-  // Resolve which cat to show for each expense (could be any depth)
   function resolveCat(categoryId: string | null | undefined): RawCat | undefined {
     if (!categoryId) return undefined;
     return allCats.find(c => c.id === categoryId);
-  }
-
-  // Find all descendants flat for display resolution
-  function findInTree(nodes: CatSpend[], id: string): CatSpend | undefined {
-    for (const n of nodes) {
-      if (n.id === id) return n;
-      const found = findInTree(n.children, id);
-      if (found) return found;
-    }
-    return undefined;
   }
 
   function openEdit(exp: ExpenseDetail) {
@@ -455,7 +471,6 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
     await supabase.from('expenses').delete().eq('id', id);
     setExpenses(prev => prev.filter(e => e.id !== id));
     setPeriodTotal(prev => prev - (expenses.find(e => e.id === id)?.amount || 0));
-    // Rebuild bar data from updated expenses
     const updated = expenses.filter(e => e.id !== id);
     setBarData(buildBarData(updated, currentDate, viewMode, allCats));
   }
