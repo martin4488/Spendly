@@ -6,63 +6,11 @@ import { supabase } from '@/lib/supabase';
 import { formatCurrency, getMonthRange, CATEGORY_ICONS, CATEGORY_COLORS } from '@/lib/utils';
 import { Category } from '@/types';
 import { Plus, Trash2, X, FolderPlus, GripVertical, ArrowLeft } from 'lucide-react';
+import SwipeableRow from '@/components/SwipeableRow';
 
 // ── Tree node (up to 3 levels) ────────────────────────────────────────────────
 import { CatNode, buildTree } from '@/lib/categoryTree';
 import { invalidateCategories } from '@/lib/categoryCache';
-
-// ── Swipeable row ─────────────────────────────────────────────────────────────
-function SwipeableCatRow({
-  children, onEdit, onDelete, dragHandleProps,
-}: {
-  children: React.ReactNode;
-  onEdit: () => void;
-  onDelete: () => void;
-  dragHandleProps?: React.HTMLAttributes<HTMLDivElement>;
-}) {
-  const [offset, setOffset] = useState(0);
-  const [isDragging, setIsDragging] = useState(false);
-  const startXRef = useRef<number | null>(null);
-  const DELETE_THRESHOLD = 72;
-  const SNAP_THRESHOLD = 36;
-
-  function onTouchStart(e: React.TouchEvent) { startXRef.current = e.touches[0].clientX; setIsDragging(false); }
-  function onTouchMove(e: React.TouchEvent) {
-    if (startXRef.current === null) return;
-    const dx = startXRef.current - e.touches[0].clientX;
-    if (dx > 5) setIsDragging(true);
-    if (dx > 0) setOffset(Math.min(dx, DELETE_THRESHOLD));
-    else if (dx < 0 && offset > 0) setOffset(Math.max(0, offset + dx));
-  }
-  function onTouchEnd() { setOffset(offset > SNAP_THRESHOLD ? DELETE_THRESHOLD : 0); startXRef.current = null; }
-  function handleClick() {
-    if (isDragging) return;
-    if (offset > 0) { setOffset(0); return; }
-    onEdit();
-  }
-
-  return (
-    <div className="relative overflow-hidden">
-      <div className="absolute right-0 top-0 bottom-0 flex items-center justify-center bg-red-500" style={{ width: DELETE_THRESHOLD }}>
-        <button onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onDelete(); }}
-          className="flex flex-col items-center justify-center w-full h-full gap-1 active:bg-red-600 transition-colors">
-          <Trash2 size={16} className="text-white" />
-          <span className="text-[10px] text-white font-medium">Borrar</span>
-        </button>
-      </div>
-      <div className="relative bg-dark-800 select-none"
-        style={{ transform: `translateX(-${offset}px)`, transition: isDragging ? 'none' : 'transform 0.2s ease' }}
-        onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onClick={handleClick}>
-        <div className="flex items-center">
-          <div {...dragHandleProps} className="pl-3 pr-1 py-3 text-dark-600 touch-none flex-shrink-0 cursor-grab active:cursor-grabbing" onClick={(e) => e.stopPropagation()}>
-            <GripVertical size={18} />
-          </div>
-          <div className="flex-1 min-w-0">{children}</div>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ── Drag state ────────────────────────────────────────────────────────────────
 interface DragState {
@@ -117,7 +65,6 @@ function hslToHex(h: number, s: number, l: number): string {
 
 function deriveChildColor(parentHex: string, siblingCount: number): string {
   const [h, s, l] = hexToHsl(parentHex);
-  // First child very close to parent, each sibling gets progressively lighter + less saturated
   const newL = Math.min(88, l + 4 + siblingCount * 7);
   const newS = Math.max(15, s - 4 - siblingCount * 7);
   return hslToHex(h, newS, newL);
@@ -169,7 +116,8 @@ export default function CategoriesView({ user, onBack }: { user: User; onBack?: 
       const updates: { id: string; position: number }[] = [];
       function walk(nodes: CatNode[]) { nodes.forEach((n, i) => { updates.push({ id: n.id, position: i }); walk(n.children); }); }
       walk(newRoots);
-      Promise.all(updates.map(u => supabase.from('categories').update({ position: u.position }).eq('id', u.id)));
+      Promise.all(updates.map(u => supabase.from('categories').update({ position: u.position }).eq('id', u.id)))
+        .then(() => invalidateCategories()); // ← FIX: invalidate cache after reorder
     }, 600);
   }
 
@@ -216,7 +164,6 @@ export default function CategoriesView({ user, onBack }: { user: User; onBack?: 
     } else {
       setEditingId(null); setName(''); setParentId(asChildOf || null);
       if (asChildOf) {
-        // Inherit parent icon, derive color
         const parent = flatCats.find(c => c.id === asChildOf);
         setIcon(parent?.icon || '📦');
         const siblingCount = flatCats.filter(c => c.parent_id === asChildOf).length;
@@ -253,7 +200,6 @@ export default function CategoriesView({ user, onBack }: { user: User; onBack?: 
     finally { setSaving(false); }
   }
 
-  // Recursively update descendant colors based on new parent color
   async function cascadeColors(parentId: string, parentColor: string, allCats: Category[]) {
     const children = allCats.filter(c => c.parent_id === parentId);
     await Promise.all(
@@ -299,27 +245,34 @@ export default function CategoriesView({ user, onBack }: { user: User; onBack?: 
           const indent = depth * 14 + 20;
           return (
             <div key={node.id}>
-              <SwipeableCatRow onEdit={() => openForm(node)} onDelete={() => handleDelete(node.id)}>
-                <div className={`flex items-center gap-2.5 pr-3.5 py-2.5 ${!isLast || node.children.length > 0 ? 'border-b border-dark-700/20' : ''}`}
-                  style={{ paddingLeft: `${indent}px` }}>
-                  <div className="text-dark-500 text-xs">└</div>
-                  <div className="w-7 h-7 rounded-md flex items-center justify-center text-sm flex-shrink-0" style={{ backgroundColor: node.color }}>
-                    {node.icon}
+              <SwipeableRow onTap={() => openForm(node)} onDelete={() => handleDelete(node.id)}>
+                <div className="relative bg-dark-800 select-none">
+                  <div className="flex items-center">
+                    <div className="pl-3 pr-1 py-3 text-dark-600 touch-none flex-shrink-0 cursor-grab active:cursor-grabbing" onClick={(e) => e.stopPropagation()}>
+                      <GripVertical size={18} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className={`flex items-center gap-2.5 pr-3.5 py-2.5 ${!isLast || node.children.length > 0 ? 'border-b border-dark-700/20' : ''}`}
+                        style={{ paddingLeft: `${indent}px` }}>
+                        <div className="text-dark-500 text-xs">└</div>
+                        <div className="w-7 h-7 rounded-md flex items-center justify-center text-sm flex-shrink-0" style={{ backgroundColor: node.color }}>
+                          {node.icon}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium text-dark-200">{node.name}</p>
+                        </div>
+                        {depth < 2 && (
+                          <button onPointerDown={(e) => e.stopPropagation()}
+                            onClick={(e) => { e.stopPropagation(); openForm(undefined, node.id); }}
+                            className="p-2 text-dark-400 hover:text-dark-200 flex-shrink-0">
+                            <FolderPlus size={13} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-dark-200">{node.name}</p>
-                    
-                  </div>
-                  {/* Add sub-sub only up to depth 1 (so max 3 levels total) */}
-                  {depth < 2 && (
-                    <button onPointerDown={(e) => e.stopPropagation()}
-                      onClick={(e) => { e.stopPropagation(); openForm(undefined, node.id); }}
-                      className="p-2 text-dark-400 hover:text-dark-200 flex-shrink-0">
-                      <FolderPlus size={13} />
-                    </button>
-                  )}
                 </div>
-              </SwipeableCatRow>
+              </SwipeableRow>
               {node.children.length > 0 && renderChildren(node.children, depth + 1)}
             </div>
           );
@@ -364,25 +317,32 @@ export default function CategoriesView({ user, onBack }: { user: User; onBack?: 
             return (
               <div key={cat.id} data-root={gi}
                 className={`rounded-xl overflow-hidden transition-all duration-150 ${isBeingDragged ? 'opacity-70 scale-[1.02] shadow-2xl shadow-black/40 z-10 relative' : ''}`}>
-                <SwipeableCatRow onEdit={() => openForm(cat)} onDelete={() => handleDelete(cat.id)}
-                  dragHandleProps={{ onTouchStart: (e) => onRootDragStart(e, gi) }}>
-                  <div className="p-3.5 pr-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-lg flex items-center justify-center text-lg flex-shrink-0" style={{ backgroundColor: cat.color }}>
-                        {cat.icon}
+                <SwipeableRow onTap={() => openForm(cat)} onDelete={() => handleDelete(cat.id)}>
+                  <div className="relative bg-dark-800 select-none">
+                    <div className="flex items-center">
+                      <div onTouchStart={(e) => onRootDragStart(e, gi)} className="pl-3 pr-1 py-3 text-dark-600 touch-none flex-shrink-0 cursor-grab active:cursor-grabbing" onClick={(e) => e.stopPropagation()}>
+                        <GripVertical size={18} />
                       </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium">{cat.name}</p>
-                        
+                      <div className="flex-1 min-w-0">
+                        <div className="p-3.5 pr-3">
+                          <div className="flex items-center gap-3">
+                            <div className="w-9 h-9 rounded-lg flex items-center justify-center text-lg flex-shrink-0" style={{ backgroundColor: cat.color }}>
+                              {cat.icon}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-medium">{cat.name}</p>
+                            </div>
+                            <button onPointerDown={(e) => e.stopPropagation()}
+                              onClick={(e) => { e.stopPropagation(); openForm(undefined, cat.id); }}
+                              className="p-2 text-dark-400 hover:text-dark-200 flex-shrink-0">
+                              <FolderPlus size={15} />
+                            </button>
+                          </div>
+                        </div>
                       </div>
-                      <button onPointerDown={(e) => e.stopPropagation()}
-                        onClick={(e) => { e.stopPropagation(); openForm(undefined, cat.id); }}
-                        className="p-2 text-dark-400 hover:text-dark-200 flex-shrink-0">
-                        <FolderPlus size={15} />
-                      </button>
                     </div>
                   </div>
-                </SwipeableCatRow>
+                </SwipeableRow>
                 {cat.children.length > 0 && renderChildren(cat.children, 1)}
               </div>
             );
@@ -428,7 +388,6 @@ export default function CategoriesView({ user, onBack }: { user: User; onBack?: 
 
             <div className="mb-5">
               {parentId ? (
-                // Child: show color preview only, not editable
                 <div className="flex items-center gap-3 py-2">
                   <div className="w-8 h-8 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
                   <span className="text-xs text-dark-500">Color heredado del grupo</span>
