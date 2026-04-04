@@ -11,6 +11,7 @@ import { Plus, ChevronRight, PieChart, Search, X } from 'lucide-react';
 import type { CurrencyCode } from '@/lib/currency';
 import { getCategories } from '@/lib/categoryCache';
 import SwipeableRow from '@/components/SwipeableRow';
+import { readDashboardCache, writeDashboardCache, buildCategoriesMapFromCache } from '@/lib/dashboardCache';
 
 const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
 
@@ -152,10 +153,17 @@ const ExpenseRow = memo(function ExpenseRow({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function DashboardView({ user, onNavigate, defaultCurrency }: { user: User; onNavigate: (tab: any) => void; defaultCurrency: CurrencyCode }) {
-  const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [categoriesMap, setCategoriesMap] = useState<Map<string, Category>>(new Map());
-  const [loading, setLoading] = useState(true);
-  const [chartTotals, setChartTotals] = useState<Record<string, number>>({});
+  // ── Instant init from cache ─────────────────────────────────────────────
+  const cached = useMemo(() => readDashboardCache(user.id), [user.id]);
+  const hasCachedData = !!cached;
+
+  const [expenses, setExpenses] = useState<Expense[]>(cached?.expenses || []);
+  const [categoriesMap, setCategoriesMap] = useState<Map<string, Category>>(
+    cached ? buildCategoriesMapFromCache(cached.categories) : new Map()
+  );
+  // Skip loading spinner if we have cached data to show
+  const [loading, setLoading] = useState(!hasCachedData);
+  const [chartTotals, setChartTotals] = useState<Record<string, number>>(cached?.chartTotals || {});
   const [yearTotals, setYearTotals] = useState<Record<number, number>>({});
   const [viewMode, setViewMode] = useState<ViewMode>('months');
   const [extendedLoaded, setExtendedLoaded] = useState(false);
@@ -166,8 +174,8 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
   const searchRef = useRef<HTMLInputElement>(null);
 
   // Stable date values — recalculated only on re-mount, not every render
-  const currentMonth = new Date().getMonth();
-  const currentYear = new Date().getFullYear();
+  const currentMonth = useMemo(() => new Date().getMonth(), []);
+  const currentYear = useMemo(() => new Date().getFullYear(), []);
 
   useEffect(() => { loadDashboard(); }, []);
 
@@ -195,29 +203,33 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
         getCategories(user.id),
       ]);
 
+      let freshExpenses: Expense[] = [];
+      let freshTotals: Record<string, number> = {};
+
       if (rpcError || !rpcResult) {
         // Fallback: 2-query approach
         const [{ data: exp }, { data: chartExp }] = await Promise.all([
           supabase.from('expenses').select('*').eq('user_id', user.id).gte('date', startStr).order('date', { ascending: false }).limit(500),
           supabase.from('expenses').select('date, amount').eq('user_id', user.id).gte('date', chartStart).limit(10000),
         ]);
-        setExpenses(exp || []);
-        const totals: Record<string, number> = {};
+        freshExpenses = exp || [];
         (chartExp || []).forEach((e: any) => {
           const month = e.date.slice(0, 7);
-          totals[month] = (totals[month] || 0) + Number(e.amount);
+          freshTotals[month] = (freshTotals[month] || 0) + Number(e.amount);
         });
-        setChartTotals(totals);
       } else {
-        setExpenses(rpcResult.recent_expenses || []);
-        const totals: Record<string, number> = {};
+        freshExpenses = rpcResult.recent_expenses || [];
         (rpcResult.monthly_totals || []).forEach((row: { month: string; total: number }) => {
-          totals[row.month] = Number(row.total);
+          freshTotals[row.month] = Number(row.total);
         });
-        setChartTotals(totals);
       }
 
+      setExpenses(freshExpenses);
+      setChartTotals(freshTotals);
       setCategoriesMap(map);
+
+      // Persist to cache for next cold start
+      writeDashboardCache(user.id, freshExpenses, freshTotals, map);
     } catch (err) {
       console.error(err);
     } finally {
