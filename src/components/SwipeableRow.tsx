@@ -12,11 +12,15 @@ interface SwipeableRowProps {
   onDelete: () => void;
   /** Extra classes on the outer wrapper (e.g. rounded-xl) */
   className?: string;
+  /** Optional drag handle props for reorderable lists (e.g. CategoriesView) */
+  dragHandleProps?: React.HTMLAttributes<HTMLDivElement>;
+  /** Optional wrapper around children — used by CategoriesView to add drag handle layout */
+  renderContent?: (children: React.ReactNode) => React.ReactNode;
 }
 
 /**
  * Generic swipe-to-reveal-delete row.
- * Used in DashboardView, SpendingOverview, RecurringView, etc.
+ * Used in DashboardView, SpendingOverview, RecurringView, CategoriesView, etc.
  */
 const SwipeableRow = memo(function SwipeableRow({
   children,
