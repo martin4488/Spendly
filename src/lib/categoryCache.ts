@@ -67,6 +67,16 @@ export function getCategoriesSync(userId: string): Map<string, Category> | null 
   return null;
 }
 
+/**
+ * Seed the cache with data from an external source (e.g. boot RPC).
+ * Avoids a separate fetch when categories are already available.
+ */
+export function seedCategories(userId: string, list: Category[]): void {
+  const map = new Map<string, Category>();
+  list.forEach(c => map.set(c.id, c));
+  cache = { userId, map, list, promise: null };
+}
+
 /** Call this after any create/edit/delete on categories. */
 export function invalidateCategories() {
   cache = null;
