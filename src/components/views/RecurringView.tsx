@@ -7,148 +7,16 @@ import { formatCurrency, CATEGORY_ICONS, CATEGORY_COLORS } from '@/lib/utils';
 import { Category, RecurringExpense } from '@/types';
 import { CatNode, FlatEntry, buildTree, flattenTree } from '@/lib/categoryTree';
 import { getCategories, invalidateCategories } from '@/lib/categoryCache';
-import { Plus, X, CalendarOff, Delete, Search, Settings, ArrowLeft, Check, Trash2 } from 'lucide-react';
+import { Plus, X, CalendarOff, Delete, Search, Settings, ArrowLeft, Check } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
-
-// ── Swipe-to-delete row ───────────────────────────────────────────────────────
-function SwipeableRow({
-  children,
-  onTap,
-  onDelete,
-}: {
-  children: React.ReactNode;
-  onTap: () => void;
-  onDelete: () => void;
-}) {
-  const [offset, setOffset] = useState(0);
-  const [isDragging, setIsDragging] = useState(false);
-  const startXRef = useRef<number | null>(null);
-  const DELETE_THRESHOLD = 72;
-  const SNAP_THRESHOLD = 36;
-
-  function onTouchStart(e: React.TouchEvent) {
-    startXRef.current = e.touches[0].clientX;
-    setIsDragging(false);
-  }
-  function onTouchMove(e: React.TouchEvent) {
-    if (startXRef.current === null) return;
-    const dx = startXRef.current - e.touches[0].clientX;
-    if (dx > 5) setIsDragging(true);
-    if (dx > 0) setOffset(Math.min(dx, DELETE_THRESHOLD));
-    else if (dx < 0 && offset > 0) setOffset(Math.max(0, offset + dx));
-  }
-  function onTouchEnd() {
-    setOffset(offset > SNAP_THRESHOLD ? DELETE_THRESHOLD : 0);
-    startXRef.current = null;
-  }
-  function handleClick() {
-    if (isDragging) return;
-    if (offset > 0) { setOffset(0); return; }
-    onTap();
-  }
-
-  return (
-    <div className="relative overflow-hidden rounded-xl">
-      {/* Delete button revealed on swipe */}
-      <div
-        className="absolute right-0 top-0 bottom-0 flex items-center justify-center bg-red-500 rounded-r-xl"
-        style={{ width: DELETE_THRESHOLD }}
-      >
-        <button
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => { e.stopPropagation(); onDelete(); }}
-          className="flex flex-col items-center justify-center w-full h-full gap-1 active:bg-red-600 transition-colors"
-        >
-          <Trash2 size={16} className="text-white" />
-          <span className="text-[10px] text-white font-medium">Borrar</span>
-        </button>
-      </div>
-      {/* Row */}
-      <div
-        className="relative bg-dark-800 cursor-pointer select-none"
-        style={{
-          transform: `translateX(-${offset}px)`,
-          transition: isDragging ? 'none' : 'transform 0.2s ease',
-        }}
-        onTouchStart={onTouchStart}
-        onTouchMove={onTouchMove}
-        onTouchEnd={onTouchEnd}
-        onClick={handleClick}
-      >
-        {children}
-      </div>
-    </div>
-  );
-}
-
-// ── Category Picker (same as AddExpenseModal) ─────────────────────────────────
-function CategoryPicker({
-  categories,
-  categoryId,
-  onSelect,
-  onClose,
-}: {
-  categories: Category[];
-  categoryId: string;
-  onSelect: (id: string) => void;
-  onClose: () => void;
-}) {
-  const [searchQuery, setSearchQuery] = useState('');
-  const [showCreateCategory, setShowCreateCategory] = useState(false);
-  const [newCatName, setNewCatName] = useState('');
-  const [newCatIcon, setNewCatIcon] = useState('📦');
-  const [newCatColor, setNewCatColor] = useState(CATEGORY_COLORS[Math.floor(Math.random() * CATEGORY_COLORS.length)]);
-  const [newCatParentId, setNewCatParentId] = useState<string | null>(null);
-  const [savingCat, setSavingCat] = useState(false);
-  const [localCats, setLocalCats] = useState<Category[]>(categories);
-  const searchRef = useRef<HTMLInputElement>(null);
-
-  const parentCats = localCats.filter(c => !c.parent_id);
-  const getSubcats = (pid: string) => localCats.filter(c => c.parent_id === pid);
-  const grouped = parentCats.map(p => ({ parent: p, subcats: getSubcats(p.id) }));
-
-  const q = searchQuery.trim().toLowerCase();
-  const searchResults: Array<{ cat: Category; parent?: Category }> = q
-    ? localCats.filter(c => c.name.toLowerCase().includes(q)).map(c => ({
-        cat: c,
-        parent: c.parent_id ? localCats.find(p => p.id === c.parent_id) : undefined,
-      }))
-    : [];
-
-  function handleSelect(id: string) {
-    onSelect(id);
-    onClose();
-  }
-
-  async function handleCreateCategory(user_id: string) {
-    if (!newCatName) return;
-    setSavingCat(true);
-    try {
-      const { data } = await supabase
-        .from('categories')
-        .insert({ user_id, name: newCatName, icon: newCatIcon, color: newCatColor, parent_id: newCatParentId })
-        .select().single();
-      if (data) {
-        invalidateCategories();
-        const catsMap = await getCategories(user_id);
-        setLocalCats(Array.from(catsMap.values()));
-        onSelect(data.id);
-        setShowCreateCategory(false);
-        onClose();
-      }
-    } catch (err) { console.error(err); }
-    finally { setSavingCat(false); }
-  }
-
-  // We need user_id for create — passed via closure from parent
-  return null; // placeholder, see usage below
-}
+import SwipeableRow from '@/components/SwipeableRow';
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function RecurringView({ user }: { user: User }) {
   const [items, setItems] = useState<RecurringExpense[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [categoriesMap, setCategoriesMap] = useState<Map<string, Category>>(new Map());
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -179,10 +47,11 @@ export default function RecurringView({ user }: { user: User }) {
   async function loadData() {
     setLoading(true);
     const [{ data: rec }, catsMap] = await Promise.all([
-      supabase.from('recurring_expenses').select('*, category:categories(*)').eq('user_id', user.id).eq('is_active', true).order('description'),
+      supabase.from('recurring_expenses').select('*').eq('user_id', user.id).eq('is_active', true).order('description'),
       getCategories(user.id),
     ]);
     setItems(rec || []);
+    setCategoriesMap(catsMap);
     setCategories(Array.from(catsMap.values()));
     setLoading(false);
   }
@@ -228,15 +97,11 @@ export default function RecurringView({ user }: { user: User }) {
       start_date: effectiveStart,
       end_date: endDate || null,
       is_active: true,
-      // Reset last_generated when editing so the function re-evaluates from start_date
       ...(editingId ? { last_generated: null } : {}),
     };
     try {
       if (editingId) {
-        // When editing, preserve past expenses' amounts — only update the recurring template
-        // Past expenses keep their original amount; only future-generated ones use the new amount
         await supabase.from('recurring_expenses').update(data).eq('id', editingId);
-        // Delete future (not-yet-occurred) auto-generated expenses so they get re-generated with new amount
         const today = new Date().toISOString().split('T')[0];
         await supabase
           .from('expenses')
@@ -247,7 +112,6 @@ export default function RecurringView({ user }: { user: User }) {
       } else {
         await supabase.from('recurring_expenses').insert(data);
       }
-      // Always trigger generation — this handles backfill if start_date is in the past
       await supabase.rpc('generate_recurring_expenses', { p_user_id: user.id });
       setShowForm(false);
       loadData();
@@ -255,14 +119,13 @@ export default function RecurringView({ user }: { user: User }) {
     finally { setSaving(false); }
   }
 
-  // Soft delete: deactivate only — never deletes the recurring row or its generated expenses
+  // Soft delete: deactivate only
   async function handleDelete(id: string) {
     const today = new Date().toISOString().split('T')[0];
     await supabase
       .from('recurring_expenses')
       .update({ is_active: false, end_date: today })
       .eq('id', id);
-    // Remove from active list visually; row stays in DB so expenses keep their recurring_id reference
     setItems(prev => prev.filter(i => i.id !== id));
   }
 
@@ -279,9 +142,6 @@ export default function RecurringView({ user }: { user: User }) {
       setAmount(prev => prev + key);
     }
   }
-
-  // Category picker helpers — use shared tree utils
-  // (buildTree and flattenTree imported at top of file)
 
   const parentCats = categories.filter(c => !c.parent_id);
   const getSubcats = (pid: string) => categories.filter(c => c.parent_id === pid);
@@ -318,6 +178,7 @@ export default function RecurringView({ user }: { user: User }) {
       if (data) {
         invalidateCategories();
         const catsMap = await getCategories(user.id);
+        setCategoriesMap(catsMap);
         setCategories(Array.from(catsMap.values()));
         setCategoryId(data.id);
         setShowCreateCategory(false);
@@ -373,41 +234,45 @@ export default function RecurringView({ user }: { user: User }) {
         </div>
       ) : (
         <div className="space-y-2">
-          {items.map((item) => (
-            <SwipeableRow
-              key={item.id}
-              onTap={() => openForm(item)}
-              onDelete={() => handleDelete(item.id)}
-            >
-              <div className="p-3.5 flex items-center gap-3">
-                <div
-                  className="w-10 h-10 rounded-xl flex items-center justify-center text-xl flex-shrink-0"
-                  style={{ backgroundColor: (item as any).category?.color || '#475569' }}
-                >
-                  {(item as any).category?.icon || '🔄'}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold truncate">{item.description}</p>
-                  <p className="text-xs text-dark-400">
-                    {freqLabels[item.frequency]}
-                    {item.frequency !== 'weekly' && ` · Día ${item.day_of_month}`}
-                    {(item as any).category && ` · ${(item as any).category.name}`}
-                  </p>
-                  {(item as any).start_date && (item as any).start_date < new Date().toISOString().split('T')[0] && (
-                    <p className="text-[10px] text-dark-500 mt-0.5">
-                      Desde {format(parseISO((item as any).start_date), "d MMM yyyy", { locale: es })}
+          {items.map((item) => {
+            const cat = item.category_id ? categoriesMap.get(item.category_id) : null;
+            return (
+              <SwipeableRow
+                key={item.id}
+                onTap={() => openForm(item)}
+                onDelete={() => handleDelete(item.id)}
+                className="rounded-xl"
+              >
+                <div className="p-3.5 flex items-center gap-3 bg-dark-800">
+                  <div
+                    className="w-10 h-10 rounded-xl flex items-center justify-center text-xl flex-shrink-0"
+                    style={{ backgroundColor: cat?.color || '#475569' }}
+                  >
+                    {cat?.icon || '🔄'}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold truncate">{item.description}</p>
+                    <p className="text-xs text-dark-400">
+                      {freqLabels[item.frequency]}
+                      {item.frequency !== 'weekly' && ` · Día ${item.day_of_month}`}
+                      {cat && ` · ${cat.name}`}
                     </p>
-                  )}
-                  {item.end_date && (
-                    <p className="text-[10px] text-dark-500 mt-0.5">
-                      Hasta {format(parseISO(item.end_date), "d MMM yyyy", { locale: es })}
-                    </p>
-                  )}
+                    {(item as any).start_date && (item as any).start_date < new Date().toISOString().split('T')[0] && (
+                      <p className="text-[10px] text-dark-500 mt-0.5">
+                        Desde {format(parseISO((item as any).start_date), "d MMM yyyy", { locale: es })}
+                      </p>
+                    )}
+                    {item.end_date && (
+                      <p className="text-[10px] text-dark-500 mt-0.5">
+                        Hasta {format(parseISO(item.end_date), "d MMM yyyy", { locale: es })}
+                      </p>
+                    )}
+                  </div>
+                  <span className="text-sm font-bold flex-shrink-0">{formatCurrency(Number(item.amount))}</span>
                 </div>
-                <span className="text-sm font-bold flex-shrink-0">{formatCurrency(Number(item.amount))}</span>
-              </div>
-            </SwipeableRow>
-          ))}
+              </SwipeableRow>
+            );
+          })}
         </div>
       )}
 
@@ -528,7 +393,7 @@ export default function RecurringView({ user }: { user: User }) {
             </div>
           </div>
 
-                    {/* Bottom: save + numpad */}
+          {/* Bottom: save + numpad */}
           <div className="flex-shrink-0">
             <div className="px-5 py-3">
               <button
@@ -559,7 +424,7 @@ export default function RecurringView({ user }: { user: User }) {
         </div>
       )}
 
-      {/* ── Category Picker — same as AddExpenseModal ── */}
+      {/* ── Category Picker ── */}
       {showForm && showCategoryPicker && !showCreateCategory && (() => {
         const pickerRoots = buildTree(categories);
         const allPickerEntries = flattenTree(pickerRoots);
