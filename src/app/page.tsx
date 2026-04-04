@@ -1,16 +1,19 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, lazy, Suspense } from 'react';
 import { supabase } from '@/lib/supabase';
 import { prefetchRates } from '@/lib/currency';
 import { setDefaultCurrency } from '@/lib/utils';
 import { getCategories, seedCategories } from '@/lib/categoryCache';
 import { User } from '@supabase/supabase-js';
-import AuthPage from '@/app/auth/AuthPage';
 import AppShell from '@/components/AppShell';
 import type { CurrencyCode } from '@/lib/currency';
 import { writeDashboardCache } from '@/lib/dashboardCache';
 import type { Category } from '@/types';
+
+// Lazy-load AuthPage — it's only shown when not logged in, which is rare.
+// Keeps ~7 lucide icons + auth UI out of the critical bundle.
+const AuthPage = lazy(() => import('@/app/auth/AuthPage'));
 
 interface BootData {
   user: User;
@@ -64,7 +67,6 @@ export default function Home() {
 
     async function bootWithSession(user: User) {
       if (booted) {
-        // App already visible from cache — run unified boot in background
         runUnifiedBoot(user).catch(console.error);
         return;
       }
@@ -75,10 +77,8 @@ export default function Home() {
       setUnauthenticated(false);
       setBootData({ user, currency: defaultCurr });
 
-      // Run unified boot — single RPC replaces settings + categories + dashboard data
       runUnifiedBoot(user).catch(console.error);
 
-      // Fire-and-forget background tasks
       prefetchRates().catch(console.error);
 
       if (shouldRunRecurring(user.id)) {
@@ -102,16 +102,13 @@ export default function Home() {
       });
 
       if (!error && boot) {
-        // 1. Currency
         const currency = (boot.currency || 'EUR') as CurrencyCode;
         setDefaultCurrency(currency);
         setBootData(prev => prev ? { ...prev, currency } : null);
 
-        // 2. Seed category cache from RPC result (avoids separate fetch)
         const cats: Category[] = boot.categories || [];
         seedCategories(user.id, cats);
 
-        // 3. Pre-populate dashboard cache so DashboardView has instant data
         const chartTotals: Record<string, number> = {};
         (boot.monthly_totals || []).forEach((row: { month: string; total: number }) => {
           chartTotals[row.month] = Number(row.total);
@@ -120,8 +117,7 @@ export default function Home() {
         cats.forEach(c => categoriesMap.set(c.id, c));
         writeDashboardCache(user.id, boot.recent_expenses || [], chartTotals, categoriesMap);
       } else {
-        // Fallback: original separate queries
-        const [, catsMap] = await Promise.all([
+        await Promise.all([
           supabase.from('user_settings').select('default_currency').eq('user_id', user.id).single()
             .then(({ data: settings }) => {
               if (settings?.default_currency) {
@@ -164,7 +160,18 @@ export default function Home() {
   }
 
   if (unauthenticated || !bootData) {
-    return <AuthPage />;
+    return (
+      <Suspense fallback={
+        <div className="min-h-screen flex items-center justify-center">
+          <div className="text-center">
+            <div className="text-4xl mb-3">💸</div>
+            <div className="text-lg font-semibold text-brand-400">Spendly</div>
+          </div>
+        </div>
+      }>
+        <AuthPage />
+      </Suspense>
+    );
   }
 
   return <AppShell user={bootData.user} initialCurrency={bootData.currency} />;
