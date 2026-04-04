@@ -1,13 +1,14 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, formatDate, getMonthRange, exportToCSV } from '@/lib/utils';
 import { Expense } from '@/types';
 import { Plus, Search, Download, ChevronLeft, ChevronRight, Trash2, Edit3 } from 'lucide-react';
-import AddExpenseModal from '@/components/AddExpenseModal';
 import type { CurrencyCode } from '@/lib/currency';
+
+const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
 
 export default function ExpensesView({ user, defaultCurrency = 'EUR' as CurrencyCode }: { user: User; defaultCurrency?: CurrencyCode }) {
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -175,15 +176,17 @@ export default function ExpensesView({ user, defaultCurrency = 'EUR' as Currency
         </div>
       )}
 
-      {/* Add/Edit Modal */}
+      {/* Add/Edit Modal — lazy loaded */}
       {showForm && (
-        <AddExpenseModal
-          user={user}
-          defaultCurrency={defaultCurrency}
-          onClose={() => { setShowForm(false); setEditingExpense(null); }}
-          onSaved={() => loadData()}
-          editingExpense={editingExpense}
-        />
+        <Suspense fallback={null}>
+          <AddExpenseModal
+            user={user}
+            defaultCurrency={defaultCurrency}
+            onClose={() => { setShowForm(false); setEditingExpense(null); }}
+            onSaved={() => loadData()}
+            editingExpense={editingExpense}
+          />
+        </Suspense>
       )}
     </div>
   );
