@@ -189,7 +189,6 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
     if (allCatIds.length === 0 || periods.length === 0) return;
     setHistoryLoading(true);
     try {
-      // Filter periods by selected year first
       const yearPeriods = periods.filter(p => parseISO(p.period_start).getFullYear() === year);
       if (yearPeriods.length === 0) {
         setHistorySummaries([]);
@@ -200,7 +199,6 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
       const oldest = yearPeriods[yearPeriods.length - 1]?.period_start;
       const newest = yearPeriods[0]?.period_end;
 
-      // Query only expenses for the selected year's period range
       const { data: allExp } = await supabase
         .from('expenses')
         .select('amount, date')
@@ -211,12 +209,11 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
 
       const expList = (allExp || []).map((e: any) => ({ amount: Number(e.amount), date: e.date as string }));
 
-      // Build summaries for ALL periods (needed for year navigation) but only query expenses for selected year
       const summaries: PeriodSummary[] = periods.map(p => {
         const pYear = parseISO(p.period_start).getFullYear();
         const spent = pYear === year
           ? expList.filter(e => e.date >= p.period_start && e.date <= p.period_end).reduce((s, e) => s + e.amount, 0)
-          : 0; // Will be loaded when user navigates to that year
+          : 0;
         const isCurrent = todayStr >= p.period_start && todayStr <= p.period_end;
         return { period: p, spent, isCurrent };
       });
@@ -234,7 +231,6 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
     loadHistorySummaries(historyYear);
   }
 
-  // Reload history when year changes
   function changeHistoryYear(newYear: number) {
     setHistoryYear(newYear);
     loadHistorySummaries(newYear);
@@ -497,10 +493,16 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
             </div>
           )}
 
+          {/* TOTAL */}
+          <div className="flex items-center justify-between px-4 py-3 border-b border-dark-800/60 mb-1">
+            <span className="text-xs text-dark-400 font-medium uppercase tracking-wider">Total gastado</span>
+            <span className="text-base font-bold text-red-400">-{formatCurrency(totalSpent)}</span>
+          </div>
+
           {/* CATEGORY BREAKDOWN */}
           {catSpending.length > 0 && (
             <div className="px-4 mb-5">
-              <p className="text-xs text-dark-500 font-medium uppercase tracking-wider mb-3">Por categoría</p>
+              <p className="text-xs text-dark-500 font-medium uppercase tracking-wider mb-3 pt-3">Por categoría</p>
               <div className="space-y-2">
                 {catSpending.map(cat => {
                   const catPct = periodAmount > 0 ? (cat.spent / periodAmount) * 100 : 0;
@@ -522,12 +524,6 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
               </div>
             </div>
           )}
-
-          {/* TOTAL */}
-          <div className="flex items-center justify-between px-4 py-3 border-t border-b border-dark-800/60 mb-1">
-            <span className="text-xs text-dark-400 font-medium uppercase tracking-wider">Total gastado</span>
-            <span className="text-base font-bold text-red-400">-{formatCurrency(totalSpent)}</span>
-          </div>
 
           {/* TRANSACTIONS */}
           {grouped.length === 0 ? (
