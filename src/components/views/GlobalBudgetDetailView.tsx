@@ -525,21 +525,21 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
             </div>
           </div>
 
+          {/* TOTAL */}
+          <div className="flex items-center justify-between px-4 py-3 border-b border-dark-800/60 mb-1">
+            <span className="text-xs text-dark-400 font-medium uppercase tracking-wider">Total gastado</span>
+            <span className="text-base font-bold text-red-400">-{formatCurrency(totalSpent)}</span>
+          </div>
+
           {/* CATEGORY BREAKDOWN (tree-based, collapsible) */}
           {catSpending.length > 0 && (
             <div className="mb-5">
-              <p className="px-4 text-xs text-dark-500 font-medium uppercase tracking-wider mb-3">Por categoría</p>
+              <p className="px-4 pt-3 text-xs text-dark-500 font-medium uppercase tracking-wider mb-3">Por categoría</p>
               <div className="space-y-0.5">
                 {catSpending.map(cat => renderCatRow(cat, 0, monthAmount))}
               </div>
             </div>
           )}
-
-          {/* TOTAL */}
-          <div className="flex items-center justify-between px-4 py-3 border-t border-b border-dark-800/60 mb-1">
-            <span className="text-xs text-dark-400 font-medium uppercase tracking-wider">Total gastado</span>
-            <span className="text-base font-bold text-red-400">-{formatCurrency(totalSpent)}</span>
-          </div>
 
           {/* TRANSACTIONS */}
           {grouped.length === 0 ? (
