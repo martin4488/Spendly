@@ -5,13 +5,14 @@ import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/utils';
 import { Category } from '@/types';
-import { ArrowLeft, ChevronLeft, ChevronRight, Edit3, X, Delete, History } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, ChevronDown, Edit3, X, Delete, History } from 'lucide-react';
 import {
   format, parseISO, startOfMonth, endOfMonth, addMonths,
   differenceInDays, isWithinInterval
 } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { getCategories } from '@/lib/categoryCache';
+import { CatNode, buildTree } from '@/lib/categoryTree';
 
 const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
 
@@ -41,6 +42,7 @@ interface CatSpend {
   color: string;
   spent: number;
   transactions: number;
+  children: CatSpend[];
 }
 
 interface MonthSummary {
@@ -48,6 +50,29 @@ interface MonthSummary {
   amount: number | null;
   spent: number;
   isCurrent: boolean;
+}
+
+// Collect all descendant ids including self
+function allIds(node: CatNode): string[] {
+  return [node.id, ...node.children.flatMap(allIds)];
+}
+
+// Build spending tree from CatNode tree
+function buildSpendTree(
+  node: CatNode,
+  spendMap: Record<string, number>,
+  txMap: Record<string, number>,
+): CatSpend {
+  const childSpends = node.children
+    .map(c => buildSpendTree(c, spendMap, txMap))
+    .filter(c => c.spent > 0);
+  const directSpent = spendMap[node.id] || 0;
+  const spent = directSpent + childSpends.reduce((s, c) => s + c.spent, 0);
+  const transactions = (txMap[node.id] || 0) + childSpends.reduce((s, c) => s + c.transactions, 0);
+  return {
+    id: node.id, name: node.name, icon: node.icon, color: node.color,
+    spent, transactions, children: childSpends.sort((a, b) => b.spent - a.spent),
+  };
 }
 
 export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }: Props) {
@@ -63,6 +88,9 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
   const [expenses, setExpenses] = useState<ExpenseRow[]>([]);
   const [catSpending, setCatSpending] = useState<CatSpend[]>([]);
   const [totalSpent, setTotalSpent] = useState(0);
+
+  // Expanded parents
+  const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set());
 
   // History
   const [showHistory, setShowHistory] = useState(false);
@@ -138,6 +166,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
       }));
       const total = exps.reduce((s, e) => s + e.amount, 0);
 
+      // Build spend maps
       const spendByCat: Record<string, number> = {};
       const txByCat: Record<string, number> = {};
       exps.forEach(e => {
@@ -146,9 +175,12 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
           txByCat[e.category_id] = (txByCat[e.category_id] || 0) + 1;
         }
       });
-      const catSpends: CatSpend[] = categories
-        .filter(c => (spendByCat[c.id] || 0) > 0)
-        .map(c => ({ id: c.id, name: c.name, icon: c.icon, color: c.color, spent: spendByCat[c.id] || 0, transactions: txByCat[c.id] || 0 }))
+
+      // Build tree-based spending
+      const tree = buildTree(categories);
+      const catSpends: CatSpend[] = tree
+        .map(node => buildSpendTree(node, spendByCat, txByCat))
+        .filter(c => c.spent > 0)
         .sort((a, b) => b.spent - a.spent);
 
       monthCache.current.set(month, { expenses: exps, total, catSpending: catSpends });
@@ -167,7 +199,6 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
   function getMonthAmount(month: string): number | null {
     const exact = periods.find(p => p.month === month);
     if (exact) return exact.amount;
-    // Fallback: most recent period before this month
     const prior = periods.filter(p => p.month < month).sort((a, b) => b.month.localeCompare(a.month));
     return prior.length > 0 ? prior[0].amount : null;
   }
@@ -189,7 +220,6 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
 
       const expList = (expData || []).map((e: any) => ({ amount: Number(e.amount), date: e.date as string }));
 
-      // Generate all 12 months for the year (or up to current month if current year)
       const months: string[] = [];
       const maxMonth = year === now.getFullYear() ? nowMonth : `${year}-12`;
       for (let m = 1; m <= 12; m++) {
@@ -227,8 +257,17 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
   function navigateMonth(dir: -1 | 1) {
     const d = addMonths(new Date(`${currentMonth}-01`), dir);
     const next = format(d, 'yyyy-MM');
-    if (next > nowMonth) return; // Don't go to future
+    if (next > nowMonth) return;
     setCurrentMonth(next);
+  }
+
+  function toggleExpand(catId: string) {
+    setExpandedCats(prev => {
+      const next = new Set(prev);
+      if (next.has(catId)) next.delete(catId);
+      else next.add(catId);
+      return next;
+    });
   }
 
   function onTouchStart(e: React.TouchEvent) { swipeStartX.current = e.touches[0].clientX; }
@@ -322,7 +361,6 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
       const last = fmt(sorted[sorted.length - 1].month);
       accumMonths = first === last ? first : `${first} - ${last}`;
     }
-    // Figure out available years from periods + current year
     const yearSet = new Set<number>();
     yearSet.add(now.getFullYear());
     periods.forEach(p => yearSet.add(parseInt(p.month.substring(0, 4))));
@@ -331,6 +369,61 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
   }, [historySummaries, periods]);
 
   const { mStart, mEnd, isCurrentPeriod, pct, budgetColor, budgetTextColor, left, daysLeft, perDay, periodLabel, hasNext } = periodDerived;
+
+  // ── Category row renderer (recursive) ──
+  function renderCatRow(cat: CatSpend, depth: number, budgetAmt: number) {
+    const hasChildren = cat.children.length > 0;
+    const isExpanded = expandedCats.has(cat.id);
+    const catPct = budgetAmt > 0 ? (cat.spent / budgetAmt) * 100 : 0;
+
+    return (
+      <div key={cat.id}>
+        <div
+          className={`flex items-center gap-3 ${hasChildren ? 'cursor-pointer active:bg-dark-700/40' : ''}`}
+          style={{ paddingLeft: `${16 + depth * 20}px`, paddingRight: 16, paddingTop: 6, paddingBottom: 6 }}
+          onClick={hasChildren ? () => toggleExpand(cat.id) : undefined}
+        >
+          <div
+            className="rounded-xl flex items-center justify-center text-sm flex-shrink-0"
+            style={{
+              backgroundColor: cat.color,
+              width: depth === 0 ? 32 : 26,
+              height: depth === 0 ? 32 : 26,
+              fontSize: depth === 0 ? 14 : 12,
+            }}
+          >
+            {cat.icon}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex justify-between mb-0.5">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span className={`${depth === 0 ? 'text-xs font-medium' : 'text-[11px] text-dark-300'} truncate`}>{cat.name}</span>
+                {hasChildren && (
+                  <ChevronDown
+                    size={12}
+                    className={`text-dark-500 flex-shrink-0 transition-transform duration-200 ${isExpanded ? '' : '-rotate-90'}`}
+                  />
+                )}
+              </div>
+              <span className={`${depth === 0 ? 'text-xs' : 'text-[11px]'} text-dark-400 flex-shrink-0 ml-2`}>
+                {formatCurrency(cat.spent)}
+              </span>
+            </div>
+            {depth === 0 && (
+              <div className="w-full bg-dark-700 rounded-full h-1.5">
+                <div className="h-1.5 rounded-full" style={{ width: `${Math.min(catPct, 100)}%`, backgroundColor: cat.color }} />
+              </div>
+            )}
+          </div>
+        </div>
+        {hasChildren && isExpanded && (
+          <div>
+            {cat.children.map(child => renderCatRow(child, depth + 1, budgetAmt))}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-lg mx-auto pb-8 page-transition" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
@@ -377,14 +470,12 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
           <div className="w-7 h-7 border-2 border-brand-500/30 border-t-brand-500 rounded-full animate-spin" />
         </div>
       ) : monthAmount == null ? (
-        /* No budget configured for this month */
         <div className="text-center py-16 px-4">
           <p className="text-dark-400 mb-4">No hay presupuesto configurado para este mes</p>
           <button onClick={() => { setEditAmount(''); setShowEditForm(true); }}
             className="bg-brand-600 text-white font-bold px-8 py-3.5 rounded-2xl text-sm">
             Configurar presupuesto
           </button>
-          {/* Still show spending even without budget */}
           {totalSpent > 0 && (
             <div className="mt-8">
               <p className="text-dark-500 text-xs mb-2">Gasto del mes</p>
@@ -434,28 +525,12 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
             </div>
           </div>
 
-          {/* CATEGORY BREAKDOWN */}
+          {/* CATEGORY BREAKDOWN (tree-based, collapsible) */}
           {catSpending.length > 0 && (
-            <div className="px-4 mb-5">
-              <p className="text-xs text-dark-500 font-medium uppercase tracking-wider mb-3">Por categoría</p>
-              <div className="space-y-2">
-                {catSpending.map(cat => {
-                  const catPct = monthAmount > 0 ? (cat.spent / monthAmount) * 100 : 0;
-                  return (
-                    <div key={cat.id} className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-xl flex items-center justify-center text-sm flex-shrink-0" style={{ backgroundColor: cat.color }}>{cat.icon}</div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex justify-between mb-0.5">
-                          <span className="text-xs font-medium truncate">{cat.name}</span>
-                          <span className="text-xs text-dark-400 flex-shrink-0 ml-2">{formatCurrency(cat.spent)}</span>
-                        </div>
-                        <div className="w-full bg-dark-700 rounded-full h-1.5">
-                          <div className="h-1.5 rounded-full" style={{ width: `${Math.min(catPct, 100)}%`, backgroundColor: cat.color }} />
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
+            <div className="mb-5">
+              <p className="px-4 text-xs text-dark-500 font-medium uppercase tracking-wider mb-3">Por categoría</p>
+              <div className="space-y-0.5">
+                {catSpending.map(cat => renderCatRow(cat, 0, monthAmount))}
               </div>
             </div>
           )}
