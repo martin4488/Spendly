@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/utils';
@@ -41,41 +41,47 @@ function buildCatData(node: CatNode, spendMap: Record<string, number>): CatData 
 }
 
 export default function ReflectView({ user }: Props) {
-  // useMemo evita hydration mismatch entre SSR y cliente
-  const { currentYear, currentMonth } = useMemo(() => {
-    const now = new Date();
-    return {
-      currentYear: now.getFullYear(),
-      currentMonth: format(now, 'yyyy-MM'),
-    };
-  }, []);
-
-  const [year, setYear] = useState(currentYear);
+  // All date logic lives client-side only — avoids SSR/client hydration mismatch
+  const [year, setYear] = useState<number | null>(null);
+  const [currentMonth, setCurrentMonth] = useState<string>('');
   const [yearData, setYearData] = useState<Record<number, YearData>>({});
-  const [availableYears, setAvailableYears] = useState<number[]>([currentYear]);
+  const [availableYears, setAvailableYears] = useState<number[]>([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const yearDataRef = useRef<Record<number, YearData>>({});
 
-  useEffect(() => { init(); }, []);
+  useEffect(() => {
+    const now = new Date();
+    const cy = now.getFullYear();
+    const cm = format(now, 'yyyy-MM');
+    setYear(cy);
+    setCurrentMonth(cm);
+    init(cy, cm);
+  }, []);
 
-  async function init() {
+  // Keep ref in sync so loadYear always sees latest yearData without stale closure
+  useEffect(() => {
+    yearDataRef.current = yearData;
+  }, [yearData]);
+
+  async function init(cy: number, cm: string) {
     setLoading(true);
     try {
       const { data: first } = await supabase
         .from('expenses').select('date').eq('user_id', user.id)
         .order('date', { ascending: true }).limit(1);
-      const firstYear = first?.[0] ? new Date(first[0].date).getFullYear() : currentYear;
-      const years = Array.from({ length: currentYear - firstYear + 1 }, (_, i) => currentYear - i);
+      const firstYear = first?.[0] ? new Date(first[0].date).getFullYear() : cy;
+      const years = Array.from({ length: cy - firstYear + 1 }, (_, i) => cy - i);
       setAvailableYears(years);
-
-      await loadYear(currentYear, firstYear < currentYear ? currentYear - 1 : null);
+      await loadYear(cy, firstYear < cy ? cy - 1 : null, cm);
     } catch (err) { console.error(err); }
     finally { setLoading(false); }
   }
 
-  async function loadYear(yr: number, prevYr: number | null) {
-    if (yearData[yr]) return;
+  async function loadYear(yr: number, prevYr: number | null, cm?: string) {
+    if (yearDataRef.current[yr]) return;
 
+    const activeMonth = cm || currentMonth;
     const yearStart = format(startOfYear(new Date(yr, 0, 1)), 'yyyy-MM-dd');
     const yearEnd = format(endOfYear(new Date(yr, 0, 1)), 'yyyy-MM-dd');
 
@@ -109,8 +115,7 @@ export default function ReflectView({ user }: Props) {
       const { data: expData } = await supabase.from('expenses')
         .select('date, amount, category_id').eq('user_id', user.id)
         .gte('date', yearStart).lte('date', yearEnd).limit(10000);
-      const expenses = expData || [];
-      expenses.forEach((e: any) => {
+      (expData || []).forEach((e: any) => {
         const mo = e.date.slice(0, 7);
         monthMap[mo] = (monthMap[mo] || 0) + Number(e.amount);
         if (e.category_id) {
@@ -124,23 +129,22 @@ export default function ReflectView({ user }: Props) {
     const months: MonthData[] = [];
     for (let m = 0; m < 12; m++) {
       const mo = format(new Date(yr, m, 1), 'yyyy-MM');
-      if (mo > currentMonth) break;
+      if (mo > activeMonth) break;
       const label = format(new Date(yr, m, 1), 'MMM', { locale: es });
       const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-      months.push({ label: cap(label), amount: monthMap[mo] || 0, isCurrent: mo === currentMonth });
+      months.push({ label: cap(label), amount: monthMap[mo] || 0, isCurrent: mo === activeMonth });
     }
 
     const closedMonths = months.filter(m => !m.isCurrent);
     const numClosed = Math.max(closedMonths.length, 1);
 
-    // Build closed month keys
+    // Build spend map from closed months only
     const closedKeys = new Set<string>();
     for (let m = 0; m < 12; m++) {
       const mo = format(new Date(yr, m, 1), 'yyyy-MM');
-      if (mo >= format(new Date(yr, 0, 1), 'yyyy-MM') && mo < currentMonth) closedKeys.add(mo);
+      if (mo < activeMonth) closedKeys.add(mo);
     }
 
-    // Build spend map from closed months only
     const spendMap: Record<string, number> = {};
     Object.entries(catMonthMap).forEach(([catId, monthTotals]) => {
       Object.entries(monthTotals).forEach(([mo, total]) => {
@@ -158,7 +162,7 @@ export default function ReflectView({ user }: Props) {
       .filter(c => c.amount > 0)
       .sort((a, b) => b.amount - a.amount);
 
-    // Previous year — siempre dividir por 12 (año completo cerrado)
+    // Previous year — always divide by 12 (full closed year)
     let prevYearCats: Record<string, number> | null = null;
     let prevYearMonths: Record<string, number> | null = null;
 
@@ -181,14 +185,18 @@ export default function ReflectView({ user }: Props) {
         }
       });
 
-      // /12 porque el año anterior siempre está completo
+      // /12 — año anterior siempre está completo
       tree.forEach(node => {
         const total = sumNode(node, prevSpendMap);
         if (total > 0) prevYearCats![node.name] = total / 12;
       });
     }
 
-    setYearData(prev => ({ ...prev, [yr]: { months, cats: catData, prevYearCats, prevYearMonths } }));
+    setYearData(prev => {
+      const next = { ...prev, [yr]: { months, cats: catData, prevYearCats, prevYearMonths } };
+      yearDataRef.current = next;
+      return next;
+    });
   }
 
   async function handleYearChange(newYr: number) {
@@ -272,7 +280,8 @@ export default function ReflectView({ user }: Props) {
   }
 
   function renderCatRow(cat: CatData, depth: number): React.ReactNode {
-    const d = yearData[year];
+    const d = year ? yearData[year] : null;
+    if (!d) return null;
     const closed = d.months.filter(m => !m.isCurrent);
     const avg = closed.length > 0 ? closed.reduce((s, m) => s + m.amount, 0) / closed.length : 0;
     const maxCat = Math.max(...d.cats.map(c => c.amount), 1);
@@ -313,9 +322,9 @@ export default function ReflectView({ user }: Props) {
     );
   }
 
-  const d = yearData[year];
-  const minYear = Math.min(...availableYears);
-  const maxYear = Math.max(...availableYears);
+  const d = year ? yearData[year] : null;
+  const minYear = availableYears.length > 0 ? Math.min(...availableYears) : (year || 0);
+  const maxYear = availableYears.length > 0 ? Math.max(...availableYears) : (year || 0);
   const closed = d?.months.filter(m => !m.isCurrent) || [];
   const avg = closed.length > 0 ? closed.reduce((s, m) => s + m.amount, 0) / closed.length : 0;
   const maxAmt = d ? Math.max(...d.months.map(m => m.amount), 1) : 1;
@@ -329,14 +338,14 @@ export default function ReflectView({ user }: Props) {
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-xl font-bold">Reflect</h1>
         <div className="flex items-center gap-1">
-          <button onClick={() => year > minYear && handleYearChange(year - 1)}
-            disabled={year <= minYear}
+          <button onClick={() => year && year > minYear && handleYearChange(year - 1)}
+            disabled={!year || year <= minYear}
             className="bg-dark-800 border-none text-dark-300 px-3 py-1.5 rounded-lg text-sm disabled:opacity-20 active:bg-dark-700">
             <ChevronLeft size={16} />
           </button>
-          <span className="text-sm font-semibold text-white px-2 min-w-[40px] text-center">{year}</span>
-          <button onClick={() => year < maxYear && handleYearChange(year + 1)}
-            disabled={year >= maxYear}
+          <span className="text-sm font-semibold text-white px-2 min-w-[40px] text-center">{year ?? ''}</span>
+          <button onClick={() => year && year < maxYear && handleYearChange(year + 1)}
+            disabled={!year || year >= maxYear}
             className="bg-dark-800 border-none text-dark-300 px-3 py-1.5 rounded-lg text-sm disabled:opacity-20 active:bg-dark-700">
             <ChevronRight size={16} />
           </button>
@@ -408,7 +417,7 @@ export default function ReflectView({ user }: Props) {
           )}
 
           {/* Insights */}
-          {computeInsights(d, year).length > 0 && (
+          {year && computeInsights(d, year).length > 0 && (
             <div className="bg-dark-800 rounded-2xl p-4">
               <p className="text-[10px] text-dark-500 uppercase tracking-wider mb-3">Insights</p>
               <div className="flex flex-col gap-3">
