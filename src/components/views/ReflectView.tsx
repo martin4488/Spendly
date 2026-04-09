@@ -1,13 +1,13 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/utils';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { getCategories } from '@/lib/categoryCache';
 import { CatNode, buildTree } from '@/lib/categoryTree';
-import { format, startOfYear, endOfYear, endOfMonth, subYears } from 'date-fns';
+import { format, startOfYear, endOfYear } from 'date-fns';
 import { es } from 'date-fns/locale';
 
 interface Props { user: User; }
@@ -41,9 +41,14 @@ function buildCatData(node: CatNode, spendMap: Record<string, number>): CatData 
 }
 
 export default function ReflectView({ user }: Props) {
-  const now = new Date();
-  const currentYear = now.getFullYear();
-  const currentMonth = format(now, 'yyyy-MM');
+  // useMemo evita hydration mismatch entre SSR y cliente
+  const { currentYear, currentMonth } = useMemo(() => {
+    const now = new Date();
+    return {
+      currentYear: now.getFullYear(),
+      currentMonth: format(now, 'yyyy-MM'),
+    };
+  }, []);
 
   const [year, setYear] = useState(currentYear);
   const [yearData, setYearData] = useState<Record<number, YearData>>({});
@@ -74,7 +79,6 @@ export default function ReflectView({ user }: Props) {
     const yearStart = format(startOfYear(new Date(yr, 0, 1)), 'yyyy-MM-dd');
     const yearEnd = format(endOfYear(new Date(yr, 0, 1)), 'yyyy-MM-dd');
 
-    // Try RPC first for server-side aggregation (no row limit issues)
     const [{ data: rpcResult, error: rpcError }, catsMap, prevRpc] = await Promise.all([
       supabase.rpc('get_reflect_data', { p_user_id: user.id, p_year_start: yearStart, p_year_end: yearEnd }),
       getCategories(user.id),
@@ -91,10 +95,9 @@ export default function ReflectView({ user }: Props) {
     const tree = buildTree(cats);
 
     let monthMap: Record<string, number> = {};
-    let catMonthMap: Record<string, Record<string, number>> = {}; // cat_id -> { month -> total }
+    let catMonthMap: Record<string, Record<string, number>> = {};
 
     if (!rpcError && rpcResult) {
-      // Use RPC result
       (rpcResult.monthly_totals || []).forEach((row: any) => {
         monthMap[row.month] = Number(row.total);
       });
@@ -103,7 +106,6 @@ export default function ReflectView({ user }: Props) {
         catMonthMap[row.category_id][row.month] = Number(row.total);
       });
     } else {
-      // Fallback: client-side with high limit
       const { data: expData } = await supabase.from('expenses')
         .select('date, amount, category_id').eq('user_id', user.id)
         .gte('date', yearStart).lte('date', yearEnd).limit(10000);
@@ -156,16 +158,15 @@ export default function ReflectView({ user }: Props) {
       .filter(c => c.amount > 0)
       .sort((a, b) => b.amount - a.amount);
 
-    // Previous year
+    // Previous year — siempre dividir por 12 (año completo cerrado)
     let prevYearCats: Record<string, number> | null = null;
     let prevYearMonths: Record<string, number> | null = null;
 
-    const prevRpcData = prevRpc?.data;
+    const prevRpcData = (prevRpc as any)?.data;
     if (prevRpcData) {
       prevYearMonths = {};
       prevYearCats = {};
 
-      // Build prev monthly map by label
       (prevRpcData.monthly_totals || []).forEach((row: any) => {
         const mo = parseInt(row.month.slice(5, 7)) - 1;
         const label = format(new Date((prevYr || yr - 1), mo, 1), 'MMM', { locale: es });
@@ -173,13 +174,14 @@ export default function ReflectView({ user }: Props) {
         prevYearMonths![cap(label)] = (prevYearMonths![cap(label)] || 0) + Number(row.total);
       });
 
-      // Build prev cat spend map
       const prevSpendMap: Record<string, number> = {};
       (prevRpcData.category_totals || []).forEach((row: any) => {
         if (row.category_id) {
           prevSpendMap[row.category_id] = (prevSpendMap[row.category_id] || 0) + Number(row.total);
         }
       });
+
+      // /12 porque el año anterior siempre está completo
       tree.forEach(node => {
         const total = sumNode(node, prevSpendMap);
         if (total > 0) prevYearCats![node.name] = total / 12;
@@ -269,14 +271,13 @@ export default function ReflectView({ user }: Props) {
     });
   }
 
-  function renderCatRow(cat: CatData, depth: number, parentAmount?: number): React.ReactNode {
+  function renderCatRow(cat: CatData, depth: number): React.ReactNode {
     const d = yearData[year];
     const closed = d.months.filter(m => !m.isCurrent);
     const avg = closed.length > 0 ? closed.reduce((s, m) => s + m.amount, 0) / closed.length : 0;
     const maxCat = Math.max(...d.cats.map(c => c.amount), 1);
     const barPct = (cat.amount / maxCat) * 100;
     const totalPct = avg > 0 ? Math.round((cat.amount / avg) * 100) : 0;
-    const subPct = parentAmount && parentAmount > 0 ? Math.round((cat.amount / parentAmount) * 100) : 0;
     const activeChildren = cat.children.filter(c => c.amount > 0).sort((a, b) => b.amount - a.amount);
     const hasChildren = activeChildren.length > 0;
     const isExp = expanded.has(cat.id);
@@ -307,7 +308,7 @@ export default function ReflectView({ user }: Props) {
             </button>
           ) : <div className="w-5" />}
         </div>
-        {hasChildren && isExp && activeChildren.map(c => renderCatRow(c, depth + 1, cat.amount))}
+        {hasChildren && isExp && activeChildren.map(c => renderCatRow(c, depth + 1))}
       </div>
     );
   }
