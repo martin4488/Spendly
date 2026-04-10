@@ -21,8 +21,10 @@ interface Insight { color: string; text: string; isHeader?: boolean; }
 interface YearData {
   months: MonthData[];
   cats: CatData[];
+  /** Promedio mensual por categoría (keyed por ID) del año anterior — total/12 */
   prevYearCats: Record<string, number> | null;
-  prevYearMonths: Record<string, number> | null;
+  /** Promedio mensual total del año anterior — sum(monthly)/12 */
+  prevYearAvg: number | null;
 }
 
 function sumNode(node: CatNode, spendMap: Record<string, number>): number {
@@ -41,7 +43,6 @@ function buildCatData(node: CatNode, spendMap: Record<string, number>): CatData 
 }
 
 export default function ReflectView({ user }: Props) {
-  // All date logic lives client-side only — avoids SSR/client hydration mismatch
   const [year, setYear] = useState<number | null>(null);
   const [currentMonth, setCurrentMonth] = useState<string>('');
   const [yearData, setYearData] = useState<Record<number, YearData>>({});
@@ -59,7 +60,6 @@ export default function ReflectView({ user }: Props) {
     init(cy, cm);
   }, []);
 
-  // Keep ref in sync so loadYear always sees latest yearData without stale closure
   useEffect(() => {
     yearDataRef.current = yearData;
   }, [yearData]);
@@ -164,20 +164,20 @@ export default function ReflectView({ user }: Props) {
 
     // Previous year — always divide by 12 (full closed year)
     let prevYearCats: Record<string, number> | null = null;
-    let prevYearMonths: Record<string, number> | null = null;
+    let prevYearAvg: number | null = null;
 
     const prevRpcData = (prevRpc as any)?.data;
     if (prevRpcData) {
-      prevYearMonths = {};
       prevYearCats = {};
 
+      // Promedio mensual del año anterior = sum de todos los meses / 12
+      let prevTotal = 0;
       (prevRpcData.monthly_totals || []).forEach((row: any) => {
-        const mo = parseInt(row.month.slice(5, 7)) - 1;
-        const label = format(new Date((prevYr || yr - 1), mo, 1), 'MMM', { locale: es });
-        const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-        prevYearMonths![cap(label)] = (prevYearMonths![cap(label)] || 0) + Number(row.total);
+        prevTotal += Number(row.total);
       });
+      prevYearAvg = prevTotal / 12;
 
+      // Por categoría: total / 12, keyed por category ID (no name)
       const prevSpendMap: Record<string, number> = {};
       (prevRpcData.category_totals || []).forEach((row: any) => {
         if (row.category_id) {
@@ -185,15 +185,14 @@ export default function ReflectView({ user }: Props) {
         }
       });
 
-      // /12 — año anterior siempre está completo
       tree.forEach(node => {
         const total = sumNode(node, prevSpendMap);
-        if (total > 0) prevYearCats![node.name] = total / 12;
+        if (total > 0) prevYearCats![node.id] = total / 12;
       });
     }
 
     setYearData(prev => {
-      const next = { ...prev, [yr]: { months, cats: catData, prevYearCats, prevYearMonths } };
+      const next = { ...prev, [yr]: { months, cats: catData, prevYearCats, prevYearAvg } };
       yearDataRef.current = next;
       return next;
     });
@@ -211,6 +210,7 @@ export default function ReflectView({ user }: Props) {
     const avg = closed.length > 0 ? closed.reduce((s, m) => s + m.amount, 0) / closed.length : 0;
     const insights: Insight[] = [];
 
+    // Insight 1: tendencia 3 meses consecutivos
     if (closed.length >= 3) {
       const last3 = closed.slice(-3);
       if (last3[0].amount > last3[1].amount && last3[1].amount > last3[2].amount) {
@@ -220,31 +220,24 @@ export default function ReflectView({ user }: Props) {
       }
     }
 
-    if (d.prevYearMonths && closed.length > 0) {
-      const matchedPrev = closed
-        .map(m => d.prevYearMonths![m.label])
-        .filter(v => v !== undefined);
-      if (matchedPrev.length > 0) {
-        const prevAvg = matchedPrev.reduce((s, v) => s + v, 0) / matchedPrev.length;
-        const diff = avg - prevAvg;
-        const pct = Math.round(Math.abs(diff / prevAvg) * 100);
-        if (pct >= 3) {
-          const up = diff > 0;
-          const firstLabel = closed[0].label;
-          const lastLabel = closed[closed.length - 1].label;
-          const period = firstLabel === lastLabel ? firstLabel : `${firstLabel}–${lastLabel}`;
-          insights.push({
-            color: up ? '#ef4444' : '#22c55e',
-            text: `Gastás <b style="color:#e2e8f0">${formatCurrency(Math.round(Math.abs(diff)))} ${up ? 'más' : 'menos'} por mes</b> que en el mismo período de ${yr - 1} (${period}).`
-          });
-        }
+    // Insight 2: promedio meses cerrados del año actual vs promedio mensual año anterior (total/12)
+    if (d.prevYearAvg != null && d.prevYearAvg > 0 && closed.length > 0) {
+      const diff = avg - d.prevYearAvg;
+      const pct = Math.round(Math.abs(diff / d.prevYearAvg) * 100);
+      if (pct >= 3) {
+        const up = diff > 0;
+        insights.push({
+          color: up ? '#ef4444' : '#22c55e',
+          text: `Gastás <b style="color:#e2e8f0">${formatCurrency(Math.round(Math.abs(diff)))} ${up ? 'más' : 'menos'} por mes</b> que el promedio de ${yr - 1} (<b style="color:${up ? '#ef4444' : '#22c55e'}">${up ? '+' : ''}${pct}%</b>).`
+        });
       }
     }
 
+    // Insight 3: categorías con ≥10% de cambio vs promedio mensual año anterior
     if (d.prevYearCats) {
       const changes = d.cats
         .map(cat => {
-          const prev = d.prevYearCats![cat.name];
+          const prev = d.prevYearCats![cat.id];
           if (!prev || prev === 0) return null;
           const diff = ((cat.amount - prev) / prev) * 100;
           if (Math.abs(diff) < 10) return null;
@@ -257,7 +250,7 @@ export default function ReflectView({ user }: Props) {
       const sortedChanges = [...increased, ...decreased];
 
       if (sortedChanges.length > 0) {
-        insights.push({ color: '#475569', text: `<span style="color:#64748b;font-weight:500;">Vs ${yr - 1} — categorías con ≥10% de cambio</span>`, isHeader: true });
+        insights.push({ color: '#475569', text: `<span style="color:#64748b;font-weight:500;">Vs promedio mensual ${yr - 1} — categorías con ≥10% de cambio</span>`, isHeader: true });
         sortedChanges.forEach(c => {
           const up = c.diff > 0;
           insights.push({
