@@ -78,6 +78,59 @@ export default function ReflectView({ user }: Props) {
     finally { setLoading(false); }
   }
 
+  /**
+   * Load prev year monthly + category totals.
+   * Tries RPC first, falls back to direct expenses query.
+   * Returns { monthMap, catMap } with raw totals (not averaged).
+   */
+  async function loadPrevYearData(prevYr: number): Promise<{
+    monthMap: Record<string, number>;
+    catMap: Record<string, number>;
+  }> {
+    const pStart = format(startOfYear(new Date(prevYr, 0, 1)), 'yyyy-MM-dd');
+    const pEnd = format(endOfYear(new Date(prevYr, 0, 1)), 'yyyy-MM-dd');
+
+    // Try RPC first
+    const { data: rpcData, error: rpcError } = await supabase.rpc('get_reflect_data', {
+      p_user_id: user.id, p_year_start: pStart, p_year_end: pEnd,
+    });
+
+    const monthMap: Record<string, number> = {};
+    const catMap: Record<string, number> = {};
+
+    const hasRpcData = !rpcError && rpcData
+      && Array.isArray(rpcData.monthly_totals) && rpcData.monthly_totals.length > 0;
+
+    if (hasRpcData) {
+      console.log('[Reflect] prev year RPC OK, months:', rpcData.monthly_totals.length);
+      rpcData.monthly_totals.forEach((row: any) => {
+        monthMap[row.month] = Number(row.total);
+      });
+      (rpcData.category_totals || []).forEach((row: any) => {
+        if (row.category_id) {
+          catMap[row.category_id] = (catMap[row.category_id] || 0) + Number(row.total);
+        }
+      });
+    } else {
+      // Fallback: query expenses directly
+      console.log('[Reflect] prev year RPC empty/error, falling back to expenses query. rpcError:', rpcError, 'rpcData:', rpcData);
+      const { data: expData } = await supabase.from('expenses')
+        .select('date, amount, category_id').eq('user_id', user.id)
+        .gte('date', pStart).lte('date', pEnd).limit(10000);
+
+      (expData || []).forEach((e: any) => {
+        const mo = e.date.slice(0, 7);
+        monthMap[mo] = (monthMap[mo] || 0) + Number(e.amount);
+        if (e.category_id) {
+          catMap[e.category_id] = (catMap[e.category_id] || 0) + Number(e.amount);
+        }
+      });
+      console.log('[Reflect] fallback loaded', Object.keys(monthMap).length, 'months,', Object.keys(catMap).length, 'categories');
+    }
+
+    return { monthMap, catMap };
+  }
+
   async function loadYear(yr: number, prevYr: number | null, cm?: string) {
     if (yearDataRef.current[yr]) return;
 
@@ -85,16 +138,9 @@ export default function ReflectView({ user }: Props) {
     const yearStart = format(startOfYear(new Date(yr, 0, 1)), 'yyyy-MM-dd');
     const yearEnd = format(endOfYear(new Date(yr, 0, 1)), 'yyyy-MM-dd');
 
-    const [{ data: rpcResult, error: rpcError }, catsMap, prevRpc] = await Promise.all([
+    const [{ data: rpcResult, error: rpcError }, catsMap] = await Promise.all([
       supabase.rpc('get_reflect_data', { p_user_id: user.id, p_year_start: yearStart, p_year_end: yearEnd }),
       getCategories(user.id),
-      prevYr
-        ? supabase.rpc('get_reflect_data', {
-            p_user_id: user.id,
-            p_year_start: format(startOfYear(new Date(prevYr, 0, 1)), 'yyyy-MM-dd'),
-            p_year_end: format(endOfYear(new Date(prevYr, 0, 1)), 'yyyy-MM-dd'),
-          })
-        : Promise.resolve({ data: null, error: null }),
     ]);
 
     const cats = Array.from(catsMap.values());
@@ -162,33 +208,29 @@ export default function ReflectView({ user }: Props) {
       .filter(c => c.amount > 0)
       .sort((a, b) => b.amount - a.amount);
 
-    // Previous year — always divide by 12 (full closed year)
+    // Previous year — load separately with fallback, always divide by 12
     let prevYearCats: Record<string, number> | null = null;
     let prevYearAvg: number | null = null;
 
-    const prevRpcData = (prevRpc as any)?.data;
-    if (prevRpcData) {
-      prevYearCats = {};
+    if (prevYr != null) {
+      const prev = await loadPrevYearData(prevYr);
 
-      // Promedio mensual del año anterior = sum de todos los meses / 12
+      // Promedio mensual = sum de todos los meses / 12
       let prevTotal = 0;
-      (prevRpcData.monthly_totals || []).forEach((row: any) => {
-        prevTotal += Number(row.total);
-      });
-      prevYearAvg = prevTotal / 12;
+      Object.values(prev.monthMap).forEach(v => { prevTotal += v; });
 
-      // Por categoría: total / 12, keyed por category ID (no name)
-      const prevSpendMap: Record<string, number> = {};
-      (prevRpcData.category_totals || []).forEach((row: any) => {
-        if (row.category_id) {
-          prevSpendMap[row.category_id] = (prevSpendMap[row.category_id] || 0) + Number(row.total);
-        }
-      });
+      if (prevTotal > 0) {
+        prevYearAvg = prevTotal / 12;
+        prevYearCats = {};
 
-      tree.forEach(node => {
-        const total = sumNode(node, prevSpendMap);
-        if (total > 0) prevYearCats![node.id] = total / 12;
-      });
+        // Por categoría: total / 12, keyed por root-category ID
+        tree.forEach(node => {
+          const total = sumNode(node, prev.catMap);
+          if (total > 0) prevYearCats![node.id] = total / 12;
+        });
+
+        console.log('[Reflect] prevYearAvg:', prevYearAvg, 'prevYearCats:', Object.keys(prevYearCats).length);
+      }
     }
 
     setYearData(prev => {
@@ -234,7 +276,7 @@ export default function ReflectView({ user }: Props) {
     }
 
     // Insight 3: categorías con ≥10% de cambio vs promedio mensual año anterior
-    if (d.prevYearCats) {
+    if (d.prevYearCats && Object.keys(d.prevYearCats).length > 0) {
       const changes = d.cats
         .map(cat => {
           const prev = d.prevYearCats![cat.id];
