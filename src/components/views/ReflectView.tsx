@@ -21,7 +21,7 @@ interface Insight { color: string; text: string; isHeader?: boolean; }
 interface YearData {
   months: MonthData[];
   cats: CatData[];
-  /** Promedio mensual por categoría (keyed por ID) del año anterior — total/12 */
+  /** Promedio mensual por categoría (padres + hijas) del año anterior — total/12 */
   prevYearCats: Record<string, number> | null;
   /** Promedio mensual total del año anterior — sum(monthly)/12 */
   prevYearAvg: number | null;
@@ -78,11 +78,6 @@ export default function ReflectView({ user }: Props) {
     finally { setLoading(false); }
   }
 
-  /**
-   * Load prev year monthly + category totals.
-   * Tries RPC first, falls back to direct expenses query.
-   * Returns { monthMap, catMap } with raw totals (not averaged).
-   */
   async function loadPrevYearData(prevYr: number): Promise<{
     monthMap: Record<string, number>;
     catMap: Record<string, number>;
@@ -90,7 +85,6 @@ export default function ReflectView({ user }: Props) {
     const pStart = format(startOfYear(new Date(prevYr, 0, 1)), 'yyyy-MM-dd');
     const pEnd = format(endOfYear(new Date(prevYr, 0, 1)), 'yyyy-MM-dd');
 
-    // Try RPC first
     const { data: rpcData, error: rpcError } = await supabase.rpc('get_reflect_data', {
       p_user_id: user.id, p_year_start: pStart, p_year_end: pEnd,
     });
@@ -102,7 +96,6 @@ export default function ReflectView({ user }: Props) {
       && Array.isArray(rpcData.monthly_totals) && rpcData.monthly_totals.length > 0;
 
     if (hasRpcData) {
-      console.log('[Reflect] prev year RPC OK, months:', rpcData.monthly_totals.length);
       rpcData.monthly_totals.forEach((row: any) => {
         monthMap[row.month] = Number(row.total);
       });
@@ -112,8 +105,6 @@ export default function ReflectView({ user }: Props) {
         }
       });
     } else {
-      // Fallback: query expenses directly
-      console.log('[Reflect] prev year RPC empty/error, falling back to expenses query. rpcError:', rpcError, 'rpcData:', rpcData);
       const { data: expData } = await supabase.from('expenses')
         .select('date, amount, category_id').eq('user_id', user.id)
         .gte('date', pStart).lte('date', pEnd).limit(10000);
@@ -125,7 +116,6 @@ export default function ReflectView({ user }: Props) {
           catMap[e.category_id] = (catMap[e.category_id] || 0) + Number(e.amount);
         }
       });
-      console.log('[Reflect] fallback loaded', Object.keys(monthMap).length, 'months,', Object.keys(catMap).length, 'categories');
     }
 
     return { monthMap, catMap };
@@ -215,7 +205,6 @@ export default function ReflectView({ user }: Props) {
     if (prevYr != null) {
       const prev = await loadPrevYearData(prevYr);
 
-      // Promedio mensual = sum de todos los meses / 12
       let prevTotal = 0;
       Object.values(prev.monthMap).forEach(v => { prevTotal += v; });
 
@@ -223,13 +212,16 @@ export default function ReflectView({ user }: Props) {
         prevYearAvg = prevTotal / 12;
         prevYearCats = {};
 
-        // Por categoría: total / 12, keyed por root-category ID
+        // Por cada categoría padre e hija: total / 12
         tree.forEach(node => {
-          const total = sumNode(node, prev.catMap);
-          if (total > 0) prevYearCats![node.id] = total / 12;
+          const parentTotal = sumNode(node, prev.catMap);
+          if (parentTotal > 0) prevYearCats![node.id] = parentTotal / 12;
+          // Hijas: cada subcategoría con su propio total / 12
+          node.children.forEach(child => {
+            const childTotal = sumNode(child, prev.catMap);
+            if (childTotal > 0) prevYearCats![child.id] = childTotal / 12;
+          });
         });
-
-        console.log('[Reflect] prevYearAvg:', prevYearAvg, 'prevYearCats:', Object.keys(prevYearCats).length);
       }
     }
 
@@ -275,7 +267,10 @@ export default function ReflectView({ user }: Props) {
       }
     }
 
-    // Insight 3: categorías con ≥10% de cambio vs promedio mensual año anterior
+    // Insight 3: categorías padre con ≥10% de cambio vs promedio mensual año anterior
+    // Build a map of parent insights to check redundancy for subcategories
+    const parentInsightMap: Record<string, { diff: number; direction: 'up' | 'down' }> = {};
+
     if (d.prevYearCats && Object.keys(d.prevYearCats).length > 0) {
       const changes = d.cats
         .map(cat => {
@@ -283,9 +278,9 @@ export default function ReflectView({ user }: Props) {
           if (!prev || prev === 0) return null;
           const diff = ((cat.amount - prev) / prev) * 100;
           if (Math.abs(diff) < 10) return null;
-          return { name: cat.name, icon: cat.icon, diff: Math.round(diff), prev, curr: cat.amount };
+          return { id: cat.id, name: cat.name, icon: cat.icon, diff: Math.round(diff), prev, curr: cat.amount };
         })
-        .filter(Boolean) as { name: string; icon: string; diff: number; prev: number; curr: number }[];
+        .filter(Boolean) as { id: string; name: string; icon: string; diff: number; prev: number; curr: number }[];
 
       const increased = changes.filter(c => c.diff > 0).sort((a, b) => b.diff - a.diff);
       const decreased = changes.filter(c => c.diff < 0).sort((a, b) => a.diff - b.diff);
@@ -295,9 +290,61 @@ export default function ReflectView({ user }: Props) {
         insights.push({ color: '#475569', text: `<span style="color:#64748b;font-weight:500;">Vs promedio mensual ${yr - 1} — categorías con ≥10% de cambio</span>`, isHeader: true });
         sortedChanges.forEach(c => {
           const up = c.diff > 0;
+          parentInsightMap[c.id] = { diff: c.diff, direction: up ? 'up' : 'down' };
           insights.push({
             color: up ? '#ef4444' : '#22c55e',
             text: `${c.icon} <b style="color:#e2e8f0">${c.name}</b> ${up ? 'subió' : 'bajó'} un <b style="color:${up ? '#ef4444' : '#22c55e'}">${up ? '+' : ''}${c.diff}%</b> — de ${formatCurrency(c.prev)} a ${formatCurrency(c.curr)}/mes.`,
+          });
+        });
+      }
+
+      // Insight 4: subcategorías con ≥15% de cambio, no redundantes con padre, monto ≥2% del gasto total
+      const subChanges: { parentIcon: string; parentColor: string; name: string; diff: number; prev: number; curr: number; parentId: string }[] = [];
+
+      d.cats.forEach(parent => {
+        parent.children.forEach(child => {
+          const prev = d.prevYearCats![child.id];
+          if (!prev || prev === 0) return;
+          const diff = ((child.amount - prev) / prev) * 100;
+          const roundedDiff = Math.round(diff);
+
+          // Filtro 1: ≥15% de cambio
+          if (Math.abs(roundedDiff) < 15) return;
+
+          // Filtro 2: monto mínimo ≥2% del gasto mensual total
+          if (avg > 0 && (child.amount / avg) < 0.02) return;
+
+          // Filtro 3: no redundante con el padre
+          // Redundante = padre tiene insight en la misma dirección y la diferencia de % es <10pp
+          const parentIns = parentInsightMap[parent.id];
+          if (parentIns) {
+            const sameDirection = (roundedDiff > 0 && parentIns.direction === 'up') || (roundedDiff < 0 && parentIns.direction === 'down');
+            if (sameDirection && Math.abs(Math.abs(roundedDiff) - Math.abs(parentIns.diff)) < 10) return;
+          }
+
+          subChanges.push({
+            parentIcon: parent.icon,
+            parentColor: parent.color,
+            name: child.name,
+            diff: roundedDiff,
+            prev,
+            curr: child.amount,
+            parentId: parent.id,
+          });
+        });
+      });
+
+      if (subChanges.length > 0) {
+        const subIncreased = subChanges.filter(c => c.diff > 0).sort((a, b) => b.diff - a.diff);
+        const subDecreased = subChanges.filter(c => c.diff < 0).sort((a, b) => a.diff - b.diff);
+        const sortedSub = [...subIncreased, ...subDecreased];
+
+        insights.push({ color: '#475569', text: `<span style="color:#64748b;font-weight:500;">Detalle por subcategoría</span>`, isHeader: true });
+        sortedSub.forEach(c => {
+          const up = c.diff > 0;
+          insights.push({
+            color: up ? '#ef4444' : '#22c55e',
+            text: `${c.parentIcon} <b style="color:#e2e8f0">${c.name}</b> ${up ? 'subió' : 'bajó'} un <b style="color:${up ? '#ef4444' : '#22c55e'}">${up ? '+' : ''}${c.diff}%</b> — de ${formatCurrency(c.prev)} a ${formatCurrency(c.curr)}/mes.`,
           });
         });
       }
