@@ -303,13 +303,11 @@ export default function ReflectView({ user }: Props) {
         changes.push({ id: catId, name: info.name, icon: info.icon, diff: -100, prev: prevAmt, curr: 0 });
       });
 
-      const increased = changes.filter(c => c.diff > 0).sort((a, b) => b.diff - a.diff);
-      const decreased = changes.filter(c => c.diff < 0).sort((a, b) => a.diff - b.diff);
-      const sortedChanges = [...increased, ...decreased];
+      changes.sort((a, b) => b.diff - a.diff);
 
-      if (sortedChanges.length > 0) {
+      if (changes.length > 0) {
         insights.push({ color: '#475569', text: `<span style="color:#64748b;font-weight:500;">Vs promedio mensual ${yr - 1} — categorías con ≥10% de cambio</span>`, isHeader: true });
-        sortedChanges.forEach(c => {
+        changes.forEach(c => {
           const up = c.diff > 0;
           insights.push({
             color: up ? '#ef4444' : '#22c55e',
@@ -361,12 +359,10 @@ export default function ReflectView({ user }: Props) {
         });
 
         if (subChanges.length > 0) {
-          const subIncreased = subChanges.filter(c => c.diff > 0).sort((a, b) => b.diff - a.diff);
-          const subDecreased = subChanges.filter(c => c.diff < 0).sort((a, b) => a.diff - b.diff);
-          const sortedSub = [...subIncreased, ...subDecreased];
+          subChanges.sort((a, b) => b.diff - a.diff);
 
           insights.push({ color: '#475569', text: `<span style="color:#64748b;font-weight:500;">Detalle por subcategoría</span>`, isHeader: true });
-          sortedSub.forEach(c => {
+          subChanges.forEach(c => {
             const up = c.diff > 0;
             insights.push({
               color: up ? '#ef4444' : '#22c55e',
