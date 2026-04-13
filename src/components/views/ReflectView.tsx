@@ -268,9 +268,6 @@ export default function ReflectView({ user }: Props) {
     }
 
     // Insight 3: categorías padre con ≥10% de cambio vs promedio mensual año anterior
-    // Build a map of parent insights to check redundancy for subcategories
-    const parentInsightMap: Record<string, { diff: number; direction: 'up' | 'down' }> = {};
-
     if (d.prevYearCats && Object.keys(d.prevYearCats).length > 0) {
       const changes = d.cats
         .map(cat => {
@@ -290,7 +287,6 @@ export default function ReflectView({ user }: Props) {
         insights.push({ color: '#475569', text: `<span style="color:#64748b;font-weight:500;">Vs promedio mensual ${yr - 1} — categorías con ≥10% de cambio</span>`, isHeader: true });
         sortedChanges.forEach(c => {
           const up = c.diff > 0;
-          parentInsightMap[c.id] = { diff: c.diff, direction: up ? 'up' : 'down' };
           insights.push({
             color: up ? '#ef4444' : '#22c55e',
             text: `${c.icon} <b style="color:#e2e8f0">${c.name}</b> ${up ? 'subió' : 'bajó'} un <b style="color:${up ? '#ef4444' : '#22c55e'}">${up ? '+' : ''}${c.diff}%</b> — de ${formatCurrency(c.prev)} a ${formatCurrency(c.curr)}/mes.`,
@@ -298,8 +294,8 @@ export default function ReflectView({ user }: Props) {
         });
       }
 
-      // Insight 4: subcategorías con ≥15% de cambio, no redundantes con padre, monto ≥2% del gasto total
-      const subChanges: { parentIcon: string; parentColor: string; name: string; diff: number; prev: number; curr: number; parentId: string }[] = [];
+      // Insight 4: subcategorías con ≥10% de cambio
+      const subChanges: { parentIcon: string; name: string; diff: number; prev: number; curr: number }[] = [];
 
       d.cats.forEach(parent => {
         parent.children.forEach(child => {
@@ -307,29 +303,14 @@ export default function ReflectView({ user }: Props) {
           if (!prev || prev === 0) return;
           const diff = ((child.amount - prev) / prev) * 100;
           const roundedDiff = Math.round(diff);
-
-          // Filtro 1: ≥15% de cambio
-          if (Math.abs(roundedDiff) < 15) return;
-
-          // Filtro 2: monto mínimo ≥2% del gasto mensual total
-          if (avg > 0 && (child.amount / avg) < 0.02) return;
-
-          // Filtro 3: no redundante con el padre
-          // Redundante = padre tiene insight en la misma dirección y la diferencia de % es <10pp
-          const parentIns = parentInsightMap[parent.id];
-          if (parentIns) {
-            const sameDirection = (roundedDiff > 0 && parentIns.direction === 'up') || (roundedDiff < 0 && parentIns.direction === 'down');
-            if (sameDirection && Math.abs(Math.abs(roundedDiff) - Math.abs(parentIns.diff)) < 10) return;
-          }
+          if (Math.abs(roundedDiff) < 10) return;
 
           subChanges.push({
             parentIcon: parent.icon,
-            parentColor: parent.color,
             name: child.name,
             diff: roundedDiff,
             prev,
             curr: child.amount,
-            parentId: parent.id,
           });
         });
       });
@@ -345,6 +326,71 @@ export default function ReflectView({ user }: Props) {
           insights.push({
             color: up ? '#ef4444' : '#22c55e',
             text: `${c.parentIcon} <b style="color:#e2e8f0">${c.name}</b> ${up ? 'subió' : 'bajó'} un <b style="color:${up ? '#ef4444' : '#22c55e'}">${up ? '+' : ''}${c.diff}%</b> — de ${formatCurrency(c.prev)} a ${formatCurrency(c.curr)}/mes.`,
+          });
+        });
+      }
+
+      // Insight 5: categorías nuevas o desaparecidas (padres e hijas)
+      // Umbral: ≥1% del gasto mensual promedio
+      const minRelevant = avg * 0.01;
+      const newCats: { icon: string; name: string; amount: number }[] = [];
+      const goneCats: { icon: string; name: string; amount: number }[] = [];
+
+      // Nuevas: no existía en prevYearCats y ahora tiene gasto relevante
+      d.cats.forEach(cat => {
+        const prev = d.prevYearCats![cat.id];
+        if (!prev && cat.amount >= minRelevant) {
+          newCats.push({ icon: cat.icon, name: cat.name, amount: cat.amount });
+        }
+        cat.children.forEach(child => {
+          const childPrev = d.prevYearCats![child.id];
+          if (!childPrev && child.amount >= minRelevant) {
+            newCats.push({ icon: cat.icon, name: child.name, amount: child.amount });
+          }
+        });
+      });
+
+      // Desaparecidas: existía en prevYearCats con monto relevante pero no hay gasto actual
+      const currentCatIds = new Set<string>();
+      d.cats.forEach(cat => {
+        if (cat.amount > 0) currentCatIds.add(cat.id);
+        cat.children.forEach(child => {
+          if (child.amount > 0) currentCatIds.add(child.id);
+        });
+      });
+
+      // Mapa de nombre+ícono para categorías que podrían haber desaparecido
+      const catInfoMap = new Map<string, { name: string; icon: string; parentIcon?: string }>();
+      d.cats.forEach(cat => {
+        catInfoMap.set(cat.id, { name: cat.name, icon: cat.icon });
+        cat.children.forEach(child => {
+          catInfoMap.set(child.id, { name: child.name, icon: cat.icon, parentIcon: cat.icon });
+        });
+      });
+
+      Object.entries(d.prevYearCats!).forEach(([catId, prevAmt]) => {
+        if (!currentCatIds.has(catId) && prevAmt >= minRelevant) {
+          const info = catInfoMap.get(catId);
+          if (info) {
+            goneCats.push({ icon: info.parentIcon || info.icon, name: info.name, amount: prevAmt });
+          }
+        }
+      });
+
+      if (newCats.length > 0 || goneCats.length > 0) {
+        insights.push({ color: '#475569', text: `<span style="color:#64748b;font-weight:500;">Gastos nuevos y desaparecidos vs ${yr - 1}</span>`, isHeader: true });
+
+        newCats.sort((a, b) => b.amount - a.amount).forEach(c => {
+          insights.push({
+            color: '#f59e0b',
+            text: `${c.icon} <b style="color:#e2e8f0">${c.name}</b> es un gasto nuevo — <b style="color:#f59e0b">${formatCurrency(Math.round(c.amount))}/mes</b>.`,
+          });
+        });
+
+        goneCats.sort((a, b) => b.amount - a.amount).forEach(c => {
+          insights.push({
+            color: '#64748b',
+            text: `${c.icon} <b style="color:#e2e8f0">${c.name}</b> desapareció — antes era <b style="color:#64748b">${formatCurrency(Math.round(c.amount))}/mes</b>.`,
           });
         });
       }
