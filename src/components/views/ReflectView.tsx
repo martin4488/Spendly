@@ -21,6 +21,8 @@ interface Insight { color: string; text: string; isHeader?: boolean; }
 interface YearData {
   months: MonthData[];
   cats: CatData[];
+  /** Árbol completo de categorías (para resolver nombres/íconos en insights) */
+  tree: CatNode[];
   /** Promedio mensual por categoría (padres + hijas) del año anterior — total/12 */
   prevYearCats: Record<string, number> | null;
   /** Promedio mensual total del año anterior — sum(monthly)/12 */
@@ -226,7 +228,7 @@ export default function ReflectView({ user }: Props) {
     }
 
     setYearData(prev => {
-      const next = { ...prev, [yr]: { months, cats: catData, prevYearCats, prevYearAvg } };
+      const next = { ...prev, [yr]: { months, cats: catData, tree, prevYearCats, prevYearAvg } };
       yearDataRef.current = next;
       return next;
     });
@@ -268,16 +270,38 @@ export default function ReflectView({ user }: Props) {
     }
 
     // Insight 3: categorías padre con ≥10% de cambio vs promedio mensual año anterior
+    // Incluye categorías que bajaron a 0 (-100%)
     if (d.prevYearCats && Object.keys(d.prevYearCats).length > 0) {
-      const changes = d.cats
-        .map(cat => {
-          const prev = d.prevYearCats![cat.id];
-          if (!prev || prev === 0) return null;
-          const diff = ((cat.amount - prev) / prev) * 100;
-          if (Math.abs(diff) < 10) return null;
-          return { id: cat.id, name: cat.name, icon: cat.icon, diff: Math.round(diff), prev, curr: cat.amount };
-        })
-        .filter(Boolean) as { id: string; name: string; icon: string; diff: number; prev: number; curr: number }[];
+      // Build a map of current cat amounts by ID (padres)
+      const currentParentMap: Record<string, { name: string; icon: string; amount: number }> = {};
+      d.cats.forEach(cat => {
+        currentParentMap[cat.id] = { name: cat.name, icon: cat.icon, amount: cat.amount };
+      });
+
+      // Build full info map from tree for categories that might have disappeared
+      const treeParentInfo: Record<string, { name: string; icon: string }> = {};
+      d.tree.forEach(node => {
+        treeParentInfo[node.id] = { name: node.name, icon: node.icon };
+      });
+
+      const changes: { id: string; name: string; icon: string; diff: number; prev: number; curr: number }[] = [];
+
+      // Categorías con gasto actual — comparar vs previo
+      d.cats.forEach(cat => {
+        const prev = d.prevYearCats![cat.id];
+        if (!prev || prev === 0) return;
+        const diff = ((cat.amount - prev) / prev) * 100;
+        if (Math.abs(diff) < 10) return;
+        changes.push({ id: cat.id, name: cat.name, icon: cat.icon, diff: Math.round(diff), prev, curr: cat.amount });
+      });
+
+      // Categorías que tenían gasto antes y ahora son 0 → -100%
+      Object.entries(d.prevYearCats).forEach(([catId, prevAmt]) => {
+        if (currentParentMap[catId]) return; // ya evaluada arriba
+        const info = treeParentInfo[catId];
+        if (!info) return; // solo padres en esta sección
+        changes.push({ id: catId, name: info.name, icon: info.icon, diff: -100, prev: prevAmt, curr: 0 });
+      });
 
       const increased = changes.filter(c => c.diff > 0).sort((a, b) => b.diff - a.diff);
       const decreased = changes.filter(c => c.diff < 0).sort((a, b) => a.diff - b.diff);
@@ -294,106 +318,91 @@ export default function ReflectView({ user }: Props) {
         });
       }
 
-      // Insight 4: subcategorías con ≥10% de cambio
-      const subChanges: { parentIcon: string; name: string; diff: number; prev: number; curr: number }[] = [];
+      // Insights 4 y 5 solo desde 2027
+      if (yr >= 2027) {
 
-      d.cats.forEach(parent => {
-        parent.children.forEach(child => {
-          const prev = d.prevYearCats![child.id];
-          if (!prev || prev === 0) return;
-          const diff = ((child.amount - prev) / prev) * 100;
-          const roundedDiff = Math.round(diff);
-          if (Math.abs(roundedDiff) < 10) return;
+        // Insight 4: subcategorías con ≥10% de cambio (incluye -100%)
+        const subChanges: { parentIcon: string; name: string; diff: number; prev: number; curr: number }[] = [];
 
-          subChanges.push({
-            parentIcon: parent.icon,
-            name: child.name,
-            diff: roundedDiff,
-            prev,
-            curr: child.amount,
+        // Build current sub amounts map
+        const currentSubMap: Record<string, { parentIcon: string; name: string; amount: number }> = {};
+        d.cats.forEach(parent => {
+          parent.children.forEach(child => {
+            currentSubMap[child.id] = { parentIcon: parent.icon, name: child.name, amount: child.amount };
           });
         });
-      });
 
-      if (subChanges.length > 0) {
-        const subIncreased = subChanges.filter(c => c.diff > 0).sort((a, b) => b.diff - a.diff);
-        const subDecreased = subChanges.filter(c => c.diff < 0).sort((a, b) => a.diff - b.diff);
-        const sortedSub = [...subIncreased, ...subDecreased];
-
-        insights.push({ color: '#475569', text: `<span style="color:#64748b;font-weight:500;">Detalle por subcategoría</span>`, isHeader: true });
-        sortedSub.forEach(c => {
-          const up = c.diff > 0;
-          insights.push({
-            color: up ? '#ef4444' : '#22c55e',
-            text: `${c.parentIcon} <b style="color:#e2e8f0">${c.name}</b> ${up ? 'subió' : 'bajó'} un <b style="color:${up ? '#ef4444' : '#22c55e'}">${up ? '+' : ''}${c.diff}%</b> — de ${formatCurrency(c.prev)} a ${formatCurrency(c.curr)}/mes.`,
+        // Build full sub info from tree
+        const treeSubInfo: Record<string, { parentIcon: string; name: string }> = {};
+        d.tree.forEach(node => {
+          node.children.forEach(child => {
+            treeSubInfo[child.id] = { parentIcon: node.icon, name: child.name };
           });
         });
-      }
 
-      // Insight 5: categorías nuevas o desaparecidas (padres e hijas)
-      // Umbral: ≥1% del gasto mensual promedio
-      const minRelevant = avg * 0.01;
-      const newCats: { icon: string; name: string; amount: number }[] = [];
-      const goneCats: { icon: string; name: string; amount: number }[] = [];
+        // Subs con gasto actual
+        d.cats.forEach(parent => {
+          parent.children.forEach(child => {
+            const prev = d.prevYearCats![child.id];
+            if (!prev || prev === 0) return;
+            const diff = ((child.amount - prev) / prev) * 100;
+            const roundedDiff = Math.round(diff);
+            if (Math.abs(roundedDiff) < 10) return;
+            subChanges.push({ parentIcon: parent.icon, name: child.name, diff: roundedDiff, prev, curr: child.amount });
+          });
+        });
 
-      // Nuevas: no existía en prevYearCats y ahora tiene gasto relevante
-      d.cats.forEach(cat => {
-        const prev = d.prevYearCats![cat.id];
-        if (!prev && cat.amount >= minRelevant) {
-          newCats.push({ icon: cat.icon, name: cat.name, amount: cat.amount });
+        // Subs que bajaron a 0
+        Object.entries(d.prevYearCats).forEach(([catId, prevAmt]) => {
+          if (currentSubMap[catId]) return; // ya evaluada
+          const info = treeSubInfo[catId];
+          if (!info) return; // solo subcategorías
+          subChanges.push({ parentIcon: info.parentIcon, name: info.name, diff: -100, prev: prevAmt, curr: 0 });
+        });
+
+        if (subChanges.length > 0) {
+          const subIncreased = subChanges.filter(c => c.diff > 0).sort((a, b) => b.diff - a.diff);
+          const subDecreased = subChanges.filter(c => c.diff < 0).sort((a, b) => a.diff - b.diff);
+          const sortedSub = [...subIncreased, ...subDecreased];
+
+          insights.push({ color: '#475569', text: `<span style="color:#64748b;font-weight:500;">Detalle por subcategoría</span>`, isHeader: true });
+          sortedSub.forEach(c => {
+            const up = c.diff > 0;
+            insights.push({
+              color: up ? '#ef4444' : '#22c55e',
+              text: `${c.parentIcon} <b style="color:#e2e8f0">${c.name}</b> ${up ? 'subió' : 'bajó'} un <b style="color:${up ? '#ef4444' : '#22c55e'}">${up ? '+' : ''}${c.diff}%</b> — de ${formatCurrency(c.prev)} a ${formatCurrency(c.curr)}/mes.`,
+            });
+          });
         }
-        cat.children.forEach(child => {
-          const childPrev = d.prevYearCats![child.id];
-          if (!childPrev && child.amount >= minRelevant) {
-            newCats.push({ icon: cat.icon, name: child.name, amount: child.amount });
+
+        // Insight 5: gastos nuevos (padres e hijas) — solo ≥1% del gasto mensual
+        const minRelevant = avg * 0.01;
+        const newCats: { icon: string; name: string; amount: number }[] = [];
+
+        d.cats.forEach(cat => {
+          const prev = d.prevYearCats![cat.id];
+          if (!prev && cat.amount >= minRelevant) {
+            newCats.push({ icon: cat.icon, name: cat.name, amount: cat.amount });
           }
+          cat.children.forEach(child => {
+            const childPrev = d.prevYearCats![child.id];
+            if (!childPrev && child.amount >= minRelevant) {
+              newCats.push({ icon: cat.icon, name: child.name, amount: child.amount });
+            }
+          });
         });
-      });
 
-      // Desaparecidas: existía en prevYearCats con monto relevante pero no hay gasto actual
-      const currentCatIds = new Set<string>();
-      d.cats.forEach(cat => {
-        if (cat.amount > 0) currentCatIds.add(cat.id);
-        cat.children.forEach(child => {
-          if (child.amount > 0) currentCatIds.add(child.id);
-        });
-      });
-
-      // Mapa de nombre+ícono para categorías que podrían haber desaparecido
-      const catInfoMap = new Map<string, { name: string; icon: string; parentIcon?: string }>();
-      d.cats.forEach(cat => {
-        catInfoMap.set(cat.id, { name: cat.name, icon: cat.icon });
-        cat.children.forEach(child => {
-          catInfoMap.set(child.id, { name: child.name, icon: cat.icon, parentIcon: cat.icon });
-        });
-      });
-
-      Object.entries(d.prevYearCats!).forEach(([catId, prevAmt]) => {
-        if (!currentCatIds.has(catId) && prevAmt >= minRelevant) {
-          const info = catInfoMap.get(catId);
-          if (info) {
-            goneCats.push({ icon: info.parentIcon || info.icon, name: info.name, amount: prevAmt });
-          }
+        if (newCats.length > 0) {
+          insights.push({ color: '#475569', text: `<span style="color:#64748b;font-weight:500;">Gastos nuevos vs ${yr - 1}</span>`, isHeader: true });
+          newCats.sort((a, b) => b.amount - a.amount).forEach(c => {
+            insights.push({
+              color: '#f59e0b',
+              text: `${c.icon} <b style="color:#e2e8f0">${c.name}</b> es un gasto nuevo — <b style="color:#f59e0b">${formatCurrency(Math.round(c.amount))}/mes</b>.`,
+            });
+          });
         }
-      });
 
-      if (newCats.length > 0 || goneCats.length > 0) {
-        insights.push({ color: '#475569', text: `<span style="color:#64748b;font-weight:500;">Gastos nuevos y desaparecidos vs ${yr - 1}</span>`, isHeader: true });
-
-        newCats.sort((a, b) => b.amount - a.amount).forEach(c => {
-          insights.push({
-            color: '#f59e0b',
-            text: `${c.icon} <b style="color:#e2e8f0">${c.name}</b> es un gasto nuevo — <b style="color:#f59e0b">${formatCurrency(Math.round(c.amount))}/mes</b>.`,
-          });
-        });
-
-        goneCats.sort((a, b) => b.amount - a.amount).forEach(c => {
-          insights.push({
-            color: '#64748b',
-            text: `${c.icon} <b style="color:#e2e8f0">${c.name}</b> desapareció — antes era <b style="color:#64748b">${formatCurrency(Math.round(c.amount))}/mes</b>.`,
-          });
-        });
-      }
+      } // end yr >= 2027
     }
 
     return insights;
