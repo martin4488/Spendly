@@ -13,6 +13,7 @@ import {
 import { es } from 'date-fns/locale';
 import { ArrowLeft, ChevronDown, ChevronRight, Trash2 } from 'lucide-react';
 import { getCategories } from '@/lib/categoryCache';
+import Amount from '@/components/ui/Amount';
 import { CatNode, buildTree } from '@/lib/categoryTree';
 import SwipeableRow from '@/components/SwipeableRow';
 import type { Category } from '@/types';
@@ -300,7 +301,7 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
               <p className={`font-semibold ${depth === 0 ? 'text-[12px]' : 'text-[11px] text-dark-200'}`}>{cat.name}</p>
               <p className="text-[10px] text-dark-500">{cat.transactions} {cat.transactions === 1 ? 'transacción' : 'transacciones'}</p>
             </button>
-            <span className={`font-bold text-red-400 flex-shrink-0 ${depth === 0 ? 'text-[12px]' : 'text-[11px]'}`}>-{formatCurrency(cat.spent)}</span>
+            <Amount value={cat.spent} sign="-" size="sm" color="text-red-400" weight="bold" className={`flex-shrink-0 ${depth === 0 ? 'text-[12px]' : 'text-[11px]'}`} />
             {hasChildren && (
               <button onClick={() => setExpanded(prev => { const n = new Set(prev); n.has(cat.id) ? n.delete(cat.id) : n.add(cat.id); return n; })} className="p-0.5 text-dark-500 ml-0.5">
                 {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
@@ -343,7 +344,7 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
           <div className="px-2 mb-2"><DonutChart cats={catSpending} total={totalSpent} /></div>
           <div className="flex items-center justify-between px-4 py-3 mb-1 border-t border-b border-dark-800/60">
             <span className="text-xs text-dark-400 font-medium uppercase tracking-wider">Total gastado</span>
-            <span className="text-base font-bold text-red-400">-{formatCurrency(totalSpent)}</span>
+            <Amount value={totalSpent} sign="-" size="md" color="text-red-400" weight="bold" />
           </div>
           <div className="px-3">{renderCatList(catSpending)}</div>
         </>
@@ -505,7 +506,7 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
           <div className="px-3 mb-1"><BarChart data={barData} color={drillDown.color} mode={viewMode} /></div>
           <div className="flex items-center justify-between px-4 py-3 border-t border-b border-dark-800/60 mb-1">
             <span className="text-xs text-dark-400 font-medium uppercase tracking-wider">Total en el período</span>
-            <span className="text-base font-bold text-red-400">{periodTotal > 0 ? `-${formatCurrency(periodTotal)}` : formatCurrency(0)}</span>
+            <Amount value={periodTotal} sign={periodTotal > 0 ? '-' : ''} size="md" color="text-red-400" weight="bold" />
           </div>
           {grouped.length === 0 ? (
             <div className="text-center py-10"><p className="text-dark-500 text-sm">Sin transacciones en este período</p></div>
@@ -516,7 +517,7 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
                 <div key={group.date}>
                   <div className="flex items-center justify-between px-4 py-1.5 bg-dark-800/60">
                     <span className="text-[10px] font-semibold text-dark-500 uppercase tracking-wider capitalize">{group.label}</span>
-                    <span className="text-[10px] font-semibold text-dark-500">-{formatCurrency(group.total)}</span>
+                    <Amount value={group.total} sign="-" size="sm" weight="semibold" color="text-dark-500" className="text-[10px]" />
                   </div>
                   {group.expenses.map(exp => {
                     const cat = resolveCat(exp.category_id);
@@ -533,7 +534,7 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
                               <p className="text-[10px] text-dark-500 truncate">{exp.description}</p>
                             )}
                           </div>
-                          <span className="text-[12px] font-bold text-red-400 flex-shrink-0">-{formatCurrency(exp.amount)}</span>
+                          <Amount value={exp.amount} sign="-" size="sm" color="text-red-400" weight="bold" className="flex-shrink-0" />
                         </div>
                       </SwipeableRow>
                     );
