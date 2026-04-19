@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase';
 import { formatCurrency, getBudgetPeriodRange } from '@/lib/utils';
 import { Budget, Category } from '@/types';
 import { Plus, X, ChevronRight, Delete, ArrowLeft, Search, Check } from 'lucide-react';
+import Amount from '@/components/ui/Amount';
 import {
   format, addMonths, addYears, startOfMonth, endOfMonth,
   startOfYear, endOfYear, parseISO, isBefore, isAfter
@@ -462,14 +463,14 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
                   <div className="flex items-baseline justify-between mb-2.5">
                     <div className="flex items-baseline gap-1.5">
                       {isOver ? (
-                        <><span className="text-xl font-extrabold text-red-400">{formatCurrency(spent - monthlyBudget)}</span>
+                        <><Amount value={spent - monthlyBudget} size="lg" color="text-red-400" weight="extrabold" />
                         <span className="text-xs text-red-400/70">excedido</span></>
                       ) : (
-                        <><span className={`text-xl font-extrabold ${textColor}`}>{formatCurrency(left)}</span>
+                        <><Amount value={left} size="lg" color={textColor} weight="extrabold" />
                         <span className="text-xs text-dark-500">disponible</span></>
                       )}
                     </div>
-                    <span className="text-xs text-dark-500">de {formatCurrency(monthlyBudget)}</span>
+                    <span className="text-xs text-dark-500">de <Amount value={monthlyBudget} size="sm" color="text-dark-500" weight="medium" /></span>
                   </div>
                   <div className="w-full rounded-full h-1.5 mb-2 overflow-hidden relative" style={{ background: '#1e3a5f' }}>
                     {!isOver && <div className="absolute right-0 top-0 h-full rounded-full transition-all duration-500"
@@ -492,7 +493,7 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
               ) : (
                 <div className="flex items-center justify-between">
                   <div>
-                    <span className="text-xl font-extrabold text-dark-200">{formatCurrency(spent)}</span>
+                    <Amount value={spent} size="lg" color="text-dark-200" weight="extrabold" />
                     <span className="text-xs text-dark-500 ml-2">gastado este mes</span>
                   </div>
                   <span className="text-xs text-brand-400 font-medium">Configurar →</span>
@@ -544,17 +545,17 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
                   <div className="flex items-baseline gap-1.5">
                     {pct >= 100 ? (
                       <>
-                        <span className="text-lg font-extrabold text-red-400">-{formatCurrency(Math.abs(left - budget.amount + left))}</span>
+                        <Amount value={Math.abs(left - budget.amount + left)} sign="-" size="lg" color="text-red-400" weight="extrabold" />
                         <span className="text-xs text-red-400/70">excedido</span>
                       </>
                     ) : (
                       <>
-                        <span className={`text-lg font-extrabold ${pct >= 80 ? 'text-amber-400' : 'text-brand-400'}`}>{formatCurrency(left)}</span>
+                        <Amount value={left} size="lg" color={pct >= 80 ? 'text-amber-400' : 'text-brand-400'} weight="extrabold" />
                         <span className="text-xs text-dark-500">disponible</span>
                       </>
                     )}
                   </div>
-                  <span className="text-xs text-dark-500">de {formatCurrency(budget.amount)}</span>
+                  <span className="text-xs text-dark-500">de <Amount value={budget.amount} size="sm" color="text-dark-500" weight="medium" /></span>
                 </div>
                 <div className="w-full bg-dark-700 rounded-full h-1.5 mb-2 overflow-hidden relative">
                   {pct < 100 && (
