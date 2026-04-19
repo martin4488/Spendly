@@ -2,10 +2,9 @@
 
 import { useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Eye, EyeOff, Mail, Lock, ArrowRight, UserPlus, LogIn } from 'lucide-react';
 
 export default function AuthPage() {
-  const [isLogin, setIsLogin] = useState(true);
+  const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -20,7 +19,7 @@ export default function AuthPage() {
     setSuccess('');
 
     try {
-      if (isLogin) {
+      if (mode === 'login') {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
       } else {
@@ -41,107 +40,111 @@ export default function AuthPage() {
     }
   };
 
+  const isLogin = mode === 'login';
+
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center px-6 page-transition">
-      {/* Logo */}
-      <div className="text-center mb-10">
-        <div className="text-6xl mb-3">💸</div>
-        <h1 className="text-3xl font-bold tracking-tight">Spendly</h1>
-        <p className="text-dark-400 mt-2 text-sm">Controlá tus gastos, dominá tu plata</p>
+    <main className="min-h-dvh flex flex-col px-7 pt-20 pb-10 page-transition">
+      {/* Wordmark */}
+      <div>
+        <div className="inline-flex items-baseline gap-1">
+          <span className="text-[34px] font-extrabold tracking-[-0.03em]">spendly</span>
+          <span className="w-2 h-2 rounded-full bg-brand-500 ml-1 -translate-y-[2px] inline-block" />
+        </div>
+        <p className="text-dark-400 text-[15px] mt-3 leading-snug max-w-[260px]">
+          Controlá tus gastos.<br/>Dominá tu plata.
+        </p>
       </div>
 
-      {/* Card */}
-      <div className="w-full max-w-sm">
-        {/* Toggle */}
-        <div className="flex bg-dark-800 rounded-xl p-1 mb-6">
-          <button
-            onClick={() => { setIsLogin(true); setError(''); setSuccess(''); }}
-            className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ${
-              isLogin ? 'bg-brand-600 text-white shadow-lg' : 'text-dark-400'
-            }`}
-          >
-            <LogIn size={16} /> Entrar
-          </button>
-          <button
-            onClick={() => { setIsLogin(false); setError(''); setSuccess(''); }}
-            className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ${
-              !isLogin ? 'bg-brand-600 text-white shadow-lg' : 'text-dark-400'
-            }`}
-          >
-            <UserPlus size={16} /> Crear cuenta
-          </button>
+      <div className="flex-1" />
+
+      {/* Form */}
+      <form className="space-y-7" onSubmit={handleSubmit}>
+        <div>
+          <label className="block font-mono text-[11px] font-semibold tracking-wider uppercase text-dark-500 mb-2">
+            Email
+          </label>
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="tu@email.com"
+            required
+            autoComplete="email"
+            className="w-full bg-transparent border-b border-white/10 focus:border-brand-500 outline-none pb-2.5 text-base placeholder:text-dark-500 transition-colors"
+          />
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Email */}
-          <div className="relative">
-            <Mail size={18} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-dark-400" />
-            <input
-              type="email"
-              placeholder="tu@email.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3.5 pl-11 pr-4 text-sm placeholder:text-dark-500 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 transition-colors"
-            />
-          </div>
-
-          {/* Password */}
-          <div className="relative">
-            <Lock size={18} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-dark-400" />
+        <div>
+          <label className="block font-mono text-[11px] font-semibold tracking-wider uppercase text-dark-500 mb-2">
+            Contraseña
+          </label>
+          <div className="flex items-center border-b border-white/10 focus-within:border-brand-500 transition-colors">
             <input
               type={showPassword ? 'text' : 'password'}
-              placeholder="Contraseña"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
               required
               minLength={6}
-              className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3.5 pl-11 pr-11 text-sm placeholder:text-dark-500 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 transition-colors"
+              autoComplete={isLogin ? 'current-password' : 'new-password'}
+              className="flex-1 bg-transparent outline-none pb-2.5 text-base tracking-[0.3em] placeholder:tracking-normal placeholder:text-dark-500"
             />
             <button
               type="button"
               onClick={() => setShowPassword(!showPassword)}
-              className="absolute right-3.5 top-1/2 -translate-y-1/2 text-dark-400"
+              className="text-[13px] text-dark-400 pb-2.5 px-1"
             >
-              {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              {showPassword ? 'ocultar' : 'mostrar'}
             </button>
           </div>
+        </div>
 
-          {/* Error / Success */}
-          {error && (
-            <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-sm rounded-xl px-4 py-3">
-              {error}
-            </div>
-          )}
-          {success && (
-            <div className="bg-brand-500/10 border border-brand-500/20 text-brand-400 text-sm rounded-xl px-4 py-3">
-              {success}
-            </div>
-          )}
+        {/* Error / Success */}
+        {error && (
+          <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-sm rounded-xl px-4 py-3">
+            {error}
+          </div>
+        )}
+        {success && (
+          <div className="bg-brand-500/10 border border-brand-500/20 text-brand-400 text-sm rounded-xl px-4 py-3">
+            {success}
+          </div>
+        )}
 
-          {/* Submit */}
+        {/* Submit */}
+        <button
+          type="submit"
+          disabled={loading}
+          className="w-full bg-brand-500 text-[#08140c] font-bold text-[15px] py-4 rounded-2xl flex items-center justify-center gap-2.5 active:scale-[0.98] transition-transform disabled:opacity-50"
+        >
+          {loading ? (
+            <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+          ) : (
+            <>
+              {isLogin ? 'Entrar' : 'Crear cuenta'}
+              <span className="font-mono">→</span>
+            </>
+          )}
+        </button>
+
+        {/* Toggle mode */}
+        <div className="text-center text-[13px] text-dark-400">
+          {isLogin ? '¿Primera vez? ' : '¿Ya tenés cuenta? '}
           <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-brand-600 hover:bg-brand-500 disabled:bg-dark-600 text-white font-semibold py-3.5 rounded-xl transition-all flex items-center justify-center gap-2 text-sm"
+            type="button"
+            onClick={() => { setMode(isLogin ? 'signup' : 'login'); setError(''); setSuccess(''); }}
+            className="text-dark-200 font-semibold border-b border-dark-400 pb-px hover:border-dark-200 transition-colors"
           >
-            {loading ? (
-              <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-            ) : (
-              <>
-                {isLogin ? 'Entrar' : 'Crear cuenta'}
-                <ArrowRight size={16} />
-              </>
-            )}
+            {isLogin ? 'Crear cuenta' : 'Entrar'}
           </button>
-        </form>
+        </div>
 
         {!isLogin && (
-          <p className="text-dark-500 text-xs text-center mt-4">
+          <p className="text-dark-500 text-xs text-center">
             La contraseña debe tener al menos 6 caracteres
           </p>
         )}
-      </div>
-    </div>
+      </form>
+    </main>
   );
 }
