@@ -145,7 +145,7 @@ const ExpenseRow = memo(function ExpenseRow({
             <p className="text-[10px] text-dark-500 mt-0.5 leading-tight truncate">{expense.description}</p>
           )}
         </div>
-        <Amount value={-Number(expense.amount)} currency={defaultCurrency} sign="-" size="sm" color="text-red-400" weight="bold" className="flex-shrink-0" />
+        <Amount value={Number(expense.amount)} currency={defaultCurrency} size="sm" color="text-red-400" weight="bold" className="flex-shrink-0" />
       </div>
     </SwipeableRow>
   );
@@ -427,7 +427,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
             <Search size={17} />
           </button>
           <div className="leading-none">
-            <Amount value={accumulatedTotal} currency={defaultCurrency} sign="-" size="xl" weight="extrabold" />
+            <Amount value={accumulatedTotal} currency={defaultCurrency} size="xl" weight="extrabold" />
           </div>
           <p className="text-dark-400 text-[11px] mt-0.5 capitalize">
             {headerSubtitle}
@@ -504,7 +504,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
             <div key={group.date}>
               <div className="flex items-center justify-between px-3 py-1 bg-dark-800/60">
                 <span className="text-[10px] font-semibold text-dark-500 uppercase tracking-wider capitalize">{group.label}</span>
-                <Amount value={group.total} currency={defaultCurrency} sign="-" size="sm" weight="semibold" color="text-dark-500" className="text-[10px]" />
+                <Amount value={group.total} currency={defaultCurrency} size="sm" weight="semibold" color="text-dark-500" className="text-[10px]" />
               </div>
 
               {group.expenses.map((expense) => (
