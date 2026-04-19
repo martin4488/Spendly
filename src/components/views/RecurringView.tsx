@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
-import { formatCurrency, CATEGORY_ICONS, CATEGORY_COLORS } from '@/lib/utils';
+import { CATEGORY_ICONS, CATEGORY_COLORS } from '@/lib/utils';
 import { Category, RecurringExpense } from '@/types';
 import { CatNode, FlatEntry, buildTree, flattenTree } from '@/lib/categoryTree';
 import { getCategories, invalidateCategories } from '@/lib/categoryCache';
@@ -11,6 +11,7 @@ import { Plus, X, CalendarOff, Delete, Search, Settings, ArrowLeft, Check } from
 import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 import SwipeableRow from '@/components/SwipeableRow';
+import Amount from '@/components/ui/Amount';
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function RecurringView({ user }: { user: User }) {
@@ -215,7 +216,7 @@ export default function RecurringView({ user }: { user: User }) {
       {/* Summary */}
       <div className="bg-dark-800 rounded-xl p-4 mb-5">
         <p className="text-dark-400 text-xs">Total mensual estimado</p>
-        <p className="text-2xl font-bold mt-1">{formatCurrency(totalMonthly)}</p>
+        <Amount value={totalMonthly} size="lg" weight="bold" />
         <p className="text-dark-500 text-xs mt-1">{items.length} gastos activos</p>
       </div>
 
@@ -268,7 +269,7 @@ export default function RecurringView({ user }: { user: User }) {
                       </p>
                     )}
                   </div>
-                  <span className="text-sm font-bold flex-shrink-0">{formatCurrency(Number(item.amount))}</span>
+                  <Amount value={Number(item.amount)} size="sm" weight="bold" className="flex-shrink-0" />
                 </div>
               </SwipeableRow>
             );
