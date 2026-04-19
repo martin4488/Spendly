@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
-import { formatCurrency, getMonthRange, CATEGORY_ICONS, CATEGORY_COLORS } from '@/lib/utils';
+import { getMonthRange, CATEGORY_ICONS, CATEGORY_COLORS } from '@/lib/utils';
 import { Category } from '@/types';
 import { Plus, Trash2, X, FolderPlus, GripVertical, ArrowLeft } from 'lucide-react';
 import SwipeableRow from '@/components/SwipeableRow';
