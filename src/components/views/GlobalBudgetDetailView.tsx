@@ -13,6 +13,7 @@ import {
 import { es } from 'date-fns/locale';
 import { getCategories } from '@/lib/categoryCache';
 import { CatNode, buildTree } from '@/lib/categoryTree';
+import Amount from '@/components/ui/Amount';
 
 const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
 
@@ -405,9 +406,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
                   />
                 )}
               </div>
-              <span className={`${depth === 0 ? 'text-xs' : 'text-[11px]'} text-dark-400 flex-shrink-0 ml-2`}>
-                {formatCurrency(cat.spent)}
-              </span>
+              <Amount value={cat.spent} currency={defaultCurrency} size="sm" color="text-dark-400" weight="medium" className={`${depth === 0 ? 'text-xs' : 'text-[11px]'} flex-shrink-0 ml-2`} />
             </div>
             {depth === 0 && (
               <div className="w-full bg-dark-700 rounded-full h-1.5">
@@ -479,7 +478,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
           {totalSpent > 0 && (
             <div className="mt-8">
               <p className="text-dark-500 text-xs mb-2">Gasto del mes</p>
-              <p className="text-2xl font-extrabold text-red-400">-{formatCurrency(totalSpent)}</p>
+              <Amount value={totalSpent} currency={defaultCurrency} sign="-" size="lg" color="text-red-400" weight="extrabold" />
             </div>
           )}
         </div>
@@ -489,13 +488,13 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
           <div className="px-4 mb-4 text-center">
             {pct >= 100 ? (
               <>
-                <p className="text-4xl font-extrabold text-red-400">{formatCurrency(totalSpent - monthAmount)}</p>
-                <p className="text-red-400/70 text-sm mt-0.5">excedido de {formatCurrency(monthAmount)}</p>
+                <Amount value={totalSpent - monthAmount} currency={defaultCurrency} size="xl" color="text-red-400" weight="extrabold" />
+                <p className="text-red-400/70 text-sm mt-0.5">excedido de <Amount value={monthAmount} currency={defaultCurrency} size="sm" color="text-red-400/70" weight="medium" /></p>
               </>
             ) : (
               <>
-                <p className={`text-4xl font-extrabold ${budgetTextColor}`}>{formatCurrency(left)}</p>
-                <p className="text-dark-500 text-sm mt-0.5">{isCurrentPeriod ? 'disponible' : 'sin usar'} de {formatCurrency(monthAmount)}</p>
+                <Amount value={left} currency={defaultCurrency} size="xl" color={budgetTextColor} weight="extrabold" />
+                <p className="text-dark-500 text-sm mt-0.5">{isCurrentPeriod ? 'disponible' : 'sin usar'} de <Amount value={monthAmount} currency={defaultCurrency} size="sm" color="text-dark-500" weight="medium" /></p>
               </>
             )}
           </div>
@@ -506,7 +505,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
               <p className="text-sm text-dark-200 text-center">
                 {pct >= 100 ? '¡Ya superaste el presupuesto!'
                   : daysLeft > 0
-                    ? <>Podés gastar <span className={`font-bold ${budgetTextColor}`}>{formatCurrency(perDay)}</span>/día durante {daysLeft} días más.</>
+                    ? <>Podés gastar <Amount value={perDay} currency={defaultCurrency} size="sm" color={budgetTextColor} weight="bold" />/día durante {daysLeft} días más.</>
                     : 'Último día del mes.'}
               </p>
             </div>
@@ -528,7 +527,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
           {/* TOTAL */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-dark-800/60 mb-1">
             <span className="text-xs text-dark-400 font-medium uppercase tracking-wider">Total gastado</span>
-            <span className="text-base font-bold text-red-400">-{formatCurrency(totalSpent)}</span>
+            <Amount value={totalSpent} currency={defaultCurrency} sign="-" size="md" color="text-red-400" weight="bold" />
           </div>
 
           {/* CATEGORY BREAKDOWN (tree-based, collapsible) */}
@@ -551,7 +550,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
                 <div key={group.date}>
                   <div className="flex items-center justify-between px-4 py-1.5 bg-dark-800/60">
                     <span className="text-[10px] font-semibold text-dark-500 uppercase tracking-wider capitalize">{group.label}</span>
-                    <span className="text-[10px] font-semibold text-dark-500">-{formatCurrency(group.total)}</span>
+                    <Amount value={group.total} currency={defaultCurrency} sign="-" size="sm" weight="semibold" color="text-dark-500" className="text-[10px]" />
                   </div>
                   {group.expenses.map(exp => {
                     const cat = categories.find(c => c.id === exp.category_id);
@@ -566,7 +565,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
                             <p className="text-[10px] text-dark-500 truncate">{exp.description}</p>
                           )}
                         </div>
-                        <span className="text-[12px] font-bold text-red-400 flex-shrink-0">-{formatCurrency(exp.amount)}</span>
+                        <Amount value={exp.amount} currency={defaultCurrency} sign="-" size="sm" color="text-red-400" weight="bold" className="flex-shrink-0" />
                       </div>
                     );
                   })}
