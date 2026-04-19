@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense, memo } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
-import { formatCurrency, getYearRange } from '@/lib/utils';
+import { getYearRange } from '@/lib/utils';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { Expense, Category } from '@/types';
@@ -12,6 +12,7 @@ import type { CurrencyCode } from '@/lib/currency';
 import { getCategories } from '@/lib/categoryCache';
 import SwipeableRow from '@/components/SwipeableRow';
 import { readDashboardCache, writeDashboardCache, buildCategoriesMapFromCache } from '@/lib/dashboardCache';
+import Amount from '@/components/ui/Amount';
 
 const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
 
@@ -106,11 +107,13 @@ function WalletChart({
 const ExpenseRow = memo(function ExpenseRow({
   expense,
   categoriesMap,
+  defaultCurrency,
   onEdit,
   onDelete,
 }: {
   expense: Expense;
   categoriesMap: Map<string, Category>;
+  defaultCurrency: CurrencyCode;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -142,9 +145,7 @@ const ExpenseRow = memo(function ExpenseRow({
             <p className="text-[10px] text-dark-500 mt-0.5 leading-tight truncate">{expense.description}</p>
           )}
         </div>
-        <span className="text-[12px] font-bold text-red-400 flex-shrink-0">
-          -{formatCurrency(Number(expense.amount))}
-        </span>
+        <Amount value={-Number(expense.amount)} currency={defaultCurrency} sign="-" size="sm" color="text-red-400" weight="bold" className="flex-shrink-0" />
       </div>
     </SwipeableRow>
   );
@@ -425,9 +426,9 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
           >
             <Search size={17} />
           </button>
-          <p className="text-[1.6rem] font-extrabold tracking-tight leading-none">
-            -{formatCurrency(accumulatedTotal)}
-          </p>
+          <div className="leading-none">
+            <Amount value={accumulatedTotal} currency={defaultCurrency} sign="-" size="xl" weight="extrabold" />
+          </div>
           <p className="text-dark-400 text-[11px] mt-0.5 capitalize">
             {headerSubtitle}
           </p>
@@ -503,7 +504,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
             <div key={group.date}>
               <div className="flex items-center justify-between px-3 py-1 bg-dark-800/60">
                 <span className="text-[10px] font-semibold text-dark-500 uppercase tracking-wider capitalize">{group.label}</span>
-                <span className="text-[10px] font-semibold text-dark-500">-{formatCurrency(group.total)}</span>
+                <Amount value={group.total} currency={defaultCurrency} sign="-" size="sm" weight="semibold" color="text-dark-500" className="text-[10px]" />
               </div>
 
               {group.expenses.map((expense) => (
@@ -511,6 +512,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
                   key={expense.id}
                   expense={expense}
                   categoriesMap={categoriesMap}
+                  defaultCurrency={defaultCurrency}
                   onEdit={() => openEdit(expense)}
                   onDelete={() => handleDelete(expense.id)}
                 />
