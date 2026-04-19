@@ -9,6 +9,7 @@ import { ArrowLeft, ChevronLeft, ChevronRight, Edit3, Trash2, X, Delete, History
 import { format, parseISO, differenceInDays, isWithinInterval } from 'date-fns';
 import { es } from 'date-fns/locale';
 import type { BudgetPeriod } from './BudgetsView';
+import Amount from '@/components/ui/Amount';
 
 const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
 
@@ -434,13 +435,13 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
           <div className="px-4 mb-4 text-center">
             {pct >= 100 ? (
               <>
-                <p className="text-4xl font-extrabold text-red-400">{formatCurrency(totalSpent - periodAmount)}</p>
-                <p className="text-red-400/70 text-sm mt-0.5">excedido de {formatCurrency(periodAmount)}</p>
+                <Amount value={totalSpent - periodAmount} size="xl" color="text-red-400" weight="extrabold" />
+                <p className="text-red-400/70 text-sm mt-0.5">excedido de <Amount value={periodAmount} size="sm" color="text-red-400/70" weight="medium" /></p>
               </>
             ) : (
               <>
-                <p className={`text-4xl font-extrabold ${budgetTextColor}`}>{formatCurrency(left)}</p>
-                <p className="text-dark-500 text-sm mt-0.5">{isCurrentPeriod ? 'disponible' : 'sin usar'} de {formatCurrency(periodAmount)}</p>
+                <Amount value={left} size="xl" color={budgetTextColor} weight="extrabold" />
+                <p className="text-dark-500 text-sm mt-0.5">{isCurrentPeriod ? 'disponible' : 'sin usar'} de <Amount value={periodAmount} size="sm" color="text-dark-500" weight="medium" /></p>
               </>
             )}
           </div>
@@ -455,9 +456,9 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
                       ? (() => {
                           const monthsLeft = Math.round(daysLeft / 30.4 * 10) / 10;
                           const perMonth = monthsLeft > 0 ? left / monthsLeft : 0;
-                          return <>Podés gastar <span className={`font-bold ${budgetTextColor}`}>{formatCurrency(perMonth)}</span>/mes durante {monthsLeft} meses más.</>
+                          return <>Podés gastar <Amount value={perMonth} size="sm" color={budgetTextColor} weight="bold" />/mes durante {monthsLeft} meses más.</>
                         })()
-                      : <>Podés gastar <span className={`font-bold ${budgetTextColor}`}>{formatCurrency(perDay)}</span>/día durante {daysLeft} días más.</>
+                      : <>Podés gastar <Amount value={perDay} size="sm" color={budgetTextColor} weight="bold" />/día durante {daysLeft} días más.</>
                     : 'Último día del período.'}
               </p>
             </div>
@@ -496,7 +497,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
           {/* TOTAL */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-dark-800/60 mb-1">
             <span className="text-xs text-dark-400 font-medium uppercase tracking-wider">Total gastado</span>
-            <span className="text-base font-bold text-red-400">-{formatCurrency(totalSpent)}</span>
+            <Amount value={totalSpent} sign="-" size="md" color="text-red-400" weight="bold" />
           </div>
 
           {/* CATEGORY BREAKDOWN */}
@@ -512,7 +513,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
                       <div className="flex-1 min-w-0">
                         <div className="flex justify-between mb-0.5">
                           <span className="text-xs font-medium truncate">{cat.name}</span>
-                          <span className="text-xs text-dark-400 flex-shrink-0 ml-2">{formatCurrency(cat.spent)}</span>
+                          <Amount value={cat.spent} size="sm" color="text-dark-400" weight="medium" className="flex-shrink-0 ml-2" />
                         </div>
                         <div className="w-full bg-dark-700 rounded-full h-1.5">
                           <div className="h-1.5 rounded-full" style={{ width: `${catPct}%`, backgroundColor: cat.color }} />
@@ -535,7 +536,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
                 <div key={group.date}>
                   <div className="flex items-center justify-between px-4 py-1.5 bg-dark-800/60">
                     <span className="text-[10px] font-semibold text-dark-500 uppercase tracking-wider capitalize">{group.label}</span>
-                    <span className="text-[10px] font-semibold text-dark-500">-{formatCurrency(group.total)}</span>
+                    <Amount value={group.total} sign="-" size="sm" weight="semibold" color="text-dark-500" className="text-[10px]" />
                   </div>
                   {group.expenses.map(exp => {
                     const cat = categories.find(c => c.id === exp.category_id);
@@ -550,7 +551,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
                             <p className="text-[10px] text-dark-500 truncate">{exp.description}</p>
                           )}
                         </div>
-                        <span className="text-[12px] font-bold text-red-400 flex-shrink-0">-{formatCurrency(exp.amount)}</span>
+                        <Amount value={exp.amount} sign="-" size="sm" color="text-red-400" weight="bold" className="flex-shrink-0" />
                       </div>
                     );
                   })}
