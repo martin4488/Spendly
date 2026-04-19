@@ -1,11 +1,14 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, ReactNode } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { exportToCSV } from '@/lib/utils';
 import { CURRENCIES, CurrencyCode } from '@/lib/currency';
-import { LogOut, Download, Upload, Mail, Shield, Coins, FolderTree, ChevronRight, CheckCircle, AlertCircle, X } from 'lucide-react';
+import {
+  LogOut, Download, Upload, Mail, DollarSign, Tag, ChevronRight,
+  CheckCircle, AlertCircle, X, Check,
+} from 'lucide-react';
 
 interface Props {
   user: User;
@@ -28,6 +31,50 @@ interface ImportResult {
   errors: string[];
 }
 
+/* ── Shared row component ──────────────────────────────────────────────── */
+
+type RowProps = {
+  icon: ReactNode;
+  title: string;
+  sub?: string;
+  value?: string;
+  danger?: boolean;
+  loading?: boolean;
+  onClick?: () => void;
+};
+
+function SettingRow({ icon, title, sub, value, danger, loading, onClick }: RowProps) {
+  return (
+    <button
+      onClick={onClick}
+      className="w-full flex items-center gap-3 px-4 py-3.5 text-left active:bg-white/[0.02] transition-colors"
+    >
+      <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
+        danger ? 'bg-red-500/10 text-red-400' : 'bg-white/[0.04] text-dark-400'
+      }`}>
+        {icon}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className={`text-[13px] font-medium ${danger ? 'text-red-400' : ''}`}>{title}</div>
+        {sub && <div className="text-[11px] text-dark-500 mt-0.5">{sub}</div>}
+      </div>
+      {loading && <div className="w-4 h-4 border-2 border-brand-500/30 border-t-brand-500 rounded-full animate-spin" />}
+      {value && <span className="font-mono text-xs text-dark-400">{value}</span>}
+      {!value && !danger && !loading && <ChevronRight className="w-4 h-4 text-dark-500" />}
+    </button>
+  );
+}
+
+function SectionLabel({ children }: { children: ReactNode }) {
+  return (
+    <h2 className="font-mono text-[10px] font-semibold tracking-wider uppercase text-dark-500 mb-2 pl-1">
+      {children}
+    </h2>
+  );
+}
+
+/* ── Main component ────────────────────────────────────────────────────── */
+
 export default function SettingsView({ user, defaultCurrency, onCurrencyChange, onOpenCategories }: Props) {
   const [exporting, setExporting] = useState(false);
   const [savingCurrency, setSavingCurrency] = useState(false);
@@ -35,10 +82,13 @@ export default function SettingsView({ user, defaultCurrency, onCurrencyChange, 
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [previewRows, setPreviewRows] = useState<ImportRow[] | null>(null);
   const [previewFile, setPreviewFile] = useState<File | null>(null);
+  const [showCurrencySheet, setShowCurrencySheet] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  /* ── Currency ── */
   async function handleCurrencyChange(currency: CurrencyCode) {
     setSavingCurrency(true);
+    setShowCurrencySheet(false);
     try {
       await supabase
         .from('user_settings')
@@ -52,6 +102,7 @@ export default function SettingsView({ user, defaultCurrency, onCurrencyChange, 
     }
   }
 
+  /* ── Export ── */
   async function handleExportAll() {
     setExporting(true);
     try {
@@ -81,6 +132,7 @@ export default function SettingsView({ user, defaultCurrency, onCurrencyChange, 
     }
   }
 
+  /* ── CSV parsing ── */
   function parseCSV(text: string): ImportRow[] {
     const lines = text.trim().split('\n');
     if (lines.length < 2) return [];
@@ -143,18 +195,14 @@ export default function SettingsView({ user, defaultCurrency, onCurrencyChange, 
         .eq('user_id', user.id);
 
       const allCats = categories || [];
-
-      // Map name (lowercase) → category object
       const catMap = new Map<string, typeof allCats[0]>();
       allCats.forEach(c => catMap.set(c.name.toLowerCase().trim(), c));
 
-      // Cache of parent_id → hidden "Importado" sub id (created on demand)
       const importedSubCache = new Map<string, string>();
 
       const getOrCreateImportedSub = async (parentCat: typeof allCats[0]): Promise<string> => {
         if (importedSubCache.has(parentCat.id)) return importedSubCache.get(parentCat.id)!;
 
-        // Check if it already exists in DB
         const existing = allCats.find(
           c => c.parent_id === parentCat.id && c.hidden === true && c.name === 'Importado'
         );
@@ -163,7 +211,6 @@ export default function SettingsView({ user, defaultCurrency, onCurrencyChange, 
           return existing.id;
         }
 
-        // Create it
         const { data, error } = await supabase
           .from('categories')
           .insert({
@@ -181,7 +228,7 @@ export default function SettingsView({ user, defaultCurrency, onCurrencyChange, 
         if (error || !data) throw new Error(`No se pudo crear subcategoría oculta: ${error?.message}`);
         importedSubCache.set(parentCat.id, data.id);
         return data.id;
-      }
+      };
 
       const toInsert: any[] = [];
 
@@ -196,7 +243,6 @@ export default function SettingsView({ user, defaultCurrency, onCurrencyChange, 
         const catNameLower = row.category.toLowerCase().trim();
         let matchedCat = catMap.get(catNameLower) || null;
 
-        // Partial match fallback
         if (!matchedCat && catNameLower) {
           const entries = Array.from(catMap.entries());
           for (const [name, cat] of entries) {
@@ -212,7 +258,6 @@ export default function SettingsView({ user, defaultCurrency, onCurrencyChange, 
         if (matchedCat) {
           const isParent = !matchedCat.parent_id;
           if (isParent) {
-            // Create/reuse hidden "Importado" subcategory
             categoryId = await getOrCreateImportedSub(matchedCat);
           } else {
             categoryId = matchedCat.id;
@@ -262,101 +307,103 @@ export default function SettingsView({ user, defaultCurrency, onCurrencyChange, 
     }
   }
 
-  const currencyInfo = CURRENCIES[defaultCurrency];
-
   return (
-    <div className="px-4 pt-6 pb-24 max-w-lg mx-auto page-transition">
-      <h1 className="text-xl font-bold mb-5">Configuración</h1>
+    <div className="pb-24 max-w-lg mx-auto page-transition">
+      <header className="px-5 pt-6 pb-4">
+        <h1 className="text-[22px] font-bold tracking-[-0.02em]">Ajustes</h1>
+      </header>
 
-      {/* Account */}
-      <div className="bg-dark-800 rounded-xl p-4 mb-4">
-        <h3 className="text-sm font-semibold text-dark-300 mb-3">Tu cuenta</h3>
-        <div className="flex items-center gap-3">
-          <div className="bg-brand-600/20 p-2.5 rounded-lg">
-            <Mail size={18} className="text-brand-400" />
-          </div>
-          <div>
-            <p className="text-sm font-medium">{user.email}</p>
-            <p className="text-xs text-dark-400">Cuenta verificada</p>
-          </div>
+      {/* ── Cuenta ── */}
+      <section className="px-5 mb-5">
+        <SectionLabel>Cuenta</SectionLabel>
+        <div className="bg-dark-800 rounded-xl overflow-hidden">
+          <SettingRow
+            icon={<Mail className="w-3.5 h-3.5" />}
+            title={user.email || ''}
+            sub="Cuenta verificada"
+          />
         </div>
-      </div>
+      </section>
 
-      {/* Currency */}
-      <div className="bg-dark-800 rounded-xl overflow-hidden mb-4">
-        <div className="flex items-center gap-3 px-4 pt-4 pb-2">
-          <Coins size={16} className="text-dark-400" />
-          <h3 className="text-sm font-semibold text-dark-300">Moneda principal</h3>
+      {/* ── Preferencias ── */}
+      <section className="px-5 mb-5">
+        <SectionLabel>Preferencias</SectionLabel>
+        <div className="bg-dark-800 rounded-xl overflow-hidden divide-y divide-white/[0.06]">
+          <SettingRow
+            icon={<DollarSign className="w-3.5 h-3.5" />}
+            title="Moneda principal"
+            sub="Todos los gastos se convierten a esta"
+            value={savingCurrency ? '...' : defaultCurrency}
+            onClick={() => setShowCurrencySheet(true)}
+          />
+          <SettingRow
+            icon={<Tag className="w-3.5 h-3.5" />}
+            title="Categorías"
+            sub="Organizá tus gastos por categoría"
+            onClick={onOpenCategories}
+          />
         </div>
-        <p className="text-xs text-dark-500 px-4 pb-3">
-          Todos los gastos se convierten a esta moneda
-        </p>
-        <div className="px-3 pb-3 flex gap-2">
-          {(Object.keys(CURRENCIES) as CurrencyCode[]).map((code) => {
-            const c = CURRENCIES[code];
-            const isActive = defaultCurrency === code;
-            return (
-              <button
-                key={code}
-                onClick={() => handleCurrencyChange(code)}
-                disabled={savingCurrency}
-                className={`flex-1 flex flex-col items-center gap-1.5 py-3 rounded-xl transition-all ${
-                  isActive
-                    ? 'bg-brand-600/15 border-2 border-brand-500'
-                    : 'bg-dark-700 border-2 border-transparent hover:border-dark-600'
-                }`}
-              >
-                <span className="text-xl">{c.flag}</span>
-                <span className={`text-xs font-semibold ${isActive ? 'text-brand-400' : 'text-dark-300'}`}>
-                  {c.code}
-                </span>
+      </section>
+
+      {/* ── Currency sheet ── */}
+      {showCurrencySheet && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center" onClick={() => setShowCurrencySheet(false)}>
+          <div className="absolute inset-0 bg-black/60" />
+          <div
+            className="relative w-full max-w-lg bg-dark-900 rounded-t-2xl pb-8 slide-up"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 pt-5 pb-3">
+              <h3 className="text-base font-bold">Moneda principal</h3>
+              <button onClick={() => setShowCurrencySheet(false)} className="text-dark-400 p-1">
+                <X size={18} />
               </button>
-            );
-          })}
+            </div>
+            <div className="px-3">
+              {(Object.keys(CURRENCIES) as CurrencyCode[]).map((code) => {
+                const c = CURRENCIES[code];
+                const isActive = defaultCurrency === code;
+                return (
+                  <button
+                    key={code}
+                    onClick={() => handleCurrencyChange(code)}
+                    className={`w-full flex items-center gap-3 px-3 py-3.5 rounded-xl transition-colors ${
+                      isActive ? 'bg-brand-600/10' : 'active:bg-white/[0.02]'
+                    }`}
+                  >
+                    <span className="text-xl">{c.flag}</span>
+                    <div className="flex-1 text-left">
+                      <span className="text-sm font-medium">{c.name}</span>
+                      <span className="text-xs text-dark-400 ml-2">{c.symbol}</span>
+                    </div>
+                    {isActive && <Check size={16} className="text-brand-400" />}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* Categories */}
-      <div className="bg-dark-800 rounded-xl overflow-hidden mb-4">
-        <button onClick={onOpenCategories} className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-dark-700/50 transition-colors">
-          <FolderTree size={18} className="text-dark-400" />
-          <div className="text-left flex-1">
-            <p className="text-sm font-medium">Categorías</p>
-            <p className="text-xs text-dark-400">Organizá tus gastos por categoría</p>
-          </div>
-          <ChevronRight size={16} className="text-dark-500" />
-        </button>
-      </div>
-
-      {/* Actions */}
-      <div className="bg-dark-800 rounded-xl overflow-hidden mb-4">
-        <h3 className="text-sm font-semibold text-dark-300 px-4 pt-4 pb-2">Datos</h3>
-
-        <button
-          onClick={handleExportAll}
-          disabled={exporting}
-          className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-dark-700/50 transition-colors border-b border-dark-700"
-        >
-          <Download size={18} className="text-dark-400" />
-          <div className="text-left flex-1">
-            <p className="text-sm font-medium">Exportar todos los gastos</p>
-            <p className="text-xs text-dark-400">Descargar CSV con todo el historial</p>
-          </div>
-          {exporting && <div className="w-4 h-4 border-2 border-brand-500/30 border-t-brand-500 rounded-full animate-spin" />}
-        </button>
-
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={importing || !!previewRows}
-          className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-dark-700/50 transition-colors"
-        >
-          <Upload size={18} className="text-dark-400" />
-          <div className="text-left flex-1">
-            <p className="text-sm font-medium">Importar gastos desde CSV</p>
-            <p className="text-xs text-dark-400">Formato: date, description, amount, currency, category</p>
-          </div>
-          {importing && <div className="w-4 h-4 border-2 border-brand-500/30 border-t-brand-500 rounded-full animate-spin" />}
-        </button>
+      {/* ── Datos ── */}
+      <section className="px-5 mb-5">
+        <SectionLabel>Datos</SectionLabel>
+        <div className="bg-dark-800 rounded-xl overflow-hidden divide-y divide-white/[0.06]">
+          <SettingRow
+            icon={<Download className="w-3.5 h-3.5" />}
+            title="Exportar CSV"
+            sub="Descargar historial completo"
+            loading={exporting}
+            onClick={handleExportAll}
+          />
+          <SettingRow
+            icon={<Upload className="w-3.5 h-3.5" />}
+            title="Importar desde CSV"
+            sub="date, description, amount, category"
+            loading={importing}
+            onClick={() => fileInputRef.current?.click()}
+          />
+        </div>
         <input
           ref={fileInputRef}
           type="file"
@@ -364,108 +411,94 @@ export default function SettingsView({ user, defaultCurrency, onCurrencyChange, 
           onChange={handleFileSelect}
           className="hidden"
         />
-      </div>
+      </section>
 
-      {/* Import preview */}
+      {/* ── Import preview ── */}
       {previewRows && (
-        <div className="bg-dark-800 rounded-xl overflow-hidden mb-4">
-          <div className="flex items-center justify-between px-4 pt-4 pb-2">
-            <h3 className="text-sm font-semibold text-dark-300">
-              Vista previa — {previewRows.length} registros
-            </h3>
-            <button onClick={cancelImport} className="text-dark-400 hover:text-dark-200 transition-colors">
-              <X size={16} />
-            </button>
-          </div>
-          <p className="text-xs text-dark-500 px-4 pb-3">{previewFile?.name}</p>
-          <div className="px-4 pb-2 max-h-48 overflow-y-auto">
-            {previewRows.slice(0, 8).map((row, i) => (
-              <div key={i} className="flex items-center justify-between py-2 border-b border-dark-700 last:border-0">
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-medium truncate">{row.description || '—'}</p>
-                  <p className="text-xs text-dark-400">{row.date} · {row.category || 'Sin cat.'}</p>
-                </div>
-                <p className="text-xs font-semibold text-red-400 ml-3 shrink-0">
-                  -{parseFloat(row.amount || '0').toFixed(2)} {row.currency}
-                </p>
-              </div>
-            ))}
-            {previewRows.length > 8 && (
-              <p className="text-xs text-dark-500 py-2 text-center">+{previewRows.length - 8} más...</p>
-            )}
-          </div>
-          <div className="flex gap-2 px-4 pb-4 pt-2">
-            <button
-              onClick={cancelImport}
-              className="flex-1 py-2.5 rounded-xl bg-dark-700 hover:bg-dark-600 text-sm text-dark-300 transition-colors"
-            >
-              Cancelar
-            </button>
-            <button
-              onClick={confirmImport}
-              disabled={importing}
-              className="flex-1 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-500 text-sm font-medium text-white transition-colors disabled:opacity-50"
-            >
-              {importing ? 'Importando...' : 'Confirmar importación'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Import result */}
-      {importResult && (
-        <div className="bg-dark-800 rounded-xl p-4 mb-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              {importResult.imported > 0
-                ? <CheckCircle size={16} className="text-green-400" />
-                : <AlertCircle size={16} className="text-red-400" />
-              }
-              <h3 className="text-sm font-semibold">Resultado de importación</h3>
+        <section className="px-5 mb-5">
+          <div className="bg-dark-800 rounded-xl overflow-hidden">
+            <div className="flex items-center justify-between px-4 pt-4 pb-2">
+              <h3 className="text-sm font-semibold text-dark-300">
+                Vista previa — {previewRows.length} registros
+              </h3>
+              <button onClick={cancelImport} className="text-dark-400 hover:text-dark-200 transition-colors">
+                <X size={16} />
+              </button>
             </div>
-            <button onClick={() => setImportResult(null)} className="text-dark-400 hover:text-dark-200">
-              <X size={14} />
-            </button>
+            <p className="text-xs text-dark-500 px-4 pb-3">{previewFile?.name}</p>
+            <div className="px-4 pb-2 max-h-48 overflow-y-auto">
+              {previewRows.slice(0, 8).map((row, i) => (
+                <div key={i} className="flex items-center justify-between py-2 border-b border-dark-700 last:border-0">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium truncate">{row.description || '—'}</p>
+                    <p className="text-xs text-dark-400">{row.date} · {row.category || 'Sin cat.'}</p>
+                  </div>
+                  <p className="text-xs font-semibold text-red-400 ml-3 shrink-0">
+                    -{parseFloat(row.amount || '0').toFixed(2)} {row.currency}
+                  </p>
+                </div>
+              ))}
+              {previewRows.length > 8 && (
+                <p className="text-xs text-dark-500 py-2 text-center">+{previewRows.length - 8} más...</p>
+              )}
+            </div>
+            <div className="flex gap-2 px-4 pb-4 pt-2">
+              <button
+                onClick={cancelImport}
+                className="flex-1 py-2.5 rounded-xl bg-dark-700 hover:bg-dark-600 text-sm text-dark-300 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmImport}
+                disabled={importing}
+                className="flex-1 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-500 text-sm font-medium text-white transition-colors disabled:opacity-50"
+              >
+                {importing ? 'Importando...' : 'Confirmar importación'}
+              </button>
+            </div>
           </div>
-          <p className="text-sm text-green-400">{importResult.imported} gastos importados</p>
-          {importResult.skipped > 0 && (
-            <p className="text-sm text-yellow-400">{importResult.skipped} filas omitidas</p>
-          )}
-          {importResult.errors.slice(0, 3).map((e, i) => (
-            <p key={i} className="text-xs text-dark-400 mt-1">{e}</p>
-          ))}
-        </div>
+        </section>
       )}
 
-      {/* Info */}
-      <div className="bg-dark-800 rounded-xl overflow-hidden mb-4">
-        <h3 className="text-sm font-semibold text-dark-300 px-4 pt-4 pb-2">Info</h3>
-
-        <div className="flex items-center gap-3 px-4 py-3.5">
-          <Shield size={18} className="text-dark-400" />
-          <div className="text-left flex-1">
-            <p className="text-sm font-medium">Tus datos son privados</p>
-            <p className="text-xs text-dark-400">Solo vos podés ver tu información</p>
+      {/* ── Import result ── */}
+      {importResult && (
+        <section className="px-5 mb-5">
+          <div className="bg-dark-800 rounded-xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                {importResult.imported > 0
+                  ? <CheckCircle size={16} className="text-green-400" />
+                  : <AlertCircle size={16} className="text-red-400" />
+                }
+                <h3 className="text-sm font-semibold">Resultado de importación</h3>
+              </div>
+              <button onClick={() => setImportResult(null)} className="text-dark-400 hover:text-dark-200">
+                <X size={14} />
+              </button>
+            </div>
+            <p className="text-sm text-green-400">{importResult.imported} gastos importados</p>
+            {importResult.skipped > 0 && (
+              <p className="text-sm text-yellow-400">{importResult.skipped} filas omitidas</p>
+            )}
+            {importResult.errors.slice(0, 3).map((e, i) => (
+              <p key={i} className="text-xs text-dark-400 mt-1">{e}</p>
+            ))}
           </div>
-        </div>
+        </section>
+      )}
 
-        <div className="flex items-center gap-3 px-4 py-3.5">
-          <div className="text-lg">💸</div>
-          <div className="text-left flex-1">
-            <p className="text-sm font-medium">Spendly v1.1</p>
-            <p className="text-xs text-dark-400">Hecho con ❤️</p>
-          </div>
+      {/* ── Sesión ── */}
+      <section className="px-5">
+        <div className="bg-dark-800 rounded-xl overflow-hidden">
+          <SettingRow
+            icon={<LogOut className="w-3.5 h-3.5" />}
+            title="Cerrar sesión"
+            danger
+            onClick={handleLogout}
+          />
         </div>
-      </div>
-
-      {/* Logout */}
-      <button
-        onClick={handleLogout}
-        className="w-full bg-dark-800 hover:bg-dark-700 rounded-xl p-4 flex items-center gap-3 text-red-400 transition-colors"
-      >
-        <LogOut size={18} />
-        <span className="text-sm font-medium">Cerrar sesión</span>
-      </button>
+      </section>
     </div>
   );
 }
