@@ -3,10 +3,11 @@
 import { useState, useEffect, lazy, Suspense } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
-import { formatCurrency, formatDate, getMonthRange, exportToCSV } from '@/lib/utils';
+import { formatDate, getMonthRange, exportToCSV } from '@/lib/utils';
 import { Expense } from '@/types';
 import { Plus, Search, Download, ChevronLeft, ChevronRight, Trash2, Edit3 } from 'lucide-react';
 import type { CurrencyCode } from '@/lib/currency';
+import Amount from '@/components/ui/Amount';
 
 const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
 
@@ -107,7 +108,7 @@ export default function ExpensesView({ user, defaultCurrency = 'EUR' as Currency
         </button>
         <div className="text-center">
           <p className="text-sm font-semibold">{monthNames[currentMonth.getMonth()]} {currentMonth.getFullYear()}</p>
-          <p className="text-xs text-dark-400">{formatCurrency(monthTotal)}</p>
+          <p className="text-xs text-dark-400"><Amount value={monthTotal} currency={defaultCurrency} size="sm" color="text-dark-400" weight="medium" /></p>
         </div>
         <button
           onClick={() => setMonthOffset(o => o + 1)}
@@ -161,7 +162,7 @@ export default function ExpensesView({ user, defaultCurrency = 'EUR' as Currency
                 </div>
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
-                <span className="text-sm font-bold text-red-400">-{formatCurrency(Number(expense.amount))}</span>
+                <Amount value={Number(expense.amount)} currency={defaultCurrency} sign="-" size="sm" color="text-red-400" weight="bold" />
                 <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button onClick={() => openEdit(expense)} className="p-1.5 text-dark-400 hover:text-dark-200">
                     <Edit3 size={14} />
