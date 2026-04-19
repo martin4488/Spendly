@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/utils';
+import Amount from '@/components/ui/Amount';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { getCategories } from '@/lib/categoryCache';
 import { CatNode, buildTree } from '@/lib/categoryTree';
@@ -435,7 +436,7 @@ export default function ReflectView({ user }: Props) {
           <div className="flex-1 min-w-0">
             <div className="flex justify-between mb-1">
               <span className={`font-semibold ${depth === 0 ? 'text-[12px] text-white' : 'text-[11px] text-dark-200'}`}>{cat.name}</span>
-              <span className={`${depth === 0 ? 'text-[12px]' : 'text-[11px]'} text-dark-400`}>{formatCurrency(Math.round(cat.amount))}</span>
+              <Amount value={Math.round(cat.amount)} size="sm" color="text-dark-400" weight="medium" className={depth === 0 ? 'text-[12px]' : 'text-[11px]'} />
             </div>
             {depth === 0 && (
               <div className="w-full bg-dark-700 rounded-full h-1 overflow-hidden">
@@ -495,7 +496,7 @@ export default function ReflectView({ user }: Props) {
           <div className="mb-4">
             <p className="text-[10px] text-dark-500 uppercase tracking-wider mb-1">Promedio mensual</p>
             <div className="flex items-baseline gap-2">
-              <span className="text-[2rem] font-extrabold text-white">{formatCurrency(Math.round(avg))}</span>
+              <Amount value={Math.round(avg)} size="xl" weight="extrabold" />
               <span className="text-sm text-dark-500">/ mes</span>
             </div>
             {first && last && (
@@ -520,7 +521,7 @@ export default function ReflectView({ user }: Props) {
                         style={{ width: `${pct}%`, opacity }} />
                     </div>
                     <span className={`text-[11px] w-14 text-right flex-shrink-0 ${m.isCurrent ? 'text-brand-400 font-semibold' : 'text-dark-400'}`}>
-                      {formatCurrency(m.amount)}
+                      <Amount value={m.amount} size="sm" color={m.isCurrent ? 'text-brand-400' : 'text-dark-400'} weight={m.isCurrent ? 'semibold' : 'medium'} className="text-[11px]" />
                     </span>
                   </div>
                 );
@@ -533,7 +534,7 @@ export default function ReflectView({ user }: Props) {
                     <div className="absolute top-[-4px] w-0.5 h-3.5 bg-dark-500 rounded"
                       style={{ left: `${(avg / maxAmt) * 100}%`, transform: 'translateX(-50%)' }} />
                   </div>
-                  <span className="text-[11px] w-14 text-right flex-shrink-0 text-dark-500">{formatCurrency(Math.round(avg))}</span>
+                  <Amount value={Math.round(avg)} size="sm" color="text-dark-500" weight="medium" className="text-[11px] w-14 text-right flex-shrink-0" />
                 </div>
               )}
             </div>
