@@ -8,6 +8,10 @@ export function setDefaultCurrency(code: string) {
   _defaultCurrency = code;
 }
 
+export function getDefaultCurrency(): string {
+  return _defaultCurrency;
+}
+
 // Cache Intl.NumberFormat instances — avoids re-instantiation on every render
 const _fmtCache = new Map<string, Intl.NumberFormat>();
 function getCurrencyFormatter(code: string): Intl.NumberFormat {
