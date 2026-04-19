@@ -1,10 +1,11 @@
 import { CURRENCIES, CurrencyCode } from '@/lib/currency';
+import { getDefaultCurrency } from '@/lib/utils';
 
 type Props = {
   /** The numeric value to display */
   value: number;
-  /** Currency code — uses symbol from CURRENCIES map. Defaults to USD */
-  currency?: CurrencyCode;
+  /** Currency code — uses symbol from CURRENCIES map. Defaults to app's default currency */
+  currency?: CurrencyCode | string;
   /** Force a sign prefix. If omitted, shows '-' only for negatives */
   sign?: '-' | '+' | '';
   size?: 'sm' | 'md' | 'lg' | 'xl' | 'hero';
@@ -31,13 +32,14 @@ const weightMap = {
 
 export default function Amount({
   value,
-  currency = 'USD',
+  currency,
   sign,
   size = 'md',
   color = '',
   weight = 'bold',
   className = '',
 }: Props) {
+  const resolvedCurrency = (currency || getDefaultCurrency() || 'USD') as CurrencyCode;
   const abs = Math.abs(value);
   const fixed = abs.toFixed(2);
   const [intRaw, dec] = fixed.split('.');
@@ -47,7 +49,7 @@ export default function Amount({
 
   const finalSign = sign !== undefined ? sign : (value < 0 ? '-' : '');
 
-  const sym = CURRENCIES[currency]?.symbol || '$';
+  const sym = CURRENCIES[resolvedCurrency]?.symbol || '$';
   const { n, d } = sizeMap[size];
 
   return (
