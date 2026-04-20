@@ -406,7 +406,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
                   />
                 )}
               </div>
-              <Amount value={cat.spent} currency={defaultCurrency} size="sm" color="text-dark-400" weight="medium" className={`${depth === 0 ? 'text-xs' : 'text-[11px]'} flex-shrink-0 ml-2`} />
+              <Amount value={cat.spent} currency={defaultCurrency} size="sm" color="text-dark-400" weight="medium" className={`${depth === 0 ? 'text-xs' : 'text-[11px]'} flex-shrink-0 ml-2`} decimals={false} />
             </div>
             {depth === 0 && (
               <div className="w-full bg-dark-700 rounded-full h-1.5">
@@ -478,7 +478,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
           {totalSpent > 0 && (
             <div className="mt-8">
               <p className="text-dark-500 text-xs mb-2">Gasto del mes</p>
-              <Amount value={totalSpent} currency={defaultCurrency} sign="-" size="lg" color="text-red-400" weight="extrabold" />
+              <Amount value={totalSpent} currency={defaultCurrency} sign="-" size="lg" color="text-red-400" weight="extrabold" decimals={false} />
             </div>
           )}
         </div>
@@ -488,13 +488,13 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
           <div className="px-4 mb-4 text-center">
             {pct >= 100 ? (
               <>
-                <Amount value={totalSpent - monthAmount} currency={defaultCurrency} size="xl" color="text-red-400" weight="extrabold" />
-                <p className="text-red-400/70 text-sm mt-0.5">excedido de <Amount value={monthAmount} currency={defaultCurrency} size="sm" color="text-red-400/70" weight="medium" /></p>
+                <Amount value={totalSpent - monthAmount} currency={defaultCurrency} size="xl" color="text-red-400" weight="extrabold" decimals={false} />
+                <p className="text-red-400/70 text-sm mt-0.5">excedido de <Amount value={monthAmount} currency={defaultCurrency} size="sm" color="text-red-400/70" weight="medium" decimals={false} /></p>
               </>
             ) : (
               <>
-                <Amount value={left} currency={defaultCurrency} size="xl" color={budgetTextColor} weight="extrabold" />
-                <p className="text-dark-500 text-sm mt-0.5">{isCurrentPeriod ? 'disponible' : 'sin usar'} de <Amount value={monthAmount} currency={defaultCurrency} size="sm" color="text-dark-500" weight="medium" /></p>
+                <Amount value={left} currency={defaultCurrency} size="xl" color={budgetTextColor} weight="extrabold" decimals={false} />
+                <p className="text-dark-500 text-sm mt-0.5">{isCurrentPeriod ? 'disponible' : 'sin usar'} de <Amount value={monthAmount} currency={defaultCurrency} size="sm" color="text-dark-500" weight="medium" decimals={false} /></p>
               </>
             )}
           </div>
@@ -505,7 +505,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
               <p className="text-sm text-dark-200 text-center">
                 {pct >= 100 ? '¡Ya superaste el presupuesto!'
                   : daysLeft > 0
-                    ? <>Podés gastar <Amount value={perDay} currency={defaultCurrency} size="sm" color={budgetTextColor} weight="bold" />/día durante {daysLeft} días más.</>
+                    ? <>Podés gastar <Amount value={perDay} currency={defaultCurrency} size="sm" color={budgetTextColor} weight="bold" decimals={false} />/día durante {daysLeft} días más.</>
                     : 'Último día del mes.'}
               </p>
             </div>
@@ -527,7 +527,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
           {/* TOTAL */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-dark-800/60 mb-1">
             <span className="text-xs text-dark-400 font-medium uppercase tracking-wider">Total gastado</span>
-            <Amount value={totalSpent} currency={defaultCurrency} sign="-" size="md" color="text-red-400" weight="bold" />
+            <Amount value={totalSpent} currency={defaultCurrency} sign="-" size="md" color="text-red-400" weight="bold" decimals={false} />
           </div>
 
           {/* CATEGORY BREAKDOWN (tree-based, collapsible) */}
@@ -550,7 +550,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
                 <div key={group.date}>
                   <div className="flex items-center justify-between px-4 py-1.5 bg-dark-800/60">
                     <span className="text-[10px] font-semibold text-dark-500 uppercase tracking-wider capitalize">{group.label}</span>
-                    <Amount value={group.total} currency={defaultCurrency} sign="-" size="sm" weight="semibold" color="text-dark-500" className="text-[10px]" />
+                    <Amount value={group.total} currency={defaultCurrency} sign="-" size="sm" weight="semibold" color="text-dark-500" className="text-[10px]" decimals={false} />
                   </div>
                   {group.expenses.map(exp => {
                     const cat = categories.find(c => c.id === exp.category_id);
@@ -565,7 +565,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
                             <p className="text-[10px] text-dark-500 truncate">{exp.description}</p>
                           )}
                         </div>
-                        <Amount value={exp.amount} currency={defaultCurrency} sign="-" size="sm" color="text-red-400" weight="bold" className="flex-shrink-0" />
+                        <Amount value={exp.amount} currency={defaultCurrency} sign="-" size="sm" color="text-red-400" weight="bold" className="flex-shrink-0" decimals={false} />
                       </div>
                     );
                   })}
@@ -595,7 +595,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
               <p className="text-base font-bold">{historyYear}</p>
               {historySummaries.some(s => !s.isCurrent && s.amount != null) && (
                 <p className={`text-[11px] font-medium mt-0.5 ${histAccumulated >= 0 ? 'text-brand-400' : 'text-red-400'}`}>
-                  {formatCurrency(Math.abs(histAccumulated))} {histAccumulated >= 0 ? 'ahorro acumulado' : 'excedido acumulado'} en {historyYear}{histAccumMonths ? ` (${histAccumMonths})` : ''}
+                  {formatCurrency(Math.abs(histAccumulated), undefined, true)} {histAccumulated >= 0 ? 'ahorro acumulado' : 'excedido acumulado'} en {historyYear}{histAccumMonths ? ` (${histAccumMonths})` : ''}
                 </p>
               )}
             </div>
@@ -651,13 +651,13 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
                       )}
                       <div className="flex justify-between">
                         {noBudget ? (
-                          <span className="text-[11px] text-dark-400">{s.spent > 0 ? `${formatCurrency(s.spent)} gastado` : 'Sin gastos'}</span>
+                          <span className="text-[11px] text-dark-400">{s.spent > 0 ? `${formatCurrency(s.spent, undefined, true)} gastado` : 'Sin gastos'}</span>
                         ) : (
                           <>
                             <span className="text-[11px] font-medium" style={{ color: dotColor }}>
-                              {isOver ? `${formatCurrency(s.spent - pAmt!)} excedido` : s.isCurrent ? `${formatCurrency(sLeft)} disponible` : `${formatCurrency(sLeft)} sin usar`}
+                              {isOver ? `${formatCurrency(s.spent - pAmt!, undefined, true)} excedido` : s.isCurrent ? `${formatCurrency(sLeft, undefined, true)} disponible` : `${formatCurrency(sLeft, undefined, true)} sin usar`}
                             </span>
-                            <span className="text-[11px] text-dark-500">de {formatCurrency(pAmt!)}</span>
+                            <span className="text-[11px] text-dark-500">de {formatCurrency(pAmt!, undefined, true)}</span>
                           </>
                         )}
                       </div>
