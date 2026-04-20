@@ -417,7 +417,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
               <div className="pb-8">
                 {/* Frecuentes section — highlighted */}
                 {frequentCats.length > 0 && (
-                  <div className="mx-3 mb-3 bg-dark-800 rounded-2xl py-2.5 border border-dark-700/50">
+                  <div className="mx-1.5 mb-3 bg-dark-800 rounded-2xl pt-2.5 pb-3 border border-dark-700/50">
                     <div className="px-3 pb-1.5">
                       <span className="text-[10px] font-bold text-dark-300 uppercase tracking-wider">Frecuentes</span>
                     </div>
