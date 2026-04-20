@@ -216,7 +216,7 @@ export default function RecurringView({ user }: { user: User }) {
       {/* Summary */}
       <div className="bg-dark-800 rounded-xl p-4 mb-5">
         <p className="text-dark-400 text-xs">Total mensual estimado</p>
-        <Amount value={totalMonthly} size="lg" weight="bold" />
+        <Amount value={totalMonthly} size="lg" weight="bold" decimals={false} />
         <p className="text-dark-500 text-xs mt-1">{items.length} gastos activos</p>
       </div>
 
@@ -269,7 +269,7 @@ export default function RecurringView({ user }: { user: User }) {
                       </p>
                     )}
                   </div>
-                  <Amount value={Number(item.amount)} size="sm" weight="bold" className="flex-shrink-0" />
+                  <Amount value={Number(item.amount)} size="sm" weight="bold" className="flex-shrink-0" decimals={false} />
                 </div>
               </SwipeableRow>
             );
