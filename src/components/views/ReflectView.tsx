@@ -265,7 +265,7 @@ export default function ReflectView({ user }: Props) {
         const up = diff > 0;
         insights.push({
           color: up ? '#ef4444' : '#22c55e',
-          text: `Gastás <b style="color:#e2e8f0">${formatCurrency(Math.round(Math.abs(diff)))} ${up ? 'más' : 'menos'} por mes</b> que el promedio de ${yr - 1} (<b style="color:${up ? '#ef4444' : '#22c55e'}">${up ? '+' : ''}${pct}%</b>).`
+          text: `Gastás <b style="color:#e2e8f0">${formatCurrency(Math.round(Math.abs(diff)), undefined, true)} ${up ? 'más' : 'menos'} por mes</b> que el promedio de ${yr - 1} (<b style="color:${up ? '#ef4444' : '#22c55e'}">${up ? '+' : ''}${pct}%</b>).`
         });
       }
     }
@@ -312,7 +312,7 @@ export default function ReflectView({ user }: Props) {
           const up = c.diff > 0;
           insights.push({
             color: up ? '#ef4444' : '#22c55e',
-            text: `${c.icon} <b style="color:#e2e8f0">${c.name}</b> ${up ? 'subió' : 'bajó'} un <b style="color:${up ? '#ef4444' : '#22c55e'}">${up ? '+' : ''}${c.diff}%</b> — de ${formatCurrency(c.prev)} a ${formatCurrency(c.curr)}/mes.`,
+            text: `${c.icon} <b style="color:#e2e8f0">${c.name}</b> ${up ? 'subió' : 'bajó'} un <b style="color:${up ? '#ef4444' : '#22c55e'}">${up ? '+' : ''}${c.diff}%</b> — de ${formatCurrency(c.prev, undefined, true)} a ${formatCurrency(c.curr, undefined, true)}/mes.`,
           });
         });
       }
@@ -367,7 +367,7 @@ export default function ReflectView({ user }: Props) {
             const up = c.diff > 0;
             insights.push({
               color: up ? '#ef4444' : '#22c55e',
-              text: `${c.parentIcon} <b style="color:#e2e8f0">${c.name}</b> ${up ? 'subió' : 'bajó'} un <b style="color:${up ? '#ef4444' : '#22c55e'}">${up ? '+' : ''}${c.diff}%</b> — de ${formatCurrency(c.prev)} a ${formatCurrency(c.curr)}/mes.`,
+              text: `${c.parentIcon} <b style="color:#e2e8f0">${c.name}</b> ${up ? 'subió' : 'bajó'} un <b style="color:${up ? '#ef4444' : '#22c55e'}">${up ? '+' : ''}${c.diff}%</b> — de ${formatCurrency(c.prev, undefined, true)} a ${formatCurrency(c.curr, undefined, true)}/mes.`,
             });
           });
         }
@@ -394,7 +394,7 @@ export default function ReflectView({ user }: Props) {
           newCats.sort((a, b) => b.amount - a.amount).forEach(c => {
             insights.push({
               color: '#f59e0b',
-              text: `${c.icon} <b style="color:#e2e8f0">${c.name}</b> es un gasto nuevo — <b style="color:#f59e0b">${formatCurrency(Math.round(c.amount))}/mes</b>.`,
+              text: `${c.icon} <b style="color:#e2e8f0">${c.name}</b> es un gasto nuevo — <b style="color:#f59e0b">${formatCurrency(Math.round(c.amount), undefined, true)}/mes</b>.`,
             });
           });
         }
@@ -436,7 +436,7 @@ export default function ReflectView({ user }: Props) {
           <div className="flex-1 min-w-0">
             <div className="flex justify-between mb-1">
               <span className={`font-semibold ${depth === 0 ? 'text-[12px] text-white' : 'text-[11px] text-dark-200'}`}>{cat.name}</span>
-              <Amount value={Math.round(cat.amount)} size="sm" color="text-dark-400" weight="medium" className={depth === 0 ? 'text-[12px]' : 'text-[11px]'} />
+              <Amount value={Math.round(cat.amount)} size="sm" color="text-dark-400" weight="medium" className={depth === 0 ? 'text-[12px]' : 'text-[11px]'} decimals={false} />
             </div>
             {depth === 0 && (
               <div className="w-full bg-dark-700 rounded-full h-1 overflow-hidden">
@@ -496,7 +496,7 @@ export default function ReflectView({ user }: Props) {
           <div className="mb-4">
             <p className="text-[10px] text-dark-500 uppercase tracking-wider mb-1">Promedio mensual</p>
             <div className="flex items-baseline gap-2">
-              <Amount value={Math.round(avg)} size="xl" weight="extrabold" />
+              <Amount value={Math.round(avg)} size="xl" weight="extrabold" decimals={false} />
               <span className="text-sm text-dark-500">/ mes</span>
             </div>
             {first && last && (
@@ -521,7 +521,7 @@ export default function ReflectView({ user }: Props) {
                         style={{ width: `${pct}%`, opacity }} />
                     </div>
                     <span className={`text-[11px] w-14 text-right flex-shrink-0 ${m.isCurrent ? 'text-brand-400 font-semibold' : 'text-dark-400'}`}>
-                      <Amount value={m.amount} size="sm" color={m.isCurrent ? 'text-brand-400' : 'text-dark-400'} weight={m.isCurrent ? 'semibold' : 'medium'} className="text-[11px]" />
+                      <Amount value={m.amount} size="sm" color={m.isCurrent ? 'text-brand-400' : 'text-dark-400'} weight={m.isCurrent ? 'semibold' : 'medium'} className="text-[11px]" decimals={false} />
                     </span>
                   </div>
                 );
@@ -534,7 +534,7 @@ export default function ReflectView({ user }: Props) {
                     <div className="absolute top-[-4px] w-0.5 h-3.5 bg-dark-500 rounded"
                       style={{ left: `${(avg / maxAmt) * 100}%`, transform: 'translateX(-50%)' }} />
                   </div>
-                  <Amount value={Math.round(avg)} size="sm" color="text-dark-500" weight="medium" className="text-[11px] w-14 text-right flex-shrink-0" />
+                  <Amount value={Math.round(avg)} size="sm" color="text-dark-500" weight="medium" className="text-[11px] w-14 text-right flex-shrink-0" decimals={false} />
                 </div>
               )}
             </div>
