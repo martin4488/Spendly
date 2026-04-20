@@ -260,7 +260,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
       />
 
       {/* ── HEADER ── */}
-      <div className="pt-14 pb-6 px-5 relative flex-shrink-0 text-center z-10">
+      <div className="pt-14 pb-8 px-5 relative flex-shrink-0 text-center z-10">
         {/* Close button */}
         <button
           onClick={onClose}
@@ -272,37 +272,37 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
         {/* Category chip */}
         <button
           onClick={() => setShowCategoryPicker(true)}
-          className="inline-flex items-center gap-2 bg-white/15 rounded-full px-3.5 py-1.5 mb-5 active:bg-white/25 transition-colors"
+          className="inline-flex items-center gap-2.5 bg-white/15 rounded-full px-4 py-2 mb-6 active:bg-white/25 transition-colors"
         >
-          <span className="text-lg">{headerIcon}</span>
-          <span className="text-[13px] font-semibold text-white/90">{headerName}</span>
-          <ChevronDown size={13} className="text-white/50" />
+          <span className="text-xl">{headerIcon}</span>
+          <span className="text-sm font-semibold text-white/90">{headerName}</span>
+          <ChevronDown size={14} className="text-white/50" />
         </button>
 
         {/* Hero amount */}
-        <div className="mb-2">
+        <div className="mb-3">
           {amountStr ? (
             <>
-              <span className="text-[54px] leading-none font-light text-white tracking-tight">
+              <span className="text-7xl leading-none font-light text-white tracking-tight">
                 {displayWhole}
               </span>
               {hasDecimals && (
-                <span className="text-[54px] leading-none font-light text-white/35 tracking-tight">
+                <span className="text-7xl leading-none font-light text-white/35 tracking-tight">
                   {displayDec}
                 </span>
               )}
             </>
           ) : (
-            <span className="text-[54px] leading-none font-light text-white/25 tracking-tight">0</span>
+            <span className="text-7xl leading-none font-light text-white/25 tracking-tight">0</span>
           )}
-          <span className="text-sm font-medium text-white/40 ml-1.5 align-top relative top-3">
+          <span className="text-base font-medium text-white/40 ml-2 align-top relative top-4">
             {currency}
           </span>
         </div>
 
         {/* Converted amount hint */}
         {isOtherCurrency && convertedAmount !== null && amt > 0 && (
-          <p className="text-white/35 text-xs mb-2">
+          <p className="text-white/35 text-sm mb-3">
             ≈ {formatWithCurrency(convertedAmount, defaultCurrency)}
           </p>
         )}
@@ -313,26 +313,26 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
           placeholder="Agregar nota..."
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          className="bg-transparent border-none outline-none text-center text-sm text-white/50 placeholder:text-white/25 w-full px-8 mb-4"
+          className="bg-transparent border-none outline-none text-center text-base text-white/50 placeholder:text-white/25 w-full px-8 mb-5"
         />
 
         {/* Date + Currency chips */}
-        <div className="flex items-center justify-center gap-2.5">
+        <div className="flex items-center justify-center gap-3">
           <button
             onClick={() => setShowDatePicker(!showDatePicker)}
-            className="inline-flex items-center gap-1.5 bg-white/10 hover:bg-white/15 rounded-full px-3 py-1.5 active:scale-95 transition-all"
+            className="inline-flex items-center gap-2 bg-white/10 hover:bg-white/15 rounded-full px-4 py-2 active:scale-95 transition-all"
           >
-            <Calendar size={13} className="text-white/60" />
-            <span className="text-xs font-medium text-white/70 capitalize">{dateLabel}</span>
+            <Calendar size={15} className="text-white/60" />
+            <span className="text-sm font-medium text-white/70 capitalize">{dateLabel}</span>
           </button>
 
           <button
             onClick={() => setShowCurrencyPicker(true)}
-            className="inline-flex items-center gap-1.5 bg-white/10 hover:bg-white/15 rounded-full px-3 py-1.5 active:scale-95 transition-all"
+            className="inline-flex items-center gap-2 bg-white/10 hover:bg-white/15 rounded-full px-4 py-2 active:scale-95 transition-all"
           >
-            <span className="text-sm">{currencyInfo.flag}</span>
-            <span className="text-xs font-medium text-white/70">{currency}</span>
-            <ChevronDown size={11} className="text-white/40" />
+            <span className="text-base">{currencyInfo.flag}</span>
+            <span className="text-sm font-medium text-white/70">{currency}</span>
+            <ChevronDown size={13} className="text-white/40" />
           </button>
         </div>
       </div>
