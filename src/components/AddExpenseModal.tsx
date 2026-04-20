@@ -152,10 +152,10 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
   const headerName = selectedCat?.name || 'Categoría';
 
   const today = new Date().toISOString().split('T')[0];
-  const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
   const dateLabel = (() => {
     if (date === today) return 'Hoy';
-    if (date === yesterday) return 'Ayer';
+    const yest = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+    if (date === yest) return 'Ayer';
     try { return format(parseISO(date), "d MMM", { locale: es }); }
     catch { return date; }
   })();
@@ -251,13 +251,16 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
   return (
     <div className="fixed inset-0 z-[60] flex flex-col bg-dark-900">
 
-      {/* ── HEADER with gradient ── */}
+      {/* ── Full-screen gradient background ── */}
       <div
-        className="pt-14 pb-6 px-5 relative flex-shrink-0 text-center transition-colors duration-300"
+        className="absolute inset-0 pointer-events-none transition-all duration-300"
         style={{
-          background: `linear-gradient(180deg, ${headerColor} 0%, ${headerColor}ee 40%, ${headerColor}88 65%, ${headerColor}33 82%, #0f172a 100%)`,
+          background: `linear-gradient(180deg, ${headerColor} 0%, ${headerColor}cc 30%, ${headerColor}44 55%, ${headerColor}0a 75%, transparent 100%)`,
         }}
-      >
+      />
+
+      {/* ── HEADER ── */}
+      <div className="pt-14 pb-6 px-5 relative flex-shrink-0 text-center z-10">
         {/* Close button */}
         <button
           onClick={onClose}
@@ -323,15 +326,6 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
             <span className="text-xs font-medium text-white/70 capitalize">{dateLabel}</span>
           </button>
 
-          {date === today && (
-            <button
-              onClick={() => setDate(yesterday)}
-              className="text-[11px] text-white/30 border border-dashed border-white/15 rounded-full px-2.5 py-1 hover:text-white/50 hover:border-white/25 transition-colors"
-            >
-              Ayer?
-            </button>
-          )}
-
           <button
             onClick={() => setShowCurrencyPicker(true)}
             className="inline-flex items-center gap-1.5 bg-white/10 hover:bg-white/15 rounded-full px-3 py-1.5 active:scale-95 transition-all"
@@ -345,7 +339,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
 
       {/* ── Date picker (expandable) ── */}
       {showDatePicker && (
-        <div className="px-5 py-3 bg-dark-800/50 flex-shrink-0">
+        <div className="px-5 py-3 bg-dark-800/50 flex-shrink-0 relative z-10">
           <input
             type="date"
             value={date}
@@ -362,7 +356,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
       <div className="flex-1" />
 
       {/* ── BOTTOM: Save button + Numpad ── */}
-      <div className="flex-shrink-0">
+      <div className="flex-shrink-0 relative z-10">
         {/* Save button */}
         <div className="px-5 py-3">
           <button
