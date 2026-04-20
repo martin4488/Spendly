@@ -101,7 +101,7 @@ function bumpCatFrequency(catId: string) {
   } catch {}
 }
 
-function getTopFrequent(allCats: Category[], limit = 8): Category[] {
+function getTopFrequent(allCats: Category[], limit = 10): Category[] {
   const data = loadFreqData();
   const now = Date.now();
   // Compute current decayed scores without mutating storage
@@ -415,13 +415,13 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
             ) : (
               // ── Grid view — compact 4 cols with Frecuentes section ──
               <div className="pb-8">
-                {/* Frecuentes section */}
+                {/* Frecuentes section — highlighted */}
                 {frequentCats.length > 0 && (
-                  <div className="mb-4">
-                    <div className="px-4 pt-3 pb-1.5">
-                      <span className="text-[10px] font-bold text-dark-400 uppercase tracking-wider">Frecuentes</span>
+                  <div className="mx-3 mb-3 bg-dark-800/50 rounded-2xl py-2.5">
+                    <div className="px-3 pb-1.5">
+                      <span className="text-[10px] font-bold text-dark-300 uppercase tracking-wider">Frecuentes</span>
                     </div>
-                    <div className="grid grid-cols-5 gap-x-1 gap-y-2.5 px-3">
+                    <div className="grid grid-cols-5 gap-x-1 gap-y-2.5 px-2">
                       {frequentCats.map((cat) => {
                         const isActive = categoryId === cat.id;
                         return (
@@ -459,7 +459,6 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
                         );
                       })}
                     </div>
-                    <div className="mx-4 mt-3 border-b border-dark-800/60" />
                   </div>
                 )}
 
@@ -468,8 +467,8 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
                   const entries = flattenTree(root.children, [root]);
                   if (entries.length === 0) return null;
                   return (
-                    <div key={root.id} className="mb-4">
-                      <div className="px-4 pt-3 pb-1.5">
+                    <div key={root.id} className="mb-2">
+                      <div className="px-4 pt-2 pb-1">
                         <span className="text-[10px] font-bold text-dark-400 uppercase tracking-wider">{root.name}</span>
                       </div>
                       <div className="grid grid-cols-5 gap-x-1 gap-y-2.5 px-3">
