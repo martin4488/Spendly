@@ -421,7 +421,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
                     <div className="px-4 pt-3 pb-1.5">
                       <span className="text-[10px] font-bold text-dark-400 uppercase tracking-wider">Frecuentes</span>
                     </div>
-                    <div className="grid grid-cols-4 gap-x-1 gap-y-2.5 px-3">
+                    <div className="grid grid-cols-5 gap-x-1 gap-y-2.5 px-3">
                       {frequentCats.map((cat) => {
                         const isActive = categoryId === cat.id;
                         return (
@@ -472,7 +472,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
                       <div className="px-4 pt-3 pb-1.5">
                         <span className="text-[10px] font-bold text-dark-400 uppercase tracking-wider">{root.name}</span>
                       </div>
-                      <div className="grid grid-cols-4 gap-x-1 gap-y-2.5 px-3">
+                      <div className="grid grid-cols-5 gap-x-1 gap-y-2.5 px-3">
                         {entries.map(({ cat, ancestors }) => {
                           const isActive = categoryId === cat.id;
                           const depth = ancestors.length - 1;
