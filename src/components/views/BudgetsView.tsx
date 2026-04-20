@@ -463,14 +463,14 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
                   <div className="flex items-baseline justify-between mb-2.5">
                     <div className="flex items-baseline gap-1.5">
                       {isOver ? (
-                        <><Amount value={spent - monthlyBudget} size="lg" color="text-red-400" weight="extrabold" />
+                        <><Amount value={spent - monthlyBudget} size="lg" color="text-red-400" weight="extrabold" decimals={false} />
                         <span className="text-xs text-red-400/70">excedido</span></>
                       ) : (
-                        <><Amount value={left} size="lg" color={textColor} weight="extrabold" />
+                        <><Amount value={left} size="lg" color={textColor} weight="extrabold" decimals={false} />
                         <span className="text-xs text-dark-500">disponible</span></>
                       )}
                     </div>
-                    <span className="text-xs text-dark-500">de <Amount value={monthlyBudget} size="sm" color="text-dark-500" weight="medium" /></span>
+                    <span className="text-xs text-dark-500">de <Amount value={monthlyBudget} size="sm" color="text-dark-500" weight="medium" decimals={false} /></span>
                   </div>
                   <div className="w-full rounded-full h-1.5 mb-2 overflow-hidden relative" style={{ background: '#1e3a5f' }}>
                     {!isOver && <div className="absolute right-0 top-0 h-full rounded-full transition-all duration-500"
@@ -485,7 +485,7 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
                     <div className="flex items-center gap-1.5 pt-2 border-t border-white/5">
                       <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: globalAccumulated >= 0 ? '#22c55e' : '#ef4444' }} />
                       <span className="text-[11px] font-medium" style={{ color: globalAccumulated >= 0 ? '#22c55e' : '#ef4444' }}>
-                        {formatCurrency(Math.abs(globalAccumulated))} {globalAccumulated >= 0 ? 'ahorro acumulado' : 'excedido acumulado'} en {now.getFullYear()}{globalAccumMonths ? ` (${globalAccumMonths})` : ''}
+                        {formatCurrency(Math.abs(globalAccumulated), undefined, true)} {globalAccumulated >= 0 ? 'ahorro acumulado' : 'excedido acumulado'} en {now.getFullYear()}{globalAccumMonths ? ` (${globalAccumMonths})` : ''}
                       </span>
                     </div>
                   )}
@@ -493,7 +493,7 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
               ) : (
                 <div className="flex items-center justify-between">
                   <div>
-                    <Amount value={spent} size="lg" color="text-dark-200" weight="extrabold" />
+                    <Amount value={spent} size="lg" color="text-dark-200" weight="extrabold" decimals={false} />
                     <span className="text-xs text-dark-500 ml-2">gastado este mes</span>
                   </div>
                   <span className="text-xs text-brand-400 font-medium">Configurar →</span>
@@ -545,17 +545,17 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
                   <div className="flex items-baseline gap-1.5">
                     {pct >= 100 ? (
                       <>
-                        <Amount value={Math.abs(left - budget.amount + left)} sign="-" size="lg" color="text-red-400" weight="extrabold" />
+                        <Amount value={Math.abs(left - budget.amount + left)} sign="-" size="lg" color="text-red-400" weight="extrabold" decimals={false} />
                         <span className="text-xs text-red-400/70">excedido</span>
                       </>
                     ) : (
                       <>
-                        <Amount value={left} size="lg" color={pct >= 80 ? 'text-amber-400' : 'text-brand-400'} weight="extrabold" />
+                        <Amount value={left} size="lg" color={pct >= 80 ? 'text-amber-400' : 'text-brand-400'} weight="extrabold" decimals={false} />
                         <span className="text-xs text-dark-500">disponible</span>
                       </>
                     )}
                   </div>
-                  <span className="text-xs text-dark-500">de <Amount value={budget.amount} size="sm" color="text-dark-500" weight="medium" /></span>
+                  <span className="text-xs text-dark-500">de <Amount value={budget.amount} size="sm" color="text-dark-500" weight="medium" decimals={false} /></span>
                 </div>
                 <div className="w-full bg-dark-700 rounded-full h-1.5 mb-2 overflow-hidden relative">
                   {pct < 100 && (
@@ -573,7 +573,7 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
                 {(budget as any).prevAccumulated !== null && (budget as any).prevAccumulated < 0 && (
                   <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-red-500/10">
                     <div className="w-1.5 h-1.5 rounded-full bg-red-400 flex-shrink-0" />
-                    <span className="text-[11px] text-red-400">{formatCurrency(Math.abs((budget as any).prevAccumulated))} excedido acumulado en {new Date().getFullYear()}{(budget as any).prevAccumMonths ? ` (${(budget as any).prevAccumMonths})` : ''}</span>
+                    <span className="text-[11px] text-red-400">{formatCurrency(Math.abs((budget as any).prevAccumulated), undefined, true)} excedido acumulado en {new Date().getFullYear()}{(budget as any).prevAccumMonths ? ` (${(budget as any).prevAccumMonths})` : ''}</span>
                   </div>
                 )}
               </button>
