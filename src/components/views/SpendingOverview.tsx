@@ -105,7 +105,7 @@ function DonutChart({ cats, total }: { cats: CatSpend[]; total: number }) {
           </g>
         );
       })}
-      <text x={CX} y={CY - 9} textAnchor="middle" fill="white" fontSize={15} fontWeight={700}>-{formatCurrency(total)}</text>
+      <text x={CX} y={CY - 9} textAnchor="middle" fill="white" fontSize={15} fontWeight={700}>-{formatCurrency(total, undefined, true)}</text>
       <text x={CX} y={CY + 10} textAnchor="middle" fill="#64748b" fontSize={10}>Gastos totales</text>
     </svg>
   );
@@ -301,7 +301,7 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
               <p className={`font-semibold ${depth === 0 ? 'text-[12px]' : 'text-[11px] text-dark-200'}`}>{cat.name}</p>
               <p className="text-[10px] text-dark-500">{cat.transactions} {cat.transactions === 1 ? 'transacción' : 'transacciones'}</p>
             </button>
-            <Amount value={cat.spent} sign="-" size="sm" color="text-red-400" weight="bold" className={`flex-shrink-0 ${depth === 0 ? 'text-[12px]' : 'text-[11px]'}`} />
+            <Amount value={cat.spent} sign="-" size="sm" color="text-red-400" weight="bold" className={`flex-shrink-0 ${depth === 0 ? 'text-[12px]' : 'text-[11px]'}`} decimals={false} />
             {hasChildren && (
               <button onClick={() => setExpanded(prev => { const n = new Set(prev); n.has(cat.id) ? n.delete(cat.id) : n.add(cat.id); return n; })} className="p-0.5 text-dark-500 ml-0.5">
                 {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
@@ -344,7 +344,7 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
           <div className="px-2 mb-2"><DonutChart cats={catSpending} total={totalSpent} /></div>
           <div className="flex items-center justify-between px-4 py-3 mb-1 border-t border-b border-dark-800/60">
             <span className="text-xs text-dark-400 font-medium uppercase tracking-wider">Total gastado</span>
-            <Amount value={totalSpent} sign="-" size="md" color="text-red-400" weight="bold" />
+            <Amount value={totalSpent} sign="-" size="md" color="text-red-400" weight="bold" decimals={false} />
           </div>
           <div className="px-3">{renderCatList(catSpending)}</div>
         </>
@@ -517,7 +517,7 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
                 <div key={group.date}>
                   <div className="flex items-center justify-between px-4 py-1.5 bg-dark-800/60">
                     <span className="text-[10px] font-semibold text-dark-500 uppercase tracking-wider capitalize">{group.label}</span>
-                    <Amount value={group.total} sign="-" size="sm" weight="semibold" color="text-dark-500" className="text-[10px]" />
+                    <Amount value={group.total} sign="-" size="sm" weight="semibold" color="text-dark-500" className="text-[10px]" decimals={false} />
                   </div>
                   {group.expenses.map(exp => {
                     const cat = resolveCat(exp.category_id);
@@ -534,7 +534,7 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
                               <p className="text-[10px] text-dark-500 truncate">{exp.description}</p>
                             )}
                           </div>
-                          <Amount value={exp.amount} sign="-" size="sm" color="text-red-400" weight="bold" className="flex-shrink-0" />
+                          <Amount value={exp.amount} sign="-" size="sm" color="text-red-400" weight="bold" className="flex-shrink-0" decimals={false} />
                         </div>
                       </SwipeableRow>
                     );
