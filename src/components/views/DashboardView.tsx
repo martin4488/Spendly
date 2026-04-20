@@ -7,7 +7,7 @@ import { getYearRange } from '@/lib/utils';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { Expense, Category } from '@/types';
-import { Plus, ChevronRight, PieChart, Search, X } from 'lucide-react';
+import { Plus, Search, X } from 'lucide-react';
 import type { CurrencyCode } from '@/lib/currency';
 import { getCategories } from '@/lib/categoryCache';
 import SwipeableRow from '@/components/SwipeableRow';
@@ -20,11 +20,6 @@ type ViewMode = 'months' | 'years';
 
 const MONTHS_ES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
 const MONTHS_SHORT_ES = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
-
-function formatCompact(value: number): string {
-  if (value >= 1000) return `${(value / 1000).toFixed(1)}k`;
-  return String(Math.round(value));
-}
 
 function toDateStr(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -55,8 +50,10 @@ function WalletChart({
   const plotW = W - padL - padR;
 
   const maxVal = Math.max(...data.map(d => d.total), 1);
-  const midVal = maxVal / 2;
-  const topVal = maxVal * 1.05;
+  const topVal = maxVal * 1.15; // 15% headroom
+  const midVal = topVal / 2;
+
+  const fmtGrid = (v: number) => v >= 1000 ? `${(v / 1000).toFixed(1).replace('.0', '')}k` : `${Math.round(v)}`;
 
   const toY = (v: number) => padTop + plotH - (v / topVal) * plotH;
   const baseY = toY(0);
@@ -67,15 +64,23 @@ function WalletChart({
   const slotW = plotW / n;
   const barW = slotW * 0.45;
 
+  const gridlines = [
+    { y: topY, label: fmtGrid(topVal) },
+    { y: midY, label: fmtGrid(midVal) },
+  ];
+
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} style={{ display: 'block' }}>
-      <line x1={padL} y1={topY} x2={W - padR} y2={topY} stroke="#2d3f55" strokeDasharray="3 3" strokeWidth={1} />
-      <text x={padL - 4} y={topY - 3} textAnchor="end" fill="#64748b" fontSize={10}>{formatCompact(topVal)}</text>
-      <line x1={padL} y1={midY} x2={W - padR} y2={midY} stroke="#2d3f55" strokeDasharray="3 3" strokeWidth={1} />
-      <text x={padL - 4} y={midY - 3} textAnchor="end" fill="#64748b" fontSize={10}>{formatCompact(midVal)}</text>
-      <line x1={padL} y1={baseY} x2={W - padR} y2={baseY} stroke="#2d3f55" strokeDasharray="3 3" strokeWidth={1} />
-      <text x={padL - 4} y={baseY - 3} textAnchor="end" fill="#64748b" fontSize={10}>0</text>
-      <line x1={padL} y1={baseY} x2={W - padR} y2={baseY} stroke="#3d5068" strokeWidth={1.5} />
+      {/* Dynamic gridlines */}
+      {gridlines.map((g, i) => (
+        <g key={i}>
+          <line x1={padL} y1={g.y} x2={W - padR} y2={g.y} stroke="rgba(255,255,255,0.06)" strokeDasharray="2 3" strokeWidth={1} />
+          <text x={padL - 4} y={g.y + 3} textAnchor="end" fill="#71717a" fontSize={9} fontFamily="var(--font-mono)">{g.label}</text>
+        </g>
+      ))}
+      {/* Baseline */}
+      <line x1={padL} y1={baseY} x2={W - padR} y2={baseY} stroke="rgba(255,255,255,0.15)" strokeWidth={1.5} />
+      <text x={padL - 4} y={baseY + 3} textAnchor="end" fill="#71717a" fontSize={9} fontFamily="var(--font-mono)">0</text>
 
       {data.map((entry, i) => {
         const cx = padL + i * slotW + slotW / 2;
@@ -84,15 +89,16 @@ function WalletChart({
         const barY = baseY - barH;
         return (
           <g key={i}>
-            <rect x={barX} y={barY} width={barW} height={barH} rx={2}
-              fill={entry.isCurrent ? '#ef4444' : 'rgba(239,68,68,0.55)'} />
+            <title>{entry.name} {entry.year}: {Math.round(entry.total)}</title>
+            <rect x={barX} y={barY} width={barW} height={barH} rx={3}
+              fill={entry.isCurrent ? '#f87171' : 'rgba(248,113,113,0.32)'} />
             <text x={cx} y={baseY + 13} textAnchor="middle"
-              fill={entry.isCurrent ? '#94a3b8' : '#64748b'} fontSize={11}
-              fontWeight={entry.isCurrent ? 600 : 400}>
+              fill={entry.isCurrent ? '#e4e4e7' : '#a1a1aa'} fontSize={10}
+              fontWeight={entry.isCurrent ? 700 : 500}>
               {entry.name}
             </text>
             {entry.year && (
-              <text x={cx} y={baseY + 24} textAnchor="middle" fill="#475569" fontSize={9}>
+              <text x={cx} y={baseY + 24} textAnchor="middle" fill="#71717a" fontSize={9} fontFamily="var(--font-mono)">
                 {entry.year}
               </text>
             )}
@@ -426,10 +432,10 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
           >
             <Search size={17} />
           </button>
-          <div className="leading-none">
-            <Amount value={accumulatedTotal} currency={defaultCurrency} size="xl" weight="extrabold" />
+          <div className="leading-none" style={{ fontSize: 34 }}>
+            <Amount value={accumulatedTotal} currency={defaultCurrency} size="xl" weight="extrabold" className="!text-[34px] !tracking-[-1.5px]" />
           </div>
-          <p className="text-dark-400 text-[11px] mt-0.5 capitalize">
+          <p className="text-dark-400 text-[11px] mt-1.5 capitalize font-medium">
             {headerSubtitle}
           </p>
         </div>
@@ -466,14 +472,20 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
 
       {/* Spending Overview button */}
       {!showSearch && (
-        <div className="px-3 py-1">
+        <div className="px-5 pt-1.5 pb-3.5 flex justify-center">
           <button
             onClick={() => onNavigate('overview')}
-            className="w-full flex items-center justify-center gap-1.5 py-1.5 text-dark-400 hover:text-dark-200 transition-colors"
+            aria-label="Ver detalle de gastos del mes"
+            className="inline-flex items-center gap-2 px-3.5 py-1.5 bg-dark-800 rounded-full text-dark-300 hover:text-dark-200 transition-colors"
           >
-            <PieChart size={13} className="text-brand-400" />
-            <span className="text-[11px] font-medium">Spending Overview</span>
-            <ChevronRight size={12} className="text-dark-500" />
+            <span
+              className="w-3.5 h-3.5 rounded-full shrink-0"
+              style={{
+                background: 'conic-gradient(#22c55e 0 65%, rgba(255,255,255,0.08) 65% 100%)',
+              }}
+            />
+            <span className="text-[11px] font-semibold">Spending Overview</span>
+            <span className="text-dark-500 text-[13px] leading-none">›</span>
           </button>
         </div>
       )}
