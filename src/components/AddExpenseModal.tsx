@@ -255,7 +255,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
       <div
         className="pt-14 pb-6 px-5 relative flex-shrink-0 text-center transition-colors duration-300"
         style={{
-          background: `linear-gradient(180deg, ${headerColor} 0%, ${headerColor}dd 65%, #0f172a 100%)`,
+          background: `linear-gradient(180deg, ${headerColor} 0%, ${headerColor}ee 40%, ${headerColor}88 65%, ${headerColor}33 82%, #0f172a 100%)`,
         }}
       >
         {/* Close button */}
@@ -278,16 +278,19 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
 
         {/* Hero amount */}
         <div className="mb-2">
-          <span className="text-[54px] leading-none font-light text-white tracking-tight">
-            {displayWhole}
-          </span>
-          {hasDecimals && (
-            <span className="text-[54px] leading-none font-light text-white/30 tracking-tight">
-              {displayDec}
-            </span>
-          )}
-          {!amountStr && (
-            <span className="text-[54px] leading-none font-light text-white/20 tracking-tight">0</span>
+          {amountStr ? (
+            <>
+              <span className="text-[54px] leading-none font-light text-white tracking-tight">
+                {displayWhole}
+              </span>
+              {hasDecimals && (
+                <span className="text-[54px] leading-none font-light text-white/35 tracking-tight">
+                  {displayDec}
+                </span>
+              )}
+            </>
+          ) : (
+            <span className="text-[54px] leading-none font-light text-white/25 tracking-tight">0</span>
           )}
           <span className="text-sm font-medium text-white/40 ml-1.5 align-top relative top-3">
             {currency}
@@ -514,9 +517,9 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
                               {cat.icon}
                             </div>
                             <span
-                              className="text-center leading-tight text-dark-200 font-medium w-full"
+                              className="text-center leading-tight text-dark-200 w-full"
                               style={{
-                                fontSize: 11,
+                                fontSize: 10,
                                 display: '-webkit-box',
                                 WebkitLineClamp: 2,
                                 WebkitBoxOrient: 'vertical' as any,
@@ -567,9 +570,9 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
                                 {cat.icon}
                               </div>
                               <span
-                                className="text-center leading-tight text-dark-200 font-medium w-full"
+                                className="text-center leading-tight text-dark-200 w-full"
                                 style={{
-                                  fontSize: 11,
+                                  fontSize: 10,
                                   display: '-webkit-box',
                                   WebkitLineClamp: 2,
                                   WebkitBoxOrient: 'vertical' as any,
