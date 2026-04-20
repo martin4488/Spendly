@@ -14,7 +14,22 @@ export function getDefaultCurrency(): string {
 
 // Cache Intl.NumberFormat instances — avoids re-instantiation on every render
 const _fmtCache = new Map<string, Intl.NumberFormat>();
-function getCurrencyFormatter(code: string): Intl.NumberFormat {
+const _fmtIntCache = new Map<string, Intl.NumberFormat>();
+
+function getCurrencyFormatter(code: string, round?: boolean): Intl.NumberFormat {
+  if (round) {
+    let fmt = _fmtIntCache.get(code);
+    if (!fmt) {
+      fmt = new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: code,
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
+      });
+      _fmtIntCache.set(code, fmt);
+    }
+    return fmt;
+  }
   let fmt = _fmtCache.get(code);
   if (!fmt) {
     fmt = new Intl.NumberFormat('en-US', {
@@ -27,9 +42,9 @@ function getCurrencyFormatter(code: string): Intl.NumberFormat {
   return fmt;
 }
 
-export function formatCurrency(amount: number, currency?: string): string {
+export function formatCurrency(amount: number, currency?: string, round?: boolean): string {
   const code = currency || _defaultCurrency;
-  return getCurrencyFormatter(code).format(amount);
+  return getCurrencyFormatter(code, round).format(round ? Math.round(amount) : amount);
 }
 
 export function formatDate(date: string): string {
