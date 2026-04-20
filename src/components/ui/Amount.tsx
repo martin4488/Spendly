@@ -12,6 +12,8 @@ type Props = {
   /** Tailwind text-color class, e.g. 'text-red-400' */
   color?: string;
   weight?: 'medium' | 'semibold' | 'bold' | 'extrabold';
+  /** When false, rounds to integer and hides decimals */
+  decimals?: boolean;
   className?: string;
 };
 
@@ -37,15 +39,17 @@ export default function Amount({
   size = 'md',
   color = '',
   weight = 'bold',
+  decimals = true,
   className = '',
 }: Props) {
   const resolvedCurrency = (currency || getDefaultCurrency() || 'USD') as CurrencyCode;
   const abs = Math.abs(value);
-  const fixed = abs.toFixed(2);
-  const [intRaw, dec] = fixed.split('.');
 
-  // Format integer part with locale dots (1234 → 1.234)
-  const intFmt = Number(intRaw).toLocaleString('es-AR');
+  const intFmt = decimals
+    ? Number(Math.floor(abs)).toLocaleString('es-AR')
+    : Math.round(abs).toLocaleString('es-AR');
+
+  const dec = decimals ? abs.toFixed(2).split('.')[1] : null;
 
   const finalSign = sign !== undefined ? sign : (value < 0 ? '-' : '');
 
@@ -55,7 +59,7 @@ export default function Amount({
   return (
     <span className={`font-mono tabular-nums tracking-tight ${n} ${weightMap[weight]} ${color} ${className}`}>
       {finalSign}{sym}{intFmt}
-      <span className={`${d} opacity-60 font-medium`}>,{dec}</span>
+      {dec && <span className={`${d} opacity-60 font-medium`}>,{dec}</span>}
     </span>
   );
 }
