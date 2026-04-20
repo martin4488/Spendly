@@ -55,6 +55,69 @@ function deriveChildColor(parentHex: string, siblingCount: number): string {
 import { CatNode, FlatEntry, buildTree, flattenTree } from '@/lib/categoryTree';
 import { getCategories, invalidateCategories } from '@/lib/categoryCache';
 
+// ── Frecuentes: exponential decay scoring in localStorage ────────────────────
+// Each category stores { score, ts } where ts = last update timestamp (ms).
+// On bump: score = oldScore * decay^(daysSinceLast) + 1
+// This means recent usage weighs more; old usage fades over ~30 days.
+const FREQ_KEY = 'spendly_cat_freq';
+const HALF_LIFE_DAYS = 14; // score halves every 14 days of inactivity
+const DECAY = Math.pow(0.5, 1 / HALF_LIFE_DAYS); // ~0.9518 per day
+
+type FreqEntry = { s: number; t: number }; // score, timestamp
+type FreqData = Record<string, FreqEntry>;
+
+function loadFreqData(): FreqData {
+  try {
+    const raw = localStorage.getItem(FREQ_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    // Migration: if old format (plain numbers), convert
+    if (typeof Object.values(parsed)[0] === 'number') {
+      const migrated: FreqData = {};
+      const now = Date.now();
+      for (const [id, count] of Object.entries(parsed)) {
+        migrated[id] = { s: count as number, t: now };
+      }
+      localStorage.setItem(FREQ_KEY, JSON.stringify(migrated));
+      return migrated;
+    }
+    return parsed;
+  } catch { return {}; }
+}
+
+function bumpCatFrequency(catId: string) {
+  try {
+    const data = loadFreqData();
+    const now = Date.now();
+    const entry = data[catId];
+    if (entry) {
+      const days = (now - entry.t) / 86_400_000;
+      const decayed = entry.s * Math.pow(DECAY, days);
+      data[catId] = { s: decayed + 1, t: now };
+    } else {
+      data[catId] = { s: 1, t: now };
+    }
+    localStorage.setItem(FREQ_KEY, JSON.stringify(data));
+  } catch {}
+}
+
+function getTopFrequent(allCats: Category[], limit = 8): Category[] {
+  const data = loadFreqData();
+  const now = Date.now();
+  // Compute current decayed scores without mutating storage
+  const scores: [string, number][] = [];
+  for (const [id, entry] of Object.entries(data)) {
+    const days = (now - entry.t) / 86_400_000;
+    const current = entry.s * Math.pow(DECAY, days);
+    if (current > 0.1) scores.push([id, current]); // ignore near-zero
+  }
+  scores.sort((a, b) => b[1] - a[1]);
+  return scores
+    .slice(0, limit)
+    .map(([id]) => allCats.find(c => c.id === id))
+    .filter((c): c is Category => !!c && !c.hidden);
+}
+
 export default function AddExpenseModal({ user, defaultCurrency, onClose, onSaved, editingExpense }: Props) {
   const [categories, setCategories] = useState<Category[]>([]);
   const [roots, setRoots] = useState<CatNode[]>([]);
@@ -66,7 +129,8 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
   const [date, setDate] = useState(editingExpense?.date || new Date().toISOString().split('T')[0]);
   const [currency, setCurrency] = useState<CurrencyCode>((editingExpense?.original_currency as CurrencyCode) || defaultCurrency);
   const [showDatePicker, setShowDatePicker] = useState(false);
-  const [showCategoryPicker, setShowCategoryPicker] = useState(false);
+  // Open category picker immediately for new expenses (not edits)
+  const [showCategoryPicker, setShowCategoryPicker] = useState(!editingExpense);
   const [showCurrencyPicker, setShowCurrencyPicker] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -81,6 +145,9 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
   const [newCatParentId, setNewCatParentId] = useState<string | null>(null);
   const [savingCat, setSavingCat] = useState(false);
 
+  // Frecuentes
+  const [frequentCats, setFrequentCats] = useState<Category[]>([]);
+
   useEffect(() => { loadCategories(); }, [user.id]);
 
   async function loadCategories() {
@@ -88,6 +155,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
     const flat = Array.from(catsMap.values()).filter(c => !c.hidden);
     setCategories(flat);
     setRoots(buildTree(flat));
+    setFrequentCats(getTopFrequent(flat));
   }
 
   const selectedCat = categories.find(c => c.id === categoryId);
@@ -130,6 +198,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
 
   function handleSelectCategory(id: string) {
     setCategoryId(id);
+    bumpCatFrequency(id);
     setShowCategoryPicker(false);
     setSearchQuery('');
   }
@@ -158,7 +227,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
         .select().single();
       invalidateCategories();
       await loadCategories();
-      if (data) { setCategoryId(data.id); setShowCreateCategory(false); setShowCategoryPicker(false); setSearchQuery(''); }
+      if (data) { setCategoryId(data.id); bumpCatFrequency(data.id); setShowCreateCategory(false); setShowCategoryPicker(false); setSearchQuery(''); }
     } catch (err) { console.error(err); }
     finally { setSavingCat(false); }
   }
@@ -197,7 +266,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
           </button>
           <div className="text-right">
             <div className="flex items-center justify-end gap-2">
-              <span className="text-3xl font-extrabold text-white">-{displayAmount}</span>
+              <span className="text-3xl font-extrabold text-white">{displayAmount}</span>
               <button onClick={() => setShowCurrencyPicker(true)}
                 className="flex items-center gap-0.5 bg-white/20 rounded-full px-2 py-1 text-white/90">
                 <span className="text-xs font-semibold">{currencyInfo.symbol}</span>
@@ -308,7 +377,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
 
           {/* Search */}
           <div className="px-4 pb-3 flex-shrink-0">
-            <div className="flex items-center gap-2 bg-dark-800 rounded-2xl px-4 py-3">
+            <div className="flex items-center gap-2 bg-dark-800 rounded-2xl px-4 py-2.5">
               <Search size={16} className="text-dark-400 flex-shrink-0" />
               <input type="text" placeholder="Buscar categorías" value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
@@ -344,37 +413,85 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
                 </div>
               )
             ) : (
-              // ── Grid view — grilla 4 cols, agrupada por padre ──
+              // ── Grid view — compact 4 cols with Frecuentes section ──
               <div className="pb-8">
+                {/* Frecuentes section */}
+                {frequentCats.length > 0 && (
+                  <div className="mb-4">
+                    <div className="px-4 pt-3 pb-1.5">
+                      <span className="text-[10px] font-bold text-dark-400 uppercase tracking-wider">Frecuentes</span>
+                    </div>
+                    <div className="grid grid-cols-4 gap-x-1 gap-y-2.5 px-3">
+                      {frequentCats.map((cat) => {
+                        const isActive = categoryId === cat.id;
+                        return (
+                          <button
+                            key={`freq-${cat.id}`}
+                            onClick={() => handleSelectCategory(cat.id)}
+                            className="flex flex-col items-center gap-1 active:opacity-70 transition-opacity"
+                          >
+                            <div
+                              className="rounded-full flex items-center justify-center shrink-0"
+                              style={{
+                                width: 42,
+                                height: 42,
+                                backgroundColor: cat.color,
+                                fontSize: 20,
+                                boxShadow: isActive ? `0 0 0 2px white, 0 0 0 4px ${cat.color}` : undefined,
+                              }}
+                            >
+                              {cat.icon}
+                            </div>
+                            <span
+                              className="text-center leading-tight text-dark-200 w-full"
+                              style={{
+                                fontSize: 10,
+                                display: '-webkit-box',
+                                WebkitLineClamp: 2,
+                                WebkitBoxOrient: 'vertical' as any,
+                                overflow: 'hidden',
+                                wordBreak: 'break-word',
+                              }}
+                            >
+                              {cat.name}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="mx-4 mt-3 border-b border-dark-800/60" />
+                  </div>
+                )}
+
+                {/* All categories by parent */}
                 {roots.map(root => {
-                  // Only children are selectable — flatten children only (not root itself)
                   const entries = flattenTree(root.children, [root]);
-                  if (entries.length === 0) return null; // skip roots with no children
+                  if (entries.length === 0) return null;
                   return (
-                    <div key={root.id} className="mb-6">
-                      {/* Section header = nombre del padre */}
-                      <div className="px-4 pt-4 pb-2">
-                        <span className="text-xs font-bold text-dark-400 uppercase tracking-wider">{root.name}</span>
+                    <div key={root.id} className="mb-4">
+                      <div className="px-4 pt-3 pb-1.5">
+                        <span className="text-[10px] font-bold text-dark-400 uppercase tracking-wider">{root.name}</span>
                       </div>
-                      <div className="grid grid-cols-4 gap-x-2 gap-y-4 px-4">
+                      <div className="grid grid-cols-4 gap-x-1 gap-y-2.5 px-3">
                         {entries.map(({ cat, ancestors }) => {
                           const isActive = categoryId === cat.id;
-                          const depth = ancestors.length - 1; // depth relative to root's children
-                          const iconSize = depth === 0 ? 52 : depth === 1 ? 46 : 40;
+                          const depth = ancestors.length - 1;
+                          const iconSize = depth === 0 ? 42 : depth === 1 ? 38 : 34;
+                          const emojiSize = depth === 0 ? 20 : depth === 1 ? 17 : 15;
                           return (
                             <button
                               key={cat.id}
                               onClick={() => handleSelectCategory(cat.id)}
-                              className="flex flex-col items-center gap-1.5 active:opacity-70 transition-opacity"
+                              className="flex flex-col items-center gap-1 active:opacity-70 transition-opacity"
                             >
                               <div
-                                className="rounded-full flex items-center justify-center relative flex-shrink-0"
+                                className="rounded-full flex items-center justify-center relative shrink-0"
                                 style={{
                                   width: iconSize,
                                   height: iconSize,
                                   backgroundColor: cat.color,
-                                  fontSize: depth === 0 ? 24 : depth === 1 ? 20 : 17,
-                                  boxShadow: isActive ? `0 0 0 3px white, 0 0 0 5px ${cat.color}` : undefined,
+                                  fontSize: emojiSize,
+                                  boxShadow: isActive ? `0 0 0 2px white, 0 0 0 4px ${cat.color}` : undefined,
                                 }}
                               >
                                 {cat.icon}
@@ -382,7 +499,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
                               <span
                                 className="text-center leading-tight text-dark-200 w-full"
                                 style={{
-                                  fontSize: 11,
+                                  fontSize: 10,
                                   display: '-webkit-box',
                                   WebkitLineClamp: 2,
                                   WebkitBoxOrient: 'vertical' as any,
