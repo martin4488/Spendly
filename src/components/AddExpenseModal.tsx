@@ -56,14 +56,11 @@ import { CatNode, FlatEntry, buildTree, flattenTree } from '@/lib/categoryTree';
 import { getCategories, invalidateCategories } from '@/lib/categoryCache';
 
 // ── Frecuentes: exponential decay scoring in localStorage ────────────────────
-// Each category stores { score, ts } where ts = last update timestamp (ms).
-// On bump: score = oldScore * decay^(daysSinceLast) + 1
-// This means recent usage weighs more; old usage fades over ~30 days.
 const FREQ_KEY = 'spendly_cat_freq';
-const HALF_LIFE_DAYS = 14; // score halves every 14 days of inactivity
-const DECAY = Math.pow(0.5, 1 / HALF_LIFE_DAYS); // ~0.9518 per day
+const HALF_LIFE_DAYS = 14;
+const DECAY = Math.pow(0.5, 1 / HALF_LIFE_DAYS);
 
-type FreqEntry = { s: number; t: number }; // score, timestamp
+type FreqEntry = { s: number; t: number };
 type FreqData = Record<string, FreqEntry>;
 
 function loadFreqData(): FreqData {
@@ -71,7 +68,6 @@ function loadFreqData(): FreqData {
     const raw = localStorage.getItem(FREQ_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw);
-    // Migration: if old format (plain numbers), convert
     if (typeof Object.values(parsed)[0] === 'number') {
       const migrated: FreqData = {};
       const now = Date.now();
@@ -104,12 +100,11 @@ function bumpCatFrequency(catId: string) {
 function getTopFrequent(allCats: Category[], limit = 10): Category[] {
   const data = loadFreqData();
   const now = Date.now();
-  // Compute current decayed scores without mutating storage
   const scores: [string, number][] = [];
   for (const [id, entry] of Object.entries(data)) {
     const days = (now - entry.t) / 86_400_000;
     const current = entry.s * Math.pow(DECAY, days);
-    if (current > 0) scores.push([id, current]); // include any nonzero
+    if (current > 0) scores.push([id, current]);
   }
   scores.sort((a, b) => b[1] - a[1]);
   return scores
@@ -129,23 +124,16 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
   const [date, setDate] = useState(editingExpense?.date || new Date().toISOString().split('T')[0]);
   const [currency, setCurrency] = useState<CurrencyCode>((editingExpense?.original_currency as CurrencyCode) || defaultCurrency);
   const [showDatePicker, setShowDatePicker] = useState(false);
-  // Open category picker immediately for new expenses (not edits)
   const [showCategoryPicker, setShowCategoryPicker] = useState(!editingExpense);
   const [showCurrencyPicker, setShowCurrencyPicker] = useState(false);
   const [saving, setSaving] = useState(false);
-
-  // Search
   const [searchQuery, setSearchQuery] = useState('');
-
-  // Create category
   const [showCreateCategory, setShowCreateCategory] = useState(false);
   const [newCatName, setNewCatName] = useState('');
   const [newCatIcon, setNewCatIcon] = useState('📦');
   const [newCatColor, setNewCatColor] = useState(CATEGORY_COLORS[Math.floor(Math.random() * CATEGORY_COLORS.length)]);
   const [newCatParentId, setNewCatParentId] = useState<string | null>(null);
   const [savingCat, setSavingCat] = useState(false);
-
-  // Frecuentes
   const [frequentCats, setFrequentCats] = useState<Category[]>([]);
 
   useEffect(() => { loadCategories(); }, [user.id]);
@@ -162,14 +150,13 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
   const headerColor = selectedCat?.color || '#475569';
   const headerIcon = selectedCat?.icon || '💵';
   const headerName = selectedCat?.name || 'Categoría';
-  const displayAmount = amountStr || '0';
 
   const today = new Date().toISOString().split('T')[0];
   const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
   const dateLabel = (() => {
     if (date === today) return 'Hoy';
     if (date === yesterday) return 'Ayer';
-    try { return format(parseISO(date), "d 'de' MMM yyyy", { locale: es }); }
+    try { return format(parseISO(date), "d MMM", { locale: es }); }
     catch { return date; }
   })();
 
@@ -179,12 +166,23 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
   const currencyInfo = CURRENCIES[currency];
   const canSave = !saving && !!amountStr && parseFloat(amountStr) > 0 && !!categoryId;
 
-  // Search across all levels
+  // Format display amount: split integer and decimal parts
+  const displayWhole = amountStr ? amountStr.split('.')[0] || '0' : '0';
+  const displayDec = amountStr.includes('.') ? '.' + (amountStr.split('.')[1] || '') : '';
+  const hasDecimals = amountStr.includes('.');
+
+  // Save button label with amount
+  const saveBtnLabel = (() => {
+    if (saving) return editingExpense ? 'Guardando...' : 'Guardando...';
+    if (editingExpense) {
+      return amt > 0 ? `Guardar ${formatWithCurrency(amt, currency)}` : 'Guardar cambios';
+    }
+    return amt > 0 ? `Agregar ${formatWithCurrency(amt, currency)}` : 'Agregar gasto';
+  })();
+
   const allEntries = flattenTree(roots);
   const q = searchQuery.trim().toLowerCase();
   const searchResults = q ? allEntries.filter(e => e.cat.name.toLowerCase().includes(q)) : [];
-
-  // Root cats for create picker
   const rootCats = categories.filter(c => !c.parent_id);
 
   function handleNumpad(key: string) {
@@ -253,83 +251,158 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
   return (
     <div className="fixed inset-0 z-[60] flex flex-col bg-dark-900">
 
-      {/* ── HEADER ── */}
-      <div className="pt-12 pb-5 px-5 relative flex-shrink-0" style={{ backgroundColor: headerColor }}>
-        <button onClick={onClose} className="absolute top-4 left-4 p-1 text-white/80 hover:text-white"><X size={24} /></button>
-        <p className="text-center text-white/90 text-sm font-semibold mb-4">
-          {editingExpense ? 'Editar gasto' : `Agregar ${headerName}`}
-        </p>
-        <div className="flex items-center justify-between">
-          <button onClick={() => setShowCategoryPicker(true)}
-            className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center text-2xl">
-            {headerIcon}
-          </button>
-          <div className="text-right">
-            <div className="flex items-center justify-end gap-2">
-              <span className="text-3xl font-extrabold text-white">{displayAmount}</span>
-              <button onClick={() => setShowCurrencyPicker(true)}
-                className="flex items-center gap-0.5 bg-white/20 rounded-full px-2 py-1 text-white/90">
-                <span className="text-xs font-semibold">{currencyInfo.symbol}</span>
-                <ChevronDown size={12} />
-              </button>
-            </div>
-            {isOtherCurrency && convertedAmount !== null && amt > 0 && (
-              <p className="text-white/50 text-xs mt-0.5">≈ {formatWithCurrency(convertedAmount, defaultCurrency)}</p>
-            )}
-            {!isOtherCurrency && <p className="text-white/60 text-xs mt-0.5">{currency}</p>}
-          </div>
-        </div>
-      </div>
-
-      {/* ── FORM FIELDS ── */}
-      <div className="flex-1 overflow-y-auto">
-        <button onClick={() => setShowDatePicker(!showDatePicker)}
-          className="flex items-center gap-3 px-5 py-4 border-b border-dark-800 w-full">
-          <Calendar size={18} className="text-dark-400" />
-          <span className="text-sm font-medium flex-1 text-left capitalize">{dateLabel}</span>
-          {date === today && (
-            <span onClick={(e) => { e.stopPropagation(); setDate(yesterday); }}
-              className="text-xs text-dark-500 border border-dashed border-dark-600 rounded-full px-3 py-1">Ayer?</span>
-          )}
+      {/* ── HEADER with gradient ── */}
+      <div
+        className="pt-14 pb-6 px-5 relative flex-shrink-0 text-center transition-colors duration-300"
+        style={{
+          background: `linear-gradient(180deg, ${headerColor} 0%, ${headerColor}dd 65%, #0f172a 100%)`,
+        }}
+      >
+        {/* Close button */}
+        <button
+          onClick={onClose}
+          className="absolute top-4 left-4 p-1.5 text-white/60 hover:text-white active:scale-95 transition-all"
+        >
+          <X size={22} />
         </button>
-        {showDatePicker && (
-          <div className="px-5 py-3 border-b border-dark-800 bg-dark-800/50">
-            <input type="date" value={date}
-              onChange={(e) => { const v = e.target.value; if (/^\d{4}-\d{2}-\d{2}$/.test(v)) { setDate(v); setShowDatePicker(false); } }}
-              className="w-full bg-dark-700 border border-dark-600 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors" />
-          </div>
-        )}
-        <div className="flex items-center gap-3 px-5 py-4 border-b border-dark-800">
-          <span className="text-dark-400 text-lg">✏️</span>
-          <input type="text" placeholder="Descripción" value={description} onChange={(e) => setDescription(e.target.value)}
-            className="flex-1 bg-transparent text-sm placeholder:text-dark-500 focus:outline-none" />
+
+        {/* Category chip */}
+        <button
+          onClick={() => setShowCategoryPicker(true)}
+          className="inline-flex items-center gap-2 bg-white/15 rounded-full px-3.5 py-1.5 mb-5 active:bg-white/25 transition-colors"
+        >
+          <span className="text-lg">{headerIcon}</span>
+          <span className="text-[13px] font-semibold text-white/90">{headerName}</span>
+          <ChevronDown size={13} className="text-white/50" />
+        </button>
+
+        {/* Hero amount */}
+        <div className="mb-2">
+          <span className="text-[54px] leading-none font-light text-white tracking-tight">
+            {displayWhole}
+          </span>
+          {hasDecimals && (
+            <span className="text-[54px] leading-none font-light text-white/30 tracking-tight">
+              {displayDec}
+            </span>
+          )}
+          {!amountStr && (
+            <span className="text-[54px] leading-none font-light text-white/20 tracking-tight">0</span>
+          )}
+          <span className="text-sm font-medium text-white/40 ml-1.5 align-top relative top-3">
+            {currency}
+          </span>
         </div>
 
-      </div>
+        {/* Converted amount hint */}
+        {isOtherCurrency && convertedAmount !== null && amt > 0 && (
+          <p className="text-white/35 text-xs mb-2">
+            ≈ {formatWithCurrency(convertedAmount, defaultCurrency)}
+          </p>
+        )}
 
-      {/* ── BOTTOM ── */}
-      <div className="flex-shrink-0">
-        <div className="px-5 py-3">
-          <button onClick={handleSave} disabled={!canSave}
-            className="w-full py-4 rounded-2xl font-bold text-base transition-all disabled:opacity-40"
-            style={{ backgroundColor: headerColor, color: 'white' }}>
-            {saving ? 'Guardando...' : editingExpense ? 'Guardar cambios' : 'Agregar gasto'}
+        {/* Description input inline */}
+        <input
+          type="text"
+          placeholder="Agregar nota..."
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          className="bg-transparent border-none outline-none text-center text-sm text-white/50 placeholder:text-white/25 w-full px-8 mb-4"
+        />
+
+        {/* Date + Currency chips */}
+        <div className="flex items-center justify-center gap-2.5">
+          <button
+            onClick={() => setShowDatePicker(!showDatePicker)}
+            className="inline-flex items-center gap-1.5 bg-white/10 hover:bg-white/15 rounded-full px-3 py-1.5 active:scale-95 transition-all"
+          >
+            <Calendar size={13} className="text-white/60" />
+            <span className="text-xs font-medium text-white/70 capitalize">{dateLabel}</span>
+          </button>
+
+          {date === today && (
+            <button
+              onClick={() => setDate(yesterday)}
+              className="text-[11px] text-white/30 border border-dashed border-white/15 rounded-full px-2.5 py-1 hover:text-white/50 hover:border-white/25 transition-colors"
+            >
+              Ayer?
+            </button>
+          )}
+
+          <button
+            onClick={() => setShowCurrencyPicker(true)}
+            className="inline-flex items-center gap-1.5 bg-white/10 hover:bg-white/15 rounded-full px-3 py-1.5 active:scale-95 transition-all"
+          >
+            <span className="text-sm">{currencyInfo.flag}</span>
+            <span className="text-xs font-medium text-white/70">{currency}</span>
+            <ChevronDown size={11} className="text-white/40" />
           </button>
         </div>
-        <div className="border-t border-dark-700">
-          <div className="grid grid-cols-3">
+      </div>
+
+      {/* ── Date picker (expandable) ── */}
+      {showDatePicker && (
+        <div className="px-5 py-3 bg-dark-800/50 flex-shrink-0">
+          <input
+            type="date"
+            value={date}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (/^\d{4}-\d{2}-\d{2}$/.test(v)) { setDate(v); setShowDatePicker(false); }
+            }}
+            className="w-full bg-dark-700 border border-dark-600 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors"
+          />
+        </div>
+      )}
+
+      {/* ── Spacer to push bottom to bottom ── */}
+      <div className="flex-1" />
+
+      {/* ── BOTTOM: Save button + Numpad ── */}
+      <div className="flex-shrink-0">
+        {/* Save button */}
+        <div className="px-5 py-3">
+          <button
+            onClick={handleSave}
+            disabled={!canSave}
+            className="w-full py-4 rounded-2xl font-bold text-[15px] transition-all duration-200 disabled:opacity-30 active:scale-[0.98]"
+            style={{
+              backgroundColor: headerColor,
+              color: 'white',
+              boxShadow: canSave ? `0 4px 24px ${headerColor}40` : 'none',
+            }}
+          >
+            {saveBtnLabel}
+          </button>
+        </div>
+
+        {/* Numpad — gapped rounded keys */}
+        <div className="px-2 pb-1">
+          <div className="grid grid-cols-3 gap-[6px]">
             {['1','2','3','4','5','6','7','8','9','.','0','backspace'].map((key) => {
               const isDel = key === 'backspace';
+              const isDot = key === '.';
               return (
-                <button key={key} onClick={() => isDel ? handleNumpad('backspace') : handleNumpad(key)}
-                  className="py-[14px] text-center text-xl font-medium border-b border-r border-dark-800 active:bg-dark-700 transition-colors bg-dark-900 text-white">
-                  {isDel ? <span className="flex items-center justify-center"><Delete size={22} /></span> : key}
+                <button
+                  key={key}
+                  onClick={() => isDel ? handleNumpad('backspace') : handleNumpad(key)}
+                  className="py-[15px] text-center text-[22px] font-normal rounded-xl active:scale-95 active:bg-dark-600 transition-all duration-100 bg-dark-800/60 text-white"
+                >
+                  {isDel ? (
+                    <span className="flex items-center justify-center">
+                      <Delete size={21} className="text-white/50" />
+                    </span>
+                  ) : isDot ? (
+                    <span className="text-white/40">.</span>
+                  ) : (
+                    key
+                  )}
                 </button>
               );
             })}
           </div>
-          <div className="h-[env(safe-area-inset-bottom)]" />
         </div>
+        <div className="h-[env(safe-area-inset-bottom)]" />
       </div>
 
       {/* ── CURRENCY PICKER ── */}
@@ -388,7 +461,6 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
 
           <div className="flex-1 overflow-y-auto">
             {q ? (
-              // ── Search results — lista simple ──
               searchResults.length === 0 ? (
                 <div className="text-center py-10 text-dark-500 text-sm">Sin resultados</div>
               ) : (
@@ -413,9 +485,8 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
                 </div>
               )
             ) : (
-              // ── Grid view — compact 4 cols with Frecuentes section ──
               <div className="pb-8">
-                {/* Frecuentes section — highlighted */}
+                {/* Frecuentes */}
                 {frequentCats.length > 0 && (
                   <div className="mx-1.5 mb-3 bg-dark-800 rounded-2xl pt-2.5 pb-3 border border-dark-700/50">
                     <div className="px-3 pb-1.5">
@@ -443,9 +514,9 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
                               {cat.icon}
                             </div>
                             <span
-                              className="text-center leading-tight text-dark-200 w-full"
+                              className="text-center leading-tight text-dark-200 font-medium w-full"
                               style={{
-                                fontSize: 10,
+                                fontSize: 11,
                                 display: '-webkit-box',
                                 WebkitLineClamp: 2,
                                 WebkitBoxOrient: 'vertical' as any,
@@ -496,9 +567,9 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
                                 {cat.icon}
                               </div>
                               <span
-                                className="text-center leading-tight text-dark-200 w-full"
+                                className="text-center leading-tight text-dark-200 font-medium w-full"
                                 style={{
-                                  fontSize: 10,
+                                  fontSize: 11,
                                   display: '-webkit-box',
                                   WebkitLineClamp: 2,
                                   WebkitBoxOrient: 'vertical' as any,
@@ -532,7 +603,6 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
             <div className="w-8" />
           </div>
 
-          {/* Parent selector — all non-root cats available as parents (up to depth 2) */}
           <div className="px-5 pb-2 flex-shrink-0">
             <p className="text-xs text-dark-400 font-medium mb-2 uppercase tracking-wider">Tipo</p>
             <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
