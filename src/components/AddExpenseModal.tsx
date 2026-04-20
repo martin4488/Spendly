@@ -109,7 +109,7 @@ function getTopFrequent(allCats: Category[], limit = 10): Category[] {
   for (const [id, entry] of Object.entries(data)) {
     const days = (now - entry.t) / 86_400_000;
     const current = entry.s * Math.pow(DECAY, days);
-    if (current > 0.1) scores.push([id, current]); // ignore near-zero
+    if (current > 0) scores.push([id, current]); // include any nonzero
   }
   scores.sort((a, b) => b[1] - a[1]);
   return scores
