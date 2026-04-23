@@ -192,7 +192,10 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
         const bCats = allCats.filter(c => catIds.includes(c.id));
         return { ...b, category_ids: catIds, categories: bCats, spent: 0, prevAccumulated: null } as any;
       });
-      setBudgets(enrichedPartial);
+      const sortedPartial = [...enrichedPartial].sort((a, b) =>
+        a.recurrence !== b.recurrence ? (a.recurrence === 'monthly' ? -1 : 1) : 0
+      );
+      setBudgets(sortedPartial);
       setLoading(false);
 
       // Load global month stats + accumulated (fire-and-forget, non-blocking)
@@ -296,7 +299,14 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
         }
         return { ...b, category_ids: catIds, categories: bCats, spent, prevAccumulated, prevAccumMonths } as any;
       });
-      setBudgets(enriched);
+      const sorted = [...enriched].sort((a, b) => {
+        if (a.recurrence !== b.recurrence)
+          return a.recurrence === 'monthly' ? -1 : 1;
+        const pctA = a.amount > 0 ? (a.spent || 0) / a.amount : 0;
+        const pctB = b.amount > 0 ? (b.spent || 0) / b.amount : 0;
+        return pctB - pctA;
+      });
+      setBudgets(sorted);
     } catch (err) { console.error(err); setLoading(false); }
   }
 
