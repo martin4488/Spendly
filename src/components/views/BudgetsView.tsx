@@ -459,19 +459,22 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
 
               {monthlyBudget ? (
                 <>
-                  <div className="flex items-baseline justify-between mb-2.5">
-                    <span className="text-xs text-dark-500">
-                      <Amount value={spent} size="sm" color="text-dark-500" weight="medium" decimals={false} />
-                      {' / '}
-                      <Amount value={monthlyBudget} size="sm" color="text-dark-500" weight="medium" decimals={false} />
-                      {' gastado · '}
-                      <span className={isOver ? 'text-red-400' : 'text-dark-500'}>{pct.toFixed(0)}%</span>
-                    </span>
-                    <div className="flex items-baseline gap-1">
+                  <div className="flex items-end justify-between mb-2.5">
+                    <div>
+                      <div className="text-sm font-bold text-dark-300">
+                        <Amount value={spent} size="sm" color="text-dark-300" weight="bold" decimals={false} />
+                        {' / '}
+                        <Amount value={monthlyBudget} size="sm" color="text-dark-300" weight="bold" decimals={false} />
+                      </div>
+                      <div className={`text-xs mt-0.5 ${isOver ? 'text-red-400' : 'text-dark-500'}`}>
+                        {pct.toFixed(0)}% {isOver ? 'excedido' : 'gastado'}
+                      </div>
+                    </div>
+                    <div className="text-right">
                       <Amount value={isOver ? overAmount : left} size="lg" color={textColor} weight="extrabold" decimals={false} />
-                      <span className={`text-[11px] ${textColor}`}>
+                      <div className={`text-[11px] mt-0.5 ${textColor}`}>
                         {isOver ? 'excedido' : 'disponible'}
-                      </span>
+                      </div>
                     </div>
                   </div>
                   <div className="w-full rounded-full h-1.5 overflow-hidden relative" style={{ background: '#1e3a5f' }}>
