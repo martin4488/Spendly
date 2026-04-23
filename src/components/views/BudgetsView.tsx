@@ -552,12 +552,12 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
                     <Amount value={spent} size="sm" color="text-dark-500" weight="medium" decimals={false} />
                     {' / '}
                     <Amount value={budgetAmount} size="sm" color="text-dark-500" weight="medium" decimals={false} />
-                    {' · '}
+                    {' gastado · '}
                     <span className={isOver ? 'text-red-400' : 'text-dark-500'}>{pct.toFixed(0)}%</span>
                   </span>
                   <div className="flex items-baseline gap-1">
                     <Amount value={left} size="lg" color={valueColor} weight="extrabold" decimals={false} />
-                    <span className={`text-[11px] ${isOver ? 'text-red-400' : 'text-dark-500'}`}>
+                    <span className={`text-[11px] ${valueColor}`}>
                       {isOver ? 'excedido' : 'disponible'}
                     </span>
                   </div>
