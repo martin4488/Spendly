@@ -12,6 +12,8 @@ import {
 } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { ArrowLeft, ChevronDown, ChevronRight, Trash2 } from 'lucide-react';
+import CategoryIcon from '@/components/ui/CategoryIcon';
+import { getIconEmoji } from '@/lib/iconMap';
 import { getCategories } from '@/lib/categoryCache';
 import Amount from '@/components/ui/Amount';
 import { CatNode, buildTree } from '@/lib/categoryTree';
@@ -96,7 +98,7 @@ function DonutChart({ cats, total }: { cats: CatSpend[]; total: number }) {
           <g key={i}>
             <line x1={lineStartPt.x} y1={lineStartPt.y} x2={lineEndPt.x} y2={lineEndPt.y} stroke={s.color} strokeWidth={s.pct < 0.04 ? 1.2 : 1.8} opacity={0.9} />
             <circle cx={iconPos.x} cy={iconPos.y} r={iconCircleR} fill={s.color} />
-            <text x={iconPos.x} y={iconPos.y} textAnchor="middle" dominantBaseline="middle" fontSize={s.pct < 0.04 ? 11 : 14}>{s.icon}</text>
+            <text x={iconPos.x} y={iconPos.y} textAnchor="middle" dominantBaseline="middle" fontSize={s.pct < 0.04 ? 11 : 14}>{getIconEmoji(s.icon)}</text>
             {s.pct >= 0.025 && (
               <text x={labelPos.x} y={labelPos.y} textAnchor="middle" dominantBaseline="middle" fill={s.color} fontSize={9.5} fontWeight={700}>
                 {`${(s.pct * 100).toFixed(1)}%`}
@@ -249,7 +251,7 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
         .reduce((s: number, row: any) => s + Number(row.tx_count), 0);
 
       if (uncatSpent > 0) {
-        spending.push({ id: 'uncategorized', name: 'Sin categoría', icon: '📦', color: '#95A5A6', spent: uncatSpent, percentage: total > 0 ? (uncatSpent / total) * 100 : 0, transactions: uncatTx, children: [], allIds: ['uncategorized'] });
+        spending.push({ id: 'uncategorized', name: 'Sin categoría', icon: 'package', color: '#95A5A6', spent: uncatSpent, percentage: total > 0 ? (uncatSpent / total) * 100 : 0, transactions: uncatTx, children: [], allIds: ['uncategorized'] });
       }
       setCatSpending(spending);
     } catch (err) { console.error(err); }
@@ -293,9 +295,8 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
         <div key={cat.id} className="border-b border-dark-800/40">
           <div className="flex items-center gap-2.5 py-2.5" style={{ paddingLeft: `${12 + indent}px`, paddingRight: 12 }}>
             <button onClick={() => openDrillDown(cat)}
-              className="rounded-xl flex items-center justify-center text-base flex-shrink-0 active:opacity-70"
-              style={{ width: depth === 0 ? 36 : 28, height: depth === 0 ? 36 : 28, fontSize: depth === 0 ? 16 : 13, backgroundColor: cat.color }}>
-              {cat.icon}
+              className="flex-shrink-0 active:opacity-70">
+              <CategoryIcon icon={cat.icon} color={cat.color} size={depth === 0 ? 36 : 28} rounded="xl" />
             </button>
             <button onClick={() => openDrillDown(cat)} className="flex-1 min-w-0 text-left active:opacity-70">
               <p className={`font-semibold ${depth === 0 ? 'text-[12px]' : 'text-[11px] text-dark-200'}`}>{cat.name}</p>
@@ -481,7 +482,7 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
       <div className="flex items-center gap-2 px-3 pt-4 pb-3">
         <button onClick={onBack} className="p-1 text-dark-300 hover:text-white transition-colors"><ArrowLeft size={20} /></button>
         <div className="flex items-center gap-2 flex-1 min-w-0">
-          <div className="w-8 h-8 rounded-xl flex items-center justify-center text-base flex-shrink-0" style={{ backgroundColor: drillDown.color }}>{drillDown.icon}</div>
+          <CategoryIcon icon={drillDown.icon} color={drillDown.color} size={32} rounded="xl" />
           <h1 className="text-sm font-bold truncate capitalize">{drillDown.name}</h1>
         </div>
       </div>
@@ -527,7 +528,7 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
                     return (
                       <SwipeableRow key={exp.id} onDelete={() => deleteExpense(exp.id)}>
                         <div onClick={() => openEdit(exp)} className="flex items-center gap-2.5 px-4 py-2.5 border-b border-dark-800/40 bg-dark-900 active:bg-dark-700/40 cursor-pointer transition-colors">
-                          <div className="w-8 h-8 rounded-xl flex items-center justify-center text-base flex-shrink-0" style={{ backgroundColor: displayColor }}>{displayIcon}</div>
+                          <CategoryIcon icon={displayIcon} color={displayColor} size={32} rounded="xl" />
                           <div className="flex-1 min-w-0">
                             <p className="text-[12px] font-semibold truncate">{displayName}</p>
                             {exp.description && exp.description !== displayName && (
