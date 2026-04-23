@@ -6,6 +6,8 @@ import { supabase } from '@/lib/supabase';
 import { formatCurrency, getBudgetPeriodRange } from '@/lib/utils';
 import { Budget, Category } from '@/types';
 import { Plus, X, ChevronRight, Delete, ArrowLeft, Search, Check } from 'lucide-react';
+import CategoryIcon from '@/components/ui/CategoryIcon';
+import { getIconEmoji } from '@/lib/iconMap';
 import Amount from '@/components/ui/Amount';
 import {
   format, addMonths, addYears, startOfMonth, endOfMonth,
@@ -421,11 +423,11 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
     roots.forEach(r => {
       const ids = allDescendantIds(r);
       if (ids.every(id => selectedCatIds.includes(id))) {
-        parts.push(`${r.icon} ${r.name} (todo)`);
+        parts.push(`${getIconEmoji(r.icon)} ${r.name} (todo)`);
       } else {
         ids.filter(id => selectedCatIds.includes(id)).forEach(id => {
           const c = categories.find(c => c.id === id);
-          if (c) parts.push(`${c.icon} ${c.name}`);
+          if (c) parts.push(`${getIconEmoji(c.icon)} ${c.name}`);
         });
       }
     });
@@ -720,7 +722,7 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
                     return (
                       <button key={cat.id} onClick={() => toggleLeaf(cat.id)}
                         className={`w-full flex items-center gap-3 px-5 py-3.5 border-b border-dark-800/60 transition-colors ${isSelected ? 'bg-dark-800' : 'active:bg-dark-800/60'}`}>
-                        <div className="w-9 h-9 rounded-full flex items-center justify-center text-lg flex-shrink-0" style={{ backgroundColor: cat.color }}>{cat.icon}</div>
+                        <CategoryIcon icon={cat.icon} color={cat.color} size={36} rounded="full" />
                         <div className="flex-1 text-left">
                           <p className="text-sm font-medium">{cat.name}</p>
                           {ancestors.length > 0 && <p className="text-xs text-dark-400">{ancestors.map(a => a.name).join(' › ')}</p>}
@@ -758,10 +760,10 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
                           return (
                             <button key={cat.id} onClick={() => toggleLeaf(cat.id)}
                               className="flex flex-col items-center gap-1.5 active:opacity-70">
-                              <div className="rounded-full flex items-center justify-center flex-shrink-0 relative"
-                                style={{ width: iconSize, height: iconSize, backgroundColor: cat.color, fontSize: depth === 0 ? 24 : depth === 1 ? 20 : 17,
+                              <div className="rounded-full flex items-center justify-center flex-shrink-0 relative overflow-hidden"
+                                style={{ width: iconSize, height: iconSize,
                                   boxShadow: isSelected ? `0 0 0 3px white, 0 0 0 5px ${cat.color}` : undefined }}>
-                                {cat.icon}
+                                <CategoryIcon icon={cat.icon} color={cat.color} size={iconSize} rounded="full" />
                                 {isSelected && (
                                   <div className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-brand-500 flex items-center justify-center">
                                     <Check size={9} className="text-white" strokeWidth={3} />
