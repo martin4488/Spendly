@@ -8,6 +8,8 @@ import { Category, RecurringExpense } from '@/types';
 import { CatNode, FlatEntry, buildTree, flattenTree } from '@/lib/categoryTree';
 import { getCategories, invalidateCategories } from '@/lib/categoryCache';
 import { Plus, X, CalendarOff, Delete, Search, Settings, ArrowLeft, Check } from 'lucide-react';
+import CategoryIcon from '@/components/ui/CategoryIcon';
+import { getIconComponent } from '@/lib/iconMap';
 import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 import SwipeableRow from '@/components/SwipeableRow';
@@ -38,7 +40,7 @@ export default function RecurringView({ user }: { user: User }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [showCreateCategory, setShowCreateCategory] = useState(false);
   const [newCatName, setNewCatName] = useState('');
-  const [newCatIcon, setNewCatIcon] = useState('📦');
+  const [newCatIcon, setNewCatIcon] = useState('package');
   const [newCatColor, setNewCatColor] = useState(CATEGORY_COLORS[Math.floor(Math.random() * CATEGORY_COLORS.length)]);
   const [newCatParentId, setNewCatParentId] = useState<string | null>(null);
   const [savingCat, setSavingCat] = useState(false);
@@ -164,7 +166,7 @@ export default function RecurringView({ user }: { user: User }) {
   function openCreateCategory(parentId: string | null = null) {
     setNewCatParentId(parentId);
     setNewCatName('');
-    setNewCatIcon('📦');
+    setNewCatIcon('package');
     setNewCatColor(CATEGORY_COLORS[Math.floor(Math.random() * CATEGORY_COLORS.length)]);
     setShowCreateCategory(true);
   }
@@ -245,12 +247,7 @@ export default function RecurringView({ user }: { user: User }) {
                 className="rounded-xl"
               >
                 <div className="p-3.5 flex items-center gap-3 bg-dark-800">
-                  <div
-                    className="w-10 h-10 rounded-xl flex items-center justify-center text-xl flex-shrink-0"
-                    style={{ backgroundColor: cat?.color || '#475569' }}
-                  >
-                    {cat?.icon || '🔄'}
-                  </div>
+                  <CategoryIcon icon={cat?.icon || 'repeat'} color={cat?.color || '#475569'} size={40} rounded="xl" />
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-semibold truncate">{item.description}</p>
                     <p className="text-xs text-dark-400">
@@ -304,10 +301,7 @@ export default function RecurringView({ user }: { user: User }) {
               >
                 {selectedCat ? (
                   <>
-                    <div className="w-7 h-7 rounded-full flex items-center justify-center text-base flex-shrink-0"
-                      style={{ backgroundColor: selectedCat.color + '30' }}>
-                      {selectedCat.icon}
-                    </div>
+                    <CategoryIcon icon={selectedCat.icon} color={selectedCat.color} size={28} rounded="full" />
                     <span className="flex-1 text-sm">{selectedCat.name}</span>
                   </>
                 ) : (
@@ -463,8 +457,7 @@ export default function RecurringView({ user }: { user: User }) {
                       return (
                         <button key={cat.id} onClick={() => handleSelectCategory(cat.id)}
                           className={`w-full flex items-center gap-3 px-5 py-3.5 border-b border-dark-800/60 transition-colors ${isActive ? 'bg-dark-800' : 'active:bg-dark-800/60'}`}>
-                          <div className="w-9 h-9 rounded-full flex items-center justify-center text-lg flex-shrink-0"
-                            style={{ backgroundColor: cat.color }}>{cat.icon}</div>
+                          <CategoryIcon icon={cat.icon} color={cat.color} size={36} rounded="full" />
                           <div className="flex-1 text-left">
                             <p className="text-sm font-medium">{cat.name}</p>
                             {ancestors.length > 0 && <p className="text-xs text-dark-400">{ancestors.map((a: any) => a.name).join(' › ')}</p>}
@@ -493,11 +486,10 @@ export default function RecurringView({ user }: { user: User }) {
                             return (
                               <button key={cat.id} onClick={() => handleSelectCategory(cat.id)}
                                 className="flex flex-col items-center gap-1.5 active:opacity-70 transition-opacity">
-                                <div className="rounded-full flex items-center justify-center relative flex-shrink-0"
-                                  style={{ width: iconSize, height: iconSize, backgroundColor: cat.color,
-                                    fontSize: depth === 0 ? 24 : depth === 1 ? 20 : 17,
+                                <div className="rounded-full flex items-center justify-center relative flex-shrink-0 overflow-hidden"
+                                  style={{ width: iconSize, height: iconSize,
                                     boxShadow: isActive ? `0 0 0 3px white, 0 0 0 5px ${cat.color}` : undefined }}>
-                                  {cat.icon}
+                                  <CategoryIcon icon={cat.icon} color={cat.color} size={iconSize} rounded="full" />
                                   {isActive && (
                                     <div className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-brand-500 flex items-center justify-center">
                                       <Check size={9} className="text-white" strokeWidth={3} />
@@ -545,7 +537,7 @@ export default function RecurringView({ user }: { user: User }) {
               {parentCats.map(p => (
                 <button key={p.id} onClick={() => setNewCatParentId(p.id)}
                   className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${newCatParentId === p.id ? 'bg-brand-600 text-white' : 'bg-dark-700 text-dark-300'}`}>
-                  <span>{p.icon}</span><span>{p.name}</span>
+                  <CategoryIcon icon={p.icon} color={p.color} size={16} rounded="full" /><span>{p.name}</span>
                 </button>
               ))}
             </div>
@@ -553,8 +545,7 @@ export default function RecurringView({ user }: { user: User }) {
 
           <div className="flex-1 overflow-y-auto px-5 pb-8">
             <div className="flex items-center gap-4 py-5">
-              <div className="w-16 h-16 rounded-full flex items-center justify-center text-3xl flex-shrink-0"
-                style={{ backgroundColor: newCatColor }}>{newCatIcon}</div>
+              <CategoryIcon icon={newCatIcon} color={newCatColor} size={64} rounded="full" iconSize={30} />
               <input type="text" placeholder="Nombre de categoría" value={newCatName}
                 onChange={(e) => setNewCatName(e.target.value)} autoFocus
                 className="flex-1 text-lg font-semibold bg-transparent focus:outline-none border-b border-dark-700 pb-2 placeholder:text-dark-500" />
@@ -574,12 +565,15 @@ export default function RecurringView({ user }: { user: User }) {
             <div>
               <p className="text-xs text-dark-400 font-medium mb-2.5 uppercase tracking-wider">Ícono</p>
               <div className="grid grid-cols-6 gap-2">
-                {CATEGORY_ICONS.map((ic) => (
-                  <button key={ic} onClick={() => setNewCatIcon(ic)}
-                    className={`aspect-square rounded-xl flex items-center justify-center text-xl transition-all ${newCatIcon === ic ? 'bg-dark-600 ring-2 ring-brand-500' : 'bg-dark-800 hover:bg-dark-700'}`}>
-                    {ic}
-                  </button>
-                ))}
+                {CATEGORY_ICONS.map((ic) => {
+                  const IconComp = getIconComponent(ic);
+                  return (
+                    <button key={ic} onClick={() => setNewCatIcon(ic)}
+                      className={`aspect-square rounded-xl flex items-center justify-center transition-all ${newCatIcon === ic ? 'bg-dark-600 ring-2 ring-brand-500' : 'bg-dark-800 hover:bg-dark-700'}`}>
+                      <IconComp size={20} color={newCatIcon === ic ? 'white' : '#94a3b8'} strokeWidth={1.8} />
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </div>
