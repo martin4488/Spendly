@@ -7,6 +7,8 @@ import { getMonthRange, CATEGORY_ICONS, CATEGORY_COLORS } from '@/lib/utils';
 import { Category } from '@/types';
 import { Plus, Trash2, X, FolderPlus, GripVertical, ArrowLeft } from 'lucide-react';
 import SwipeableRow from '@/components/SwipeableRow';
+import CategoryIcon from '@/components/ui/CategoryIcon';
+import { getIconComponent } from '@/lib/iconMap';
 
 // ── Tree node (up to 3 levels) ────────────────────────────────────────────────
 import { CatNode, buildTree } from '@/lib/categoryTree';
@@ -82,7 +84,7 @@ export default function CategoriesView({ user, onBack }: { user: User; onBack?: 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [parentId, setParentId] = useState<string | null>(null);
   const [name, setName] = useState('');
-  const [icon, setIcon] = useState('📦');
+  const [icon, setIcon] = useState('package');
   const [color, setColor] = useState('#22c55e');
   const [saving, setSaving] = useState(false);
 
@@ -117,7 +119,7 @@ export default function CategoriesView({ user, onBack }: { user: User; onBack?: 
       function walk(nodes: CatNode[]) { nodes.forEach((n, i) => { updates.push({ id: n.id, position: i }); walk(n.children); }); }
       walk(newRoots);
       Promise.all(updates.map(u => supabase.from('categories').update({ position: u.position }).eq('id', u.id)))
-        .then(() => invalidateCategories()); // ← FIX: invalidate cache after reorder
+        .then(() => invalidateCategories());
     }, 600);
   }
 
@@ -165,11 +167,11 @@ export default function CategoriesView({ user, onBack }: { user: User; onBack?: 
       setEditingId(null); setName(''); setParentId(asChildOf || null);
       if (asChildOf) {
         const parent = flatCats.find(c => c.id === asChildOf);
-        setIcon(parent?.icon || '📦');
+        setIcon(parent?.icon || 'package');
         const siblingCount = flatCats.filter(c => c.parent_id === asChildOf).length;
         setColor(parent ? deriveChildColor(parent.color, siblingCount) : CATEGORY_COLORS[0]);
       } else {
-        setIcon('📦');
+        setIcon('package');
         setColor(CATEGORY_COLORS[Math.floor(Math.random() * CATEGORY_COLORS.length)]);
       }
     }
@@ -255,9 +257,7 @@ export default function CategoriesView({ user, onBack }: { user: User; onBack?: 
                       <div className={`flex items-center gap-2.5 pr-3.5 py-2.5 ${!isLast || node.children.length > 0 ? 'border-b border-dark-700/20' : ''}`}
                         style={{ paddingLeft: `${indent}px` }}>
                         <div className="text-dark-500 text-xs">└</div>
-                        <div className="w-7 h-7 rounded-md flex items-center justify-center text-sm flex-shrink-0" style={{ backgroundColor: node.color }}>
-                          {node.icon}
-                        </div>
+                        <CategoryIcon icon={node.icon} color={node.color} size={28} rounded="md" />
                         <div className="min-w-0 flex-1">
                           <p className="text-sm font-medium text-dark-200">{node.name}</p>
                         </div>
@@ -326,9 +326,7 @@ export default function CategoriesView({ user, onBack }: { user: User; onBack?: 
                       <div className="flex-1 min-w-0">
                         <div className="p-3.5 pr-3">
                           <div className="flex items-center gap-3">
-                            <div className="w-9 h-9 rounded-lg flex items-center justify-center text-lg flex-shrink-0" style={{ backgroundColor: cat.color }}>
-                              {cat.icon}
-                            </div>
+                            <CategoryIcon icon={cat.icon} color={cat.color} size={36} rounded="lg" />
                             <div className="min-w-0 flex-1">
                               <p className="text-sm font-medium">{cat.name}</p>
                             </div>
@@ -367,8 +365,8 @@ export default function CategoriesView({ user, onBack }: { user: User; onBack?: 
             const grandparent = parent?.parent_id ? flatCats.find(c => c.id === parent.parent_id) : null;
             return (
               <div className="px-5 pb-2 flex items-center gap-1.5 text-xs text-dark-400">
-                {grandparent && <><span>{grandparent.icon} {grandparent.name}</span><span>›</span></>}
-                {parent && <span>{parent.icon} {parent.name}</span>}
+                {grandparent && <><CategoryIcon icon={grandparent.icon} color={grandparent.color} size={16} rounded="md" /><span>{grandparent.name}</span><span>›</span></>}
+                {parent && <><CategoryIcon icon={parent.icon} color={parent.color} size={16} rounded="md" /><span>{parent.name}</span></>}
                 <span>›</span><span className="text-dark-300">nueva</span>
               </div>
             );
@@ -376,9 +374,7 @@ export default function CategoriesView({ user, onBack }: { user: User; onBack?: 
 
           <div className="flex-1 overflow-y-auto px-5 pb-28">
             <div className="flex items-center gap-4 py-5">
-              <div className="w-16 h-16 rounded-full flex items-center justify-center text-3xl flex-shrink-0 transition-colors" style={{ backgroundColor: color }}>
-                {icon}
-              </div>
+              <CategoryIcon icon={icon} color={color} size={64} rounded="full" iconSize={30} />
               <input
                 type="text" placeholder="Nombre de categoría" value={name}
                 onChange={(e) => setName(e.target.value)} autoFocus={showForm}
@@ -409,12 +405,15 @@ export default function CategoriesView({ user, onBack }: { user: User; onBack?: 
             <div>
               <p className="text-xs text-dark-400 font-medium mb-2.5 uppercase tracking-wider">Ícono</p>
               <div className="grid grid-cols-6 gap-2">
-                {CATEGORY_ICONS.map((ic) => (
-                  <button key={ic} onClick={() => setIcon(ic)}
-                    className={`aspect-square rounded-xl flex items-center justify-center text-xl transition-all ${icon === ic ? 'bg-dark-600 ring-2 ring-brand-500' : 'bg-dark-800 hover:bg-dark-700'}`}>
-                    {ic}
-                  </button>
-                ))}
+                {CATEGORY_ICONS.map((ic) => {
+                  const IconComp = getIconComponent(ic);
+                  return (
+                    <button key={ic} onClick={() => setIcon(ic)}
+                      className={`aspect-square rounded-xl flex items-center justify-center transition-all ${icon === ic ? 'bg-dark-600 ring-2 ring-brand-500' : 'bg-dark-800 hover:bg-dark-700'}`}>
+                      <IconComp size={20} color={icon === ic ? 'white' : '#94a3b8'} strokeWidth={1.8} />
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </div>
