@@ -451,13 +451,10 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
 
         return (
           <button onClick={onOpenGlobalBudget} className="w-full text-left mb-4">
-            <div className="bg-dark-800 rounded-2xl p-4">
+            <div className="rounded-2xl p-4" style={{ background: '#0a2540', border: '1px solid #1d4ed820' }}>
               <div className="flex items-center justify-between mb-2">
-                <h3 className="text-sm font-bold capitalize">Gasto global · {monthLabel}</h3>
-                <div className="flex items-center gap-1">
-                  <span className="text-[10px] text-dark-500">Mensual</span>
-                  <ChevronRight size={14} className="text-dark-500" />
-                </div>
+                <span className="text-[11px] font-semibold text-dark-500 uppercase tracking-wider capitalize">Gasto global · {monthLabel}</span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: '#22c55e18', color: '#22c55e' }}>GLOBAL</span>
               </div>
 
               {monthlyBudget ? (
@@ -477,7 +474,7 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
                       </span>
                     </div>
                   </div>
-                  <div className="w-full bg-dark-700 rounded-full h-1.5 overflow-hidden relative">
+                  <div className="w-full rounded-full h-1.5 overflow-hidden relative" style={{ background: '#1e3a5f' }}>
                     {!isOver && (
                       <div className="absolute right-0 top-0 h-full rounded-full transition-all duration-500"
                         style={{ width: `${availablePct}%`, backgroundColor: color }} />
