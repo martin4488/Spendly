@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase';
 import { formatDate, getMonthRange, exportToCSV } from '@/lib/utils';
 import { Expense } from '@/types';
 import { Plus, Search, Download, ChevronLeft, ChevronRight, Trash2, Edit3 } from 'lucide-react';
+import CategoryIcon from '@/components/ui/CategoryIcon';
 import type { CurrencyCode } from '@/lib/currency';
 import Amount from '@/components/ui/Amount';
 
@@ -149,9 +150,7 @@ export default function ExpensesView({ user, defaultCurrency = 'EUR' as Currency
               className="bg-dark-800 rounded-xl p-3.5 flex items-center justify-between group"
             >
               <div className="flex items-center gap-3 flex-1 min-w-0">
-                <span className="text-xl flex-shrink-0">
-                  {(expense as any).category?.icon || '💵'}
-                </span>
+                <CategoryIcon icon={(expense as any).category?.icon || 'banknote'} color={(expense as any).category?.color || '#475569'} size={32} rounded="xl" className="flex-shrink-0" />
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium truncate">{expense.description}</p>
                   <p className="text-xs text-dark-400">
