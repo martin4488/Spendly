@@ -212,12 +212,10 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
 
         if (periods && periods.length > 0) {
           const sorted = [...(periods as any[])].sort((a: any, b: any) => b.month.localeCompare(a.month));
-          // Set monthly budget: prefer current month, fallback to most recent
           const curPeriod = sorted.find((p: any) => p.month === curMonth2);
           const effectivePeriod = curPeriod || sorted[0];
           if (effectivePeriod) setMonthlyBudget(Number(effectivePeriod.amount));
 
-          // Compute accumulated for closed months this year
           const closedMonths = (periods as any[]).filter(p => p.month < curMonth2 && p.month >= `${now2.getFullYear()}-01`);
           if (closedMonths.length > 0) {
             let acc = 0;
@@ -522,58 +520,66 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
         <div className="space-y-3">
           {budgets.map((budget) => {
             const spent = budget.spent || 0;
-            const left = Math.max(budget.amount - spent, 0);
-            const pct = budget.amount > 0 ? (spent / budget.amount) * 100 : 0;
+            const budgetAmount = budget.amount;
+            const isOver = spent > budgetAmount;
+            const left = isOver ? spent - budgetAmount : budgetAmount - spent;
+            const pct = budgetAmount > 0 ? (spent / budgetAmount) * 100 : 0;
+            // Bar fills from right = available portion
+            const availablePct = Math.max(100 - pct, 0);
+            const barColor = isOver ? null : pct >= 80 ? '#f59e0b' : '#22c55e';
+            const valueColor = isOver ? 'text-red-400' : pct >= 80 ? 'text-amber-400' : 'text-brand-400';
             const curPeriod = currentPeriods[budget.id];
-            const startLabel = curPeriod ? format(parseISO(curPeriod.period_start), "MMM d", { locale: es }) : '';
-            const endLabel = curPeriod ? format(parseISO(curPeriod.period_end), "MMM d, yyyy", { locale: es }) : '';
 
             return (
               <button key={budget.id}
                 onClick={() => curPeriod && onOpenBudget(budget, curPeriod.id)}
                 className="w-full bg-dark-800 rounded-2xl p-4 text-left transition-colors">
-                <div className="flex items-center justify-between mb-1">
+
+                {/* Header: name + recurrence */}
+                <div className="flex items-center justify-between mb-2">
                   <h3 className="text-sm font-bold">{budget.name}</h3>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1">
                     <span className="text-[10px] text-dark-500 capitalize">
                       {budget.recurrence === 'monthly' ? 'Mensual' : 'Anual'}
                     </span>
-                    <ChevronRight size={16} className="text-dark-500" />
+                    <ChevronRight size={14} className="text-dark-500" />
                   </div>
                 </div>
+
+                {/* Spent info + available/exceeded */}
                 <div className="flex items-baseline justify-between mb-2.5">
-                  <div className="flex items-baseline gap-1.5">
-                    {pct >= 100 ? (
-                      <>
-                        <Amount value={Math.abs(left - budget.amount + left)} sign="-" size="lg" color="text-red-400" weight="extrabold" decimals={false} />
-                        <span className="text-xs text-red-400/70">excedido</span>
-                      </>
-                    ) : (
-                      <>
-                        <Amount value={left} size="lg" color={pct >= 80 ? 'text-amber-400' : 'text-brand-400'} weight="extrabold" decimals={false} />
-                        <span className="text-xs text-dark-500">disponible</span>
-                      </>
-                    )}
+                  <span className="text-xs text-dark-500">
+                    <Amount value={spent} size="sm" color="text-dark-500" weight="medium" decimals={false} />
+                    {' / '}
+                    <Amount value={budgetAmount} size="sm" color="text-dark-500" weight="medium" decimals={false} />
+                    {' · '}
+                    <span className={isOver ? 'text-red-400' : 'text-dark-500'}>{pct.toFixed(0)}%</span>
+                  </span>
+                  <div className="flex items-baseline gap-1">
+                    <Amount value={left} size="lg" color={valueColor} weight="extrabold" decimals={false} />
+                    <span className={`text-[11px] ${isOver ? 'text-red-400' : 'text-dark-500'}`}>
+                      {isOver ? 'excedido' : 'disponible'}
+                    </span>
                   </div>
-                  <span className="text-xs text-dark-500">de <Amount value={budget.amount} size="sm" color="text-dark-500" weight="medium" decimals={false} /></span>
                 </div>
-                <div className="w-full bg-dark-700 rounded-full h-1.5 mb-2 overflow-hidden relative">
-                  {pct < 100 && (
-                    <div className="absolute right-0 top-0 h-full rounded-full transition-all duration-500"
-                      style={{ width: `${Math.max(100 - pct, 0)}%`, backgroundColor: pct >= 80 ? '#f59e0b' : '#22c55e' }} />
+
+                {/* Progress bar: fills from right = available */}
+                <div className="w-full bg-dark-700 rounded-full h-1.5 overflow-hidden relative">
+                  {!isOver && barColor && (
+                    <div
+                      className="absolute right-0 top-0 h-full rounded-full transition-all duration-500"
+                      style={{ width: `${availablePct}%`, backgroundColor: barColor }}
+                    />
                   )}
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] text-dark-500 capitalize">{startLabel}</span>
-                  <span className={`text-[10px] font-bold ${pct >= 100 ? 'text-red-400' : 'text-dark-400'}`}>
-                    {pct.toFixed(1)}% gastado
-                  </span>
-                  <span className="text-[10px] text-dark-500 capitalize">{endLabel}</span>
-                </div>
+
+                {/* Accumulated warning */}
                 {(budget as any).prevAccumulated !== null && (budget as any).prevAccumulated < 0 && (
                   <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-red-500/10">
                     <div className="w-1.5 h-1.5 rounded-full bg-red-400 flex-shrink-0" />
-                    <span className="text-[11px] text-red-400">{formatCurrency(Math.abs((budget as any).prevAccumulated), undefined, true)} excedido acumulado en {new Date().getFullYear()}{(budget as any).prevAccumMonths ? ` (${(budget as any).prevAccumMonths})` : ''}</span>
+                    <span className="text-[11px] text-red-400">
+                      {formatCurrency(Math.abs((budget as any).prevAccumulated), undefined, true)} excedido acumulado en {new Date().getFullYear()}{(budget as any).prevAccumMonths ? ` (${(budget as any).prevAccumMonths})` : ''}
+                    </span>
                   </div>
                 )}
               </button>
@@ -764,6 +770,7 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
           </div>
         </div>
       )}
+
       {/* SET MONTHLY BUDGET MODAL */}
       {showBudgetModal && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-end justify-center">
