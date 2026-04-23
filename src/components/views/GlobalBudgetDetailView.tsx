@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/utils';
 import { Category } from '@/types';
 import { ArrowLeft, ChevronLeft, ChevronRight, ChevronDown, Edit3, X, Delete, History } from 'lucide-react';
+import CategoryIcon from '@/components/ui/CategoryIcon';
 import {
   format, parseISO, startOfMonth, endOfMonth, addMonths,
   differenceInDays, isWithinInterval
@@ -384,17 +385,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
           style={{ paddingLeft: `${16 + depth * 20}px`, paddingRight: 16, paddingTop: 6, paddingBottom: 6 }}
           onClick={hasChildren ? () => toggleExpand(cat.id) : undefined}
         >
-          <div
-            className="rounded-xl flex items-center justify-center text-sm flex-shrink-0"
-            style={{
-              backgroundColor: cat.color,
-              width: depth === 0 ? 32 : 26,
-              height: depth === 0 ? 32 : 26,
-              fontSize: depth === 0 ? 14 : 12,
-            }}
-          >
-            {cat.icon}
-          </div>
+          <CategoryIcon icon={cat.icon} color={cat.color} size={depth === 0 ? 32 : 26} rounded="xl" />
           <div className="flex-1 min-w-0">
             <div className="flex justify-between mb-0.5">
               <div className="flex items-center gap-1.5 min-w-0">
@@ -556,9 +547,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
                     const cat = categories.find(c => c.id === exp.category_id);
                     return (
                       <div key={exp.id} onClick={() => openExpenseEdit(exp)} className="flex items-center gap-2.5 px-4 py-2.5 border-b border-dark-800/40 active:bg-dark-700/40 cursor-pointer transition-colors">
-                        <div className="w-8 h-8 rounded-xl flex items-center justify-center text-base flex-shrink-0" style={{ backgroundColor: cat?.color || '#475569' }}>
-                          {cat?.icon || '💸'}
-                        </div>
+                        <CategoryIcon icon={cat?.icon || 'hand-coins'} color={cat?.color || '#475569'} size={32} rounded="xl" />
                         <div className="flex-1 min-w-0">
                           <p className="text-[12px] font-semibold truncate">{cat?.name || 'Sin categoría'}</p>
                           {exp.description && exp.description !== cat?.name && (
