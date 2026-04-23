@@ -8,6 +8,7 @@ import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { Expense, Category } from '@/types';
 import { Plus, Search, X } from 'lucide-react';
+import CategoryIcon from '@/components/ui/CategoryIcon';
 import type { CurrencyCode } from '@/lib/currency';
 import { getCategories } from '@/lib/categoryCache';
 import SwipeableRow from '@/components/SwipeableRow';
@@ -135,10 +136,7 @@ const ExpenseRow = memo(function ExpenseRow({
   return (
     <SwipeableRow onTap={onEdit} onDelete={onDelete} className="border-b border-dark-800/40">
       <div className="flex items-center gap-2.5 px-3 py-2 bg-dark-900 active:bg-dark-800/60 transition-colors cursor-pointer select-none">
-        <div className="w-9 h-9 rounded-xl flex items-center justify-center text-base flex-shrink-0"
-          style={{ backgroundColor: cat?.color ?? '#475569' }}>
-          {cat?.icon || '💵'}
-        </div>
+        <CategoryIcon icon={cat?.icon || 'banknote'} color={cat?.color ?? '#475569'} size={36} rounded="xl" />
         <div className="flex-1 min-w-0">
           <p className="text-[12px] font-semibold truncate leading-tight">
             {primaryLabel}
