@@ -13,7 +13,6 @@ import {
 import { es } from 'date-fns/locale';
 import { ArrowLeft, ChevronDown, ChevronRight, Trash2 } from 'lucide-react';
 import CategoryIcon from '@/components/ui/CategoryIcon';
-import { getIconEmoji } from '@/lib/iconMap';
 import { getCategories } from '@/lib/categoryCache';
 import Amount from '@/components/ui/Amount';
 import { CatNode, buildTree } from '@/lib/categoryTree';
@@ -97,8 +96,14 @@ function DonutChart({ cats, total }: { cats: CatSpend[]; total: number }) {
         return (
           <g key={i}>
             <line x1={lineStartPt.x} y1={lineStartPt.y} x2={lineEndPt.x} y2={lineEndPt.y} stroke={s.color} strokeWidth={s.pct < 0.04 ? 1.2 : 1.8} opacity={0.9} />
-            <circle cx={iconPos.x} cy={iconPos.y} r={iconCircleR} fill={s.color} />
-            <text x={iconPos.x} y={iconPos.y} textAnchor="middle" dominantBaseline="middle" fontSize={s.pct < 0.04 ? 11 : 14}>{getIconEmoji(s.icon)}</text>
+            <foreignObject
+              x={iconPos.x - iconCircleR}
+              y={iconPos.y - iconCircleR}
+              width={iconCircleR * 2}
+              height={iconCircleR * 2}
+            >
+              <CategoryIcon icon={s.icon} color={s.color} size={iconCircleR * 2} rounded="full" iconSize={Math.round(iconCircleR * 1.1)} />
+            </foreignObject>
             {s.pct >= 0.025 && (
               <text x={labelPos.x} y={labelPos.y} textAnchor="middle" dominantBaseline="middle" fill={s.color} fontSize={9.5} fontWeight={700}>
                 {`${(s.pct * 100).toFixed(1)}%`}
