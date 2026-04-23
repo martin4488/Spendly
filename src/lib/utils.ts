@@ -1,5 +1,6 @@
 import { format, startOfMonth, endOfMonth, startOfYear, endOfYear, addMonths, addYears, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
+import { ICON_KEYS } from '@/lib/iconMap';
 
 // Global default currency — set once at boot via setDefaultCurrency()
 let _defaultCurrency: string = 'USD';
@@ -92,14 +93,8 @@ export function exportToCSV(data: any[], filename: string) {
   URL.revokeObjectURL(link.href);
 }
 
-export const CATEGORY_ICONS = [
-  '🚗', '✈️', '🍴', '👤', '💵', '🎭', '🏠', '⚡', '🛍️', '🚙',
-  '🩺', '❓', '👕', '🚇', '🥐', '🍸', '⚽', '🐾', '🎓', '🧭',
-  '❤️', '🚜', '🏦', '🎵', '👛', '🎁', '⛽', '🧴', '💰', '🪑',
-  '☕', '📱', '💻', '🎮', '📚', '👶', '💊', '🏋️', '🧹', '💇',
-  '📰', '🏥', '🔧', '🎬', '💡', '🐕', '🚌', '📦', '🛒', '🍺',
-  '🧑‍💼', '🎨', '🌍', '🏖️', '🧸', '💎', '🎂', '🧪', '📸', '🪴',
-];
+// Re-export icon keys as CATEGORY_ICONS for backward compat
+export const CATEGORY_ICONS = ICON_KEYS;
 
 export const CATEGORY_COLORS = [
   '#ef4444', '#dc2626', '#b91c1c',
