@@ -6,6 +6,8 @@ import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/utils';
 import Amount from '@/components/ui/Amount';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+import CategoryIcon from '@/components/ui/CategoryIcon';
+import { getIconEmoji } from '@/lib/iconMap';
 import { getCategories } from '@/lib/categoryCache';
 import { CatNode, buildTree } from '@/lib/categoryTree';
 import { format, startOfYear, endOfYear } from 'date-fns';
@@ -312,7 +314,7 @@ export default function ReflectView({ user }: Props) {
           const up = c.diff > 0;
           insights.push({
             color: up ? '#ef4444' : '#22c55e',
-            text: `${c.icon} <b style="color:#e2e8f0">${c.name}</b> ${up ? 'subió' : 'bajó'} un <b style="color:${up ? '#ef4444' : '#22c55e'}">${up ? '+' : ''}${c.diff}%</b> — de ${formatCurrency(c.prev, undefined, true)} a ${formatCurrency(c.curr, undefined, true)}/mes.`,
+            text: `${getIconEmoji(c.icon)} <b style="color:#e2e8f0">${c.name}</b> ${up ? 'subió' : 'bajó'} un <b style="color:${up ? '#ef4444' : '#22c55e'}">${up ? '+' : ''}${c.diff}%</b> — de ${formatCurrency(c.prev, undefined, true)} a ${formatCurrency(c.curr, undefined, true)}/mes.`,
           });
         });
       }
@@ -394,7 +396,7 @@ export default function ReflectView({ user }: Props) {
           newCats.sort((a, b) => b.amount - a.amount).forEach(c => {
             insights.push({
               color: '#f59e0b',
-              text: `${c.icon} <b style="color:#e2e8f0">${c.name}</b> es un gasto nuevo — <b style="color:#f59e0b">${formatCurrency(Math.round(c.amount), undefined, true)}/mes</b>.`,
+              text: `${getIconEmoji(c.icon)} <b style="color:#e2e8f0">${c.name}</b> es un gasto nuevo — <b style="color:#f59e0b">${formatCurrency(Math.round(c.amount), undefined, true)}/mes</b>.`,
             });
           });
         }
@@ -429,10 +431,7 @@ export default function ReflectView({ user }: Props) {
     return (
       <div key={cat.id}>
         <div style={{ paddingLeft: indent }} className={`flex items-center gap-2.5 py-2.5 ${depth === 0 ? 'border-b border-dark-800/60' : ''}`}>
-          <div className="rounded-xl flex items-center justify-center flex-shrink-0"
-            style={{ width: depth === 0 ? 32 : 26, height: depth === 0 ? 32 : 26, fontSize: depth === 0 ? 14 : 11, backgroundColor: cat.color }}>
-            {cat.icon}
-          </div>
+          <CategoryIcon icon={cat.icon} color={cat.color} size={depth === 0 ? 32 : 26} rounded="xl" />
           <div className="flex-1 min-w-0">
             <div className="flex justify-between mb-1">
               <span className={`font-semibold ${depth === 0 ? 'text-[12px] text-white' : 'text-[11px] text-dark-200'}`}>{cat.name}</span>
