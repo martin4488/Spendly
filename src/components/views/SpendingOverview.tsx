@@ -90,7 +90,7 @@ function DonutChart({
   );
 }
 
-// ── Bar Chart (DrillDown — year view, monthly bars, selectable) ───────────────
+// ── Bar Chart ─────────────────────────────────────────────────────────────────
 interface BarSegment { amount: number; color: string; }
 interface BarEntry { label: string; amount: number; monthKey: string; segments?: BarSegment[]; }
 
@@ -104,7 +104,6 @@ function DrillBarChart({
   const max = Math.max(...data.map(d => d.amount), 1);
   const yTicks = [0, max * 0.5, max];
   function fmtAmt(v: number) { if (v === 0) return '0'; if (v >= 1000) return `${(v / 1000).toFixed(1)}k`; return Math.round(v).toString(); }
-  // Wider bars: 75% of slot
   const barGap = chartW / data.length;
   const barW = Math.max(6, barGap * 0.72);
   const baseY = PAD_T + chartH;
@@ -135,7 +134,6 @@ function DrillBarChart({
                 <rect x={x} y={baseY - totalBarH} width={barW} height={totalBarH} rx={2} ry={2} />
               </clipPath>
             </defs>
-            {/* Highlight bg for selected */}
             {isSelected && (
               <rect x={x - 3} y={PAD_T} width={barW + 6} height={chartH} rx={3} fill="white" opacity={0.06} />
             )}
@@ -160,47 +158,33 @@ function DrillBarChart({
   );
 }
 
-// ── Subcategory color bar + list ──────────────────────────────────────────────
+// ── Subcategory section ───────────────────────────────────────────────────────
 function SubcatSection({ expenses, allCats, drillDown, total }: {
   expenses: ExpenseDetail[]; allCats: RawCat[]; drillDown: DrillDown; total: number;
 }) {
-  // Build subcat spend from expenses
   const subcatMap = useMemo(() => {
     const map: Record<string, number> = {};
-    expenses.forEach(e => {
-      const cid = e.category_id || '__none';
-      map[cid] = (map[cid] || 0) + e.amount;
-    });
+    expenses.forEach(e => { const cid = e.category_id || '__none'; map[cid] = (map[cid] || 0) + e.amount; });
     return map;
   }, [expenses]);
 
-  // Only show direct children of drillDown that have spend
   const subs = useMemo(() => {
     if (drillDown.children.length === 0) return [];
     return drillDown.children
-      .map(child => {
-        // Sum all expenses whose category_id is in child.allIds
-        const spent = child.allIds.reduce((s, id) => s + (subcatMap[id] || 0), 0);
-        return { id: child.id, name: child.name, color: child.color, spent };
-      })
+      .map(child => { const spent = child.allIds.reduce((s, id) => s + (subcatMap[id] || 0), 0); return { id: child.id, name: child.name, color: child.color, spent }; })
       .filter(c => c.spent > 0)
       .sort((a, b) => b.spent - a.spent);
   }, [drillDown.children, subcatMap]);
 
   if (subs.length === 0) return null;
-
   const subsTotal = subs.reduce((s, c) => s + c.spent, 0);
 
   return (
     <div className="px-4 pb-3 border-b border-dark-800/60">
       <p className="text-[10px] font-semibold text-dark-500 uppercase tracking-wider mb-2">Subcategorías</p>
-      {/* Color bar */}
       <div className="flex h-1.5 rounded-full overflow-hidden mb-3 gap-px">
-        {subs.map(s => (
-          <div key={s.id} style={{ width: `${(s.spent / subsTotal) * 100}%`, background: s.color }} />
-        ))}
+        {subs.map(s => <div key={s.id} style={{ width: `${(s.spent / subsTotal) * 100}%`, background: s.color }} />)}
       </div>
-      {/* List */}
       {subs.map(s => (
         <div key={s.id} className="flex items-center gap-2 py-1.5">
           <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: s.color }} />
@@ -219,10 +203,15 @@ function getRange(date: Date, mode: ViewMode) {
 }
 
 // ── Main SpendingOverview ──────────────────────────────────────────────────────
-export default function SpendingOverview({ user, onBack }: { user: User; onBack: () => void }) {
+export default function SpendingOverview({ user, onBack, initialDate, initialViewMode }: {
+  user: User;
+  onBack: () => void;
+  initialDate?: Date;
+  initialViewMode?: ViewMode;
+}) {
   const now = new Date();
-  const [viewMode, setViewMode] = useState<ViewMode>('months');
-  const [currentDate, setCurrentDate] = useState(now);
+  const [viewMode, setViewMode] = useState<ViewMode>(initialViewMode || 'months');
+  const [currentDate, setCurrentDate] = useState(initialDate || now);
   const [catSpending, setCatSpending] = useState<CatSpend[]>([]);
   const [totalSpent, setTotalSpent] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -303,7 +292,6 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
   const nextLabel = isAtPresent ? '' : viewMode === 'months' ? format(addMonths(currentDate, 1), 'MMM yyyy', { locale: es }) : String(currentDate.getFullYear() + 1);
 
   if (drillDown) {
-    // Pass initialMonth only when coming from a month view
     const initialMonth = viewMode === 'months' ? format(currentDate, 'yyyy-MM') : null;
     return <DrillDownView user={user} drillDown={drillDown} onBack={() => setDrillDown(null)} initialDate={currentDate} initialMonth={initialMonth} now={now} />;
   }
@@ -353,8 +341,8 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
       </div>
       <div className="flex justify-center mb-2">
         <div className="inline-flex bg-dark-800 rounded-full p-0.5">
-          <button onClick={() => { setViewMode('months'); setCurrentDate(now); }} className={`px-3 py-1 rounded-full text-[11px] font-medium transition-all ${viewMode === 'months' ? 'bg-dark-600 text-white' : 'text-dark-400'}`}>Por meses</button>
-          <button onClick={() => { setViewMode('years'); setCurrentDate(now); }} className={`px-3 py-1 rounded-full text-[11px] font-medium transition-all ${viewMode === 'years' ? 'bg-dark-600 text-white' : 'text-dark-400'}`}>Por año</button>
+          <button onClick={() => { setViewMode('months'); setCurrentDate(initialDate || now); }} className={`px-3 py-1 rounded-full text-[11px] font-medium transition-all ${viewMode === 'months' ? 'bg-dark-600 text-white' : 'text-dark-400'}`}>Por meses</button>
+          <button onClick={() => { setViewMode('years'); setCurrentDate(initialDate || now); }} className={`px-3 py-1 rounded-full text-[11px] font-medium transition-all ${viewMode === 'years' ? 'bg-dark-600 text-white' : 'text-dark-400'}`}>Por año</button>
         </div>
       </div>
       <div className="flex items-center justify-between px-4 mb-1">
@@ -378,16 +366,15 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
   );
 }
 
-// ── DrillDownView — year-only with selectable month ───────────────────────────
+// ── DrillDownView ─────────────────────────────────────────────────────────────
 function DrillDownView({ user, drillDown, onBack, initialDate, initialMonth, now }: {
   user: User; drillDown: DrillDown; onBack: () => void;
   initialDate: Date; initialMonth: string | null; now: Date;
 }) {
   const currentYear = initialDate.getFullYear();
   const [year, setYear] = useState(currentYear);
-  // selectedMonth: 'yyyy-MM' or null (= whole year)
   const [selectedMonth, setSelectedMonth] = useState<string | null>(initialMonth);
-  const [allExpenses, setAllExpenses] = useState<ExpenseDetail[]>([]); // full year expenses
+  const [allExpenses, setAllExpenses] = useState<ExpenseDetail[]>([]);
   const [barData, setBarData] = useState<BarEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [allCats, setAllCats] = useState<RawCat[]>([]);
@@ -441,21 +428,15 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMonth, now
     });
   }
 
-  // Expenses to show: filtered by selectedMonth if set
   const visibleExpenses = useMemo(() => {
     if (!selectedMonth) return allExpenses;
     return allExpenses.filter(e => e.date.startsWith(selectedMonth));
   }, [allExpenses, selectedMonth]);
 
-  // Stats
   const yearTotal = useMemo(() => allExpenses.reduce((s, e) => s + e.amount, 0), [allExpenses]);
-  const closedMonths = useMemo(() => {
-    if (year < nowYear) return 12;
-    return now.getMonth(); // 0-indexed: April=3 → 3 closed months (Jan/Feb/Mar)
-  }, [year, nowYear, now]);
+  const closedMonths = useMemo(() => { if (year < nowYear) return 12; return now.getMonth(); }, [year, nowYear, now]);
   const monthAvg = useMemo(() => {
     if (closedMonths === 0) return 0;
-    // Sum only expenses from closed months (exclude current month)
     const currentMonthStr = format(now, 'yyyy-MM');
     const closedTotal = allExpenses.filter(e => !e.date.startsWith(currentMonthStr)).reduce((s, e) => s + e.amount, 0);
     return closedTotal / closedMonths;
@@ -463,7 +444,6 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMonth, now
   const selectedTotal = useMemo(() => visibleExpenses.reduce((s, e) => s + e.amount, 0), [visibleExpenses]);
   const diffVsAvg = monthAvg > 0 ? ((selectedTotal - monthAvg) / monthAvg) * 100 : 0;
 
-  // Grouped transactions
   const todayStr = format(now, 'yyyy-MM-dd');
   const yestStr = format(new Date(now.getTime() - 86400000), 'yyyy-MM-dd');
   const dayMap = new Map<string, ExpenseDetail[]>();
@@ -506,14 +486,10 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMonth, now
     swipeStartX.current = null;
   }
 
-  // Selected month label
-  const selectedMonthLabel = selectedMonth
-    ? format(parseISO(selectedMonth + '-01'), 'MMMM yyyy', { locale: es })
-    : null;
+  const selectedMonthLabel = selectedMonth ? format(parseISO(selectedMonth + '-01'), 'MMMM yyyy', { locale: es }) : null;
 
   return (
     <div className="max-w-lg mx-auto page-transition pb-8" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
-      {/* Header */}
       <div className="flex items-center gap-2 px-3 pt-4 pb-3">
         <button onClick={onBack} className="p-1 text-dark-300 hover:text-white transition-colors"><ArrowLeft size={20} /></button>
         <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -522,7 +498,6 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMonth, now
         </div>
       </div>
 
-      {/* Year nav */}
       <div className="flex items-center justify-between px-4 mb-2">
         <button onClick={() => setYear(y => y - 1)} className="text-[11px] text-dark-500 py-1 px-2 active:text-dark-300">← {year - 1}</button>
         <p className="text-[13px] font-semibold">{year}</p>
@@ -533,20 +508,15 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMonth, now
         <div className="flex items-center justify-center py-12"><div className="w-7 h-7 border-2 border-brand-500/30 border-t-brand-500 rounded-full animate-spin" /></div>
       ) : (
         <>
-          {/* Bar chart */}
           <div className="px-3 mb-1">
             <DrillBarChart data={barData} color={drillDown.color} selectedMonth={selectedMonth} onSelectMonth={setSelectedMonth} />
           </div>
 
-          {/* Stats row */}
           <div className="flex items-stretch border-t border-b border-dark-800/60 mb-1">
             {selectedMonth ? (
-              // Month selected: total mes + diff vs avg
               <>
                 <div className="flex-1 px-4 py-3">
-                  <p className="text-[9px] font-semibold text-dark-500 uppercase tracking-wider mb-0.5">
-                    Total {selectedMonthLabel}
-                  </p>
+                  <p className="text-[9px] font-semibold text-dark-500 uppercase tracking-wider mb-0.5">Total {selectedMonthLabel}</p>
                   <p className="text-[15px] font-bold text-red-400">{formatCurrency(selectedTotal, undefined, true)}</p>
                 </div>
                 <div className="w-px bg-dark-800/60" />
@@ -558,7 +528,6 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMonth, now
                 </div>
               </>
             ) : (
-              // Year view: total + prom/mes
               <>
                 <div className="flex-1 px-4 py-3">
                   <p className="text-[9px] font-semibold text-dark-500 uppercase tracking-wider mb-0.5">Total {year}</p>
@@ -573,15 +542,8 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMonth, now
             )}
           </div>
 
-          {/* Subcategories */}
-          <SubcatSection
-            expenses={visibleExpenses}
-            allCats={allCats}
-            drillDown={drillDown}
-            total={selectedMonth ? selectedTotal : yearTotal}
-          />
+          <SubcatSection expenses={visibleExpenses} allCats={allCats} drillDown={drillDown} total={selectedMonth ? selectedTotal : yearTotal} />
 
-          {/* Transactions */}
           {grouped.length === 0 ? (
             <div className="text-center py-10"><p className="text-dark-500 text-sm">Sin transacciones</p></div>
           ) : (
