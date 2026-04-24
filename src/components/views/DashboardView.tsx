@@ -105,13 +105,13 @@ function WalletChart({
               width={barW}
               height={barH}
               rx={3}
-              fill={isSelected ? '#f87171' : entry.isCurrent ? '#f87171' : 'rgba(248,113,113,0.32)'}
-              opacity={isSelected ? 1 : entry.isCurrent ? 1 : 0.7}
+              fill={isSelected ? '#f87171' : 'rgba(248,113,113,0.32)'}
+              opacity={isSelected ? 1 : 0.7}
             />
 
             <text x={cx} y={baseY + 13} textAnchor="middle"
-              fill={isSelected ? '#f4f4f5' : entry.isCurrent ? '#e4e4e7' : '#a1a1aa'} fontSize={10}
-              fontWeight={isSelected ? 700 : entry.isCurrent ? 700 : 500}>
+              fill={isSelected ? '#f4f4f5' : '#a1a1aa'} fontSize={10}
+              fontWeight={isSelected ? 700 : 500}>
               {entry.name}
             </text>
             {entry.year && (
