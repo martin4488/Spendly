@@ -97,10 +97,7 @@ function WalletChart({
           <g key={i} style={{ cursor: 'pointer' }} onClick={() => onSelect(i)}>
             {/* Invisible tap zone */}
             <rect x={tapX} y={padTop} width={slotW} height={plotH + padBottom} fill="transparent" />
-            {/* Selection highlight */}
-            {isSelected && (
-              <rect x={tapX + 2} y={padTop} width={slotW - 4} height={plotH} rx={4} fill="rgba(248,113,113,0.08)" />
-            )}
+
             <title>{entry.name} {entry.year}: {Math.round(entry.total)}</title>
             <rect
               x={barX}
@@ -111,10 +108,7 @@ function WalletChart({
               fill={isSelected ? '#f87171' : entry.isCurrent ? '#f87171' : 'rgba(248,113,113,0.32)'}
               opacity={isSelected ? 1 : entry.isCurrent ? 1 : 0.7}
             />
-            {/* Selected indicator dot */}
-            {isSelected && (
-              <circle cx={cx} cy={barY - 5} r={2.5} fill="#f87171" />
-            )}
+
             <text x={cx} y={baseY + 13} textAnchor="middle"
               fill={isSelected ? '#f4f4f5' : entry.isCurrent ? '#e4e4e7' : '#a1a1aa'} fontSize={10}
               fontWeight={isSelected ? 700 : entry.isCurrent ? 700 : 500}>
