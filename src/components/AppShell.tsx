@@ -7,7 +7,6 @@ import { setDefaultCurrency } from '@/lib/utils';
 import { Budget } from '@/types';
 import type { CurrencyCode } from '@/lib/currency';
 
-// Lazy-load ALL views — DashboardView is the heaviest, load it async too
 const DashboardView = lazy(() => import('@/components/views/DashboardView'));
 const CategoriesView = lazy(() => import('@/components/views/CategoriesView'));
 const BudgetsView = lazy(() => import('@/components/views/BudgetsView'));
@@ -28,22 +27,17 @@ const tabs = [
   { id: 'settings' as Tab, label: 'Más', icon: Settings },
 ];
 
-// Skeleton that matches DashboardView layout — shown while JS chunk loads
 function DashboardSkeleton() {
   return (
     <div className="max-w-lg mx-auto px-3 pt-5 animate-pulse">
-      {/* Total */}
       <div className="flex flex-col items-center mb-4">
         <div className="h-8 w-40 bg-dark-700 rounded-lg mb-2" />
         <div className="h-3 w-24 bg-dark-800 rounded" />
       </div>
-      {/* Toggle */}
       <div className="flex justify-center mb-4">
         <div className="h-7 w-40 bg-dark-800 rounded-full" />
       </div>
-      {/* Chart */}
       <div className="h-32 bg-dark-800/50 rounded-xl mb-4" />
-      {/* Rows */}
       {[1,2,3,4,5].map(i => (
         <div key={i} className="flex items-center gap-3 py-3 border-b border-dark-800/40">
           <div className="w-9 h-9 rounded-xl bg-dark-700 flex-shrink-0" />
@@ -73,6 +67,8 @@ interface AppShellProps {
 
 export default function AppShell({ user, initialCurrency }: AppShellProps) {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
+  const [overviewDate, setOverviewDate] = useState<Date | undefined>(undefined);
+  const [overviewViewMode, setOverviewViewMode] = useState<'months' | 'years' | undefined>(undefined);
   const [selectedBudget, setSelectedBudget] = useState<Budget | null>(null);
   const [selectedPeriodId, setSelectedPeriodId] = useState<string>('');
   const [defaultCurrency, _setDefaultCurrency] = useState<CurrencyCode>(initialCurrency);
@@ -90,6 +86,15 @@ export default function AppShell({ user, initialCurrency }: AppShellProps) {
     setActiveTab('budgets');
   };
 
+  // Called by DashboardView with optional date+viewMode when navigating to overview
+  const handleNavigate = (tab: Tab, date?: Date, viewMode?: 'months' | 'years') => {
+    if (tab === 'overview') {
+      setOverviewDate(date);
+      setOverviewViewMode(viewMode);
+    }
+    setActiveTab(tab);
+  };
+
   const hideNav = activeTab === 'overview' || activeTab === 'budget-detail' || activeTab === 'global-budget-detail' || activeTab === 'categories';
 
   return (
@@ -97,7 +102,7 @@ export default function AppShell({ user, initialCurrency }: AppShellProps) {
       <main className="page-transition">
         <Suspense fallback={activeTab === 'dashboard' ? <DashboardSkeleton /> : <ViewFallback />}>
           {activeTab === 'dashboard' && (
-            <DashboardView user={user} onNavigate={setActiveTab} defaultCurrency={defaultCurrency} />
+            <DashboardView user={user} onNavigate={handleNavigate} defaultCurrency={defaultCurrency} />
           )}
           {activeTab === 'categories' && <CategoriesView user={user} onBack={() => setActiveTab('settings')} />}
           {activeTab === 'budgets' && <BudgetsView user={user} onOpenBudget={openBudget} onOpenGlobalBudget={() => setActiveTab('global-budget-detail')} />}
@@ -126,7 +131,12 @@ export default function AppShell({ user, initialCurrency }: AppShellProps) {
             <SettingsView user={user} defaultCurrency={defaultCurrency} onCurrencyChange={updateCurrency} onOpenCategories={() => setActiveTab('categories')} />
           )}
           {activeTab === 'overview' && (
-            <SpendingOverview user={user} onBack={() => setActiveTab('dashboard')} />
+            <SpendingOverview
+              user={user}
+              onBack={() => setActiveTab('dashboard')}
+              initialDate={overviewDate}
+              initialViewMode={overviewViewMode}
+            />
           )}
         </Suspense>
       </main>
