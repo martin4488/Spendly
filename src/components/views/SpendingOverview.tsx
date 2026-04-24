@@ -450,10 +450,10 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMonth, now
   // Stats
   const yearTotal = useMemo(() => allExpenses.reduce((s, e) => s + e.amount, 0), [allExpenses]);
   const closedMonths = useMemo(() => {
-    // Count months with data up to (not including current month if this year)
-    const nowStr = format(now, 'yyyy-MM');
-    return barData.filter(b => b.amount > 0 && (year < nowYear || b.monthKey < nowStr)).length || 1;
-  }, [barData, year, nowYear, now]);
+    if (year < nowYear) return 12;
+    const currentMonth = now.getMonth(); // 0-indexed, so January=0
+    return currentMonth > 0 ? currentMonth : 1;
+  }, [year, nowYear, now]);
   const monthAvg = yearTotal / closedMonths;
   const selectedTotal = useMemo(() => visibleExpenses.reduce((s, e) => s + e.amount, 0), [visibleExpenses]);
   const diffVsAvg = monthAvg > 0 ? ((selectedTotal - monthAvg) / monthAvg) * 100 : 0;
@@ -583,7 +583,7 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMonth, now
             <div>
               <div className="flex items-center gap-2 px-4 pt-3 pb-1">
                 <p className="text-sm font-bold">Transacciones</p>
-                <span className="text-[11px] text-dark-500">· {visibleExpenses.length} {selectedMonthLabel ? `en ${selectedMonthLabel}` : `en ${year}`}</span>
+                <span className="text-[11px] text-dark-500">· {visibleExpenses.length}</span>
               </div>
               {grouped.map(group => (
                 <div key={group.date}>
