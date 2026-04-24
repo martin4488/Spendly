@@ -555,7 +555,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       {!showSearch && (
         <div className="px-5 pt-1.5 pb-3.5 flex justify-center">
           <button
-            onClick={() => onNavigate('overview')}
+            onClick={() => onNavigate('overview', new Date(selectedPeriod.year, selectedPeriod.month === -1 ? 0 : selectedPeriod.month, 1), viewMode)}
             aria-label="Ver detalle de gastos del mes"
             className="inline-flex items-center gap-2 px-3.5 py-1.5 bg-dark-800 rounded-full text-dark-300 hover:text-dark-200 transition-colors"
           >
