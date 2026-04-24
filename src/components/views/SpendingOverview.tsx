@@ -300,7 +300,7 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
 
   function renderCatList(cats: CatSpend[], depth = 0): React.ReactNode {
     return cats.map(cat => {
-      const activeChildren = cat.children.filter(c => c.spent > 0);
+      const activeChildren = cat.children.filter(c => c.spent > 0).sort((a, b) => b.spent - a.spent);
       const hasChildren = activeChildren.length > 0;
       const isExpanded = expanded.has(cat.id);
       const indent = depth * 16;
