@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, lazy, Suspense, useCallback } from 'react';
+import { useState, useEffect, useRef, lazy, Suspense, useCallback, useMemo } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/utils';
@@ -46,21 +46,13 @@ function buildSpend(node: CatNode, spendMap: Record<string, number>, txMap: Reco
 interface DrillDown { id: string; name: string; icon: string; color: string; allIds: string[]; children: CatSpend[]; }
 interface ExpenseDetail { id: string; date: string; description: string; amount: number; category_id?: string | null; }
 
-// ── SVG Donut — clean, no icons, no labels ────────────────────────────────────
+// ── SVG Donut ─────────────────────────────────────────────────────────────────
 function DonutChart({
-  cats,
-  total,
-  selectedId,
-  onSelectId,
+  cats, total, selectedId, onSelectId,
 }: {
-  cats: CatSpend[];
-  total: number;
-  selectedId: string | null;
-  onSelectId: (id: string | null) => void;
+  cats: CatSpend[]; total: number; selectedId: string | null; onSelectId: (id: string | null) => void;
 }) {
-  const CX = 150; const CY = 140;
-  const R_OUTER = 100; const R_INNER = 62;
-
+  const CX = 150; const CY = 140; const R_OUTER = 100; const R_INNER = 62;
   let cumAngle = -90;
   const slices = cats.map(cat => {
     const pct = total > 0 ? cat.spent / total : 0;
@@ -69,7 +61,6 @@ function DonutChart({
     cumAngle += angle;
     return { ...cat, pct, startA, endA: cumAngle };
   });
-
   function toRad(deg: number) { return (deg * Math.PI) / 180; }
   function polar(deg: number, r: number) { return { x: CX + r * Math.cos(toRad(deg)), y: CY + r * Math.sin(toRad(deg)) }; }
   function arc(s: number, e: number, ro: number, ri: number) {
@@ -77,17 +68,9 @@ function DonutChart({
     const lg = e - s > 180 ? 1 : 0;
     return `M ${p1.x} ${p1.y} A ${ro} ${ro} 0 ${lg} 1 ${p2.x} ${p2.y} L ${p3.x} ${p3.y} A ${ri} ${ri} 0 ${lg} 0 ${p4.x} ${p4.y} Z`;
   }
-
   const hasSelection = selectedId !== null;
-
   return (
-    <svg
-      viewBox="0 0 300 280"
-      width="100%"
-      height={260}
-      style={{ display: 'block' }}
-      onClick={() => onSelectId(null)}
-    >
+    <svg viewBox="0 0 300 280" width="100%" height={260} style={{ display: 'block' }} onClick={() => onSelectId(null)}>
       {slices.map((s, i) => {
         if (s.pct < 0.008) return null;
         const GAP = s.pct < 0.03 ? 0.4 : 1.2;
@@ -96,45 +79,40 @@ function DonutChart({
         const R_OUT = isSelected ? R_OUTER + 6 : R_OUTER;
         const R_IN = isSelected ? R_INNER - 3 : R_INNER;
         return (
-          <path
-            key={i}
-            d={arc(s.startA + GAP / 2, s.endA - GAP / 2, R_OUT, R_IN)}
-            fill={s.color}
-            opacity={dimmed ? 0.2 : 1}
-            style={{ cursor: 'pointer', transition: 'opacity 0.2s' }}
-            onClick={(e) => {
-              e.stopPropagation();
-              onSelectId(isSelected ? null : s.id);
-            }}
-          />
+          <path key={i} d={arc(s.startA + GAP / 2, s.endA - GAP / 2, R_OUT, R_IN)} fill={s.color}
+            opacity={dimmed ? 0.2 : 1} style={{ cursor: 'pointer', transition: 'opacity 0.2s' }}
+            onClick={(e) => { e.stopPropagation(); onSelectId(isSelected ? null : s.id); }} />
         );
       })}
-      <text x={CX} y={CY - 10} textAnchor="middle" fill="white" fontSize={17} fontWeight={700}>
-        {formatCurrency(total, undefined, true)}
-      </text>
-      <text x={CX} y={CY + 10} textAnchor="middle" fill="#64748b" fontSize={10} style={{ textTransform: 'uppercase', letterSpacing: 1 }}>
-        Gastos totales
-      </text>
+      <text x={CX} y={CY - 10} textAnchor="middle" fill="white" fontSize={17} fontWeight={700}>{formatCurrency(total, undefined, true)}</text>
+      <text x={CX} y={CY + 10} textAnchor="middle" fill="#64748b" fontSize={10} style={{ textTransform: 'uppercase', letterSpacing: 1 }}>Gastos totales</text>
     </svg>
   );
 }
 
-// ── Bar Chart ─────────────────────────────────────────────────────────────────
+// ── Bar Chart (DrillDown — year view, monthly bars, selectable) ───────────────
 interface BarSegment { amount: number; color: string; }
-interface BarEntry { label: string; amount: number; segments?: BarSegment[]; }
+interface BarEntry { label: string; amount: number; monthKey: string; segments?: BarSegment[]; }
 
-function BarChart({ data, color, mode }: { data: BarEntry[]; color: string; mode: ViewMode }) {
-  const W = 320; const H = 110; const PAD_L = 36; const PAD_B = 22; const PAD_T = 8; const PAD_R = 8;
+function DrillBarChart({
+  data, color, selectedMonth, onSelectMonth,
+}: {
+  data: BarEntry[]; color: string; selectedMonth: string | null; onSelectMonth: (key: string | null) => void;
+}) {
+  const W = 320; const H = 120; const PAD_L = 36; const PAD_B = 22; const PAD_T = 8; const PAD_R = 8;
   const chartW = W - PAD_L - PAD_R; const chartH = H - PAD_B - PAD_T;
   const max = Math.max(...data.map(d => d.amount), 1);
   const yTicks = [0, max * 0.5, max];
-  function fmtAmt(v: number) { if (v === 0) return '0'; if (v >= 1000) return `${(v/1000).toFixed(1)}k`; return Math.round(v).toString(); }
-  const barW = Math.max(4, (chartW / data.length) * 0.55);
+  function fmtAmt(v: number) { if (v === 0) return '0'; if (v >= 1000) return `${(v / 1000).toFixed(1)}k`; return Math.round(v).toString(); }
+  // Wider bars: 75% of slot
   const barGap = chartW / data.length;
-  const showEvery = data.length > 20 ? 7 : data.length > 10 ? 3 : 1;
+  const barW = Math.max(6, barGap * 0.72);
   const baseY = PAD_T + chartH;
+  const hasSelection = selectedMonth !== null;
+
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} style={{ display: 'block' }}>
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} style={{ display: 'block' }}
+      onClick={() => onSelectMonth(null)}>
       {yTicks.map((v, i) => {
         const y = PAD_T + chartH - (v / max) * chartH;
         return <g key={i}>
@@ -145,27 +123,93 @@ function BarChart({ data, color, mode }: { data: BarEntry[]; color: string; mode
       {data.map((d, i) => {
         const totalBarH = Math.max(2, (d.amount / max) * chartH);
         const x = PAD_L + i * barGap + barGap / 2 - barW / 2;
-        const opacity = i === data.length - 1 && mode === 'months' ? 0.5 : 1;
+        const isSelected = d.monthKey === selectedMonth;
+        const dimmed = hasSelection && !isSelected;
         const segs = d.segments && d.segments.length > 0 ? d.segments : [{ amount: d.amount, color: d.amount > 0 ? color : '#1e293b' }];
-        const clipId = `clip-${i}`;
+        const clipId = `dclip-${i}`;
         let stackY = baseY;
-        return <g key={i}>
-          <defs>
-            <clipPath id={clipId}>
-              <rect x={x} y={baseY - totalBarH} width={barW} height={totalBarH} rx={2} ry={2} />
-            </clipPath>
-          </defs>
-          {segs.map((seg, si) => {
-            const segH = Math.max(0, (seg.amount / max) * chartH);
-            stackY -= segH;
-            return <rect key={si} x={x} y={stackY} width={barW} height={Math.max(segH, si === 0 && d.amount > 0 ? 2 : 0)}
-              fill={seg.color} opacity={opacity} clipPath={`url(#${clipId})`} />;
-          })}
-          {i % showEvery === 0 && <text x={PAD_L + i * barGap + barGap / 2} y={H - 6} textAnchor="middle" fill="#475569" fontSize={7.5}>{d.label}</text>}
-        </g>;
+        return (
+          <g key={i} style={{ cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); onSelectMonth(isSelected ? null : d.monthKey); }}>
+            <defs>
+              <clipPath id={clipId}>
+                <rect x={x} y={baseY - totalBarH} width={barW} height={totalBarH} rx={2} ry={2} />
+              </clipPath>
+            </defs>
+            {/* Highlight bg for selected */}
+            {isSelected && (
+              <rect x={x - 3} y={PAD_T} width={barW + 6} height={chartH} rx={3} fill="white" opacity={0.06} />
+            )}
+            {segs.map((seg, si) => {
+              const segH = Math.max(0, (seg.amount / max) * chartH);
+              stackY -= segH;
+              return <rect key={si} x={x} y={stackY} width={barW}
+                height={Math.max(segH, si === 0 && d.amount > 0 ? 2 : 0)}
+                fill={seg.color} opacity={dimmed ? 0.3 : 1}
+                clipPath={`url(#${clipId})`}
+                style={{ transition: 'opacity 0.2s' }} />;
+            })}
+            <text x={PAD_L + i * barGap + barGap / 2} y={H - 6} textAnchor="middle"
+              fill={isSelected ? '#e2e8f0' : '#475569'} fontSize={7.5} fontWeight={isSelected ? 700 : 400}>
+              {d.label}
+            </text>
+          </g>
+        );
       })}
       <line x1={PAD_L} y1={PAD_T + chartH} x2={W - PAD_R} y2={PAD_T + chartH} stroke="#1e293b" strokeWidth={1} />
     </svg>
+  );
+}
+
+// ── Subcategory color bar + list ──────────────────────────────────────────────
+function SubcatSection({ expenses, allCats, drillDown, total }: {
+  expenses: ExpenseDetail[]; allCats: RawCat[]; drillDown: DrillDown; total: number;
+}) {
+  // Build subcat spend from expenses
+  const subcatMap = useMemo(() => {
+    const map: Record<string, number> = {};
+    expenses.forEach(e => {
+      const cid = e.category_id || '__none';
+      map[cid] = (map[cid] || 0) + e.amount;
+    });
+    return map;
+  }, [expenses]);
+
+  // Only show direct children of drillDown that have spend
+  const subs = useMemo(() => {
+    if (drillDown.children.length === 0) return [];
+    return drillDown.children
+      .map(child => {
+        // Sum all expenses whose category_id is in child.allIds
+        const spent = child.allIds.reduce((s, id) => s + (subcatMap[id] || 0), 0);
+        return { id: child.id, name: child.name, color: child.color, spent };
+      })
+      .filter(c => c.spent > 0)
+      .sort((a, b) => b.spent - a.spent);
+  }, [drillDown.children, subcatMap]);
+
+  if (subs.length === 0) return null;
+
+  const subsTotal = subs.reduce((s, c) => s + c.spent, 0);
+
+  return (
+    <div className="px-4 pb-3 border-b border-dark-800/60">
+      <p className="text-[10px] font-semibold text-dark-500 uppercase tracking-wider mb-2">Subcategorías</p>
+      {/* Color bar */}
+      <div className="flex h-1.5 rounded-full overflow-hidden mb-3 gap-px">
+        {subs.map(s => (
+          <div key={s.id} style={{ width: `${(s.spent / subsTotal) * 100}%`, background: s.color }} />
+        ))}
+      </div>
+      {/* List */}
+      {subs.map(s => (
+        <div key={s.id} className="flex items-center gap-2 py-1.5">
+          <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: s.color }} />
+          <span className="flex-1 text-[12px] text-dark-200 font-medium">{s.name}</span>
+          <span className="text-[11px] text-dark-500 mr-2">{Math.round((s.spent / (total || 1)) * 100)}%</span>
+          <span className="text-[12px] font-bold text-dark-100">{formatCurrency(s.spent, undefined, true)}</span>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -174,7 +218,7 @@ function getRange(date: Date, mode: ViewMode) {
   return { start: format(startOfYear(date), 'yyyy-MM-dd'), end: format(endOfYear(date), 'yyyy-MM-dd') };
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────────
+// ── Main SpendingOverview ──────────────────────────────────────────────────────
 export default function SpendingOverview({ user, onBack }: { user: User; onBack: () => void }) {
   const now = new Date();
   const [viewMode, setViewMode] = useState<ViewMode>('months');
@@ -205,68 +249,33 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
     setLoading(true);
     try {
       const range = getRange(currentDate, viewMode);
-
       const [{ data: rpcResult, error: rpcError }, catsMap] = await Promise.all([
-        supabase.rpc('get_spending_overview', {
-          p_user_id: user.id,
-          p_start_date: range.start,
-          p_end_date: range.end,
-        }),
+        supabase.rpc('get_spending_overview', { p_user_id: user.id, p_start_date: range.start, p_end_date: range.end }),
         getCategories(user.id),
       ]);
-
       const allCats = Array.from(catsMap.values());
       const activeCats = allCats.filter((c: any) => c.deleted !== true);
       const tree = buildTree(activeCats);
-
       let total = 0;
       const spendMap: Record<string, number> = {};
       const txMap: Record<string, number> = {};
-
       if (!rpcError && rpcResult) {
         total = Number(rpcResult.total) || 0;
         (rpcResult.category_totals || []).forEach((row: any) => {
-          if (row.category_id) {
-            spendMap[row.category_id] = Number(row.total);
-            txMap[row.category_id] = Number(row.tx_count);
-          }
+          if (row.category_id) { spendMap[row.category_id] = Number(row.total); txMap[row.category_id] = Number(row.tx_count); }
         });
       } else {
-        const { data: expenses } = await supabase.from('expenses')
-          .select('id, amount, category_id, description, date')
-          .eq('user_id', user.id)
-          .gte('date', range.start)
-          .lte('date', range.end)
-          .order('date', { ascending: false })
-          .limit(10000);
+        const { data: expenses } = await supabase.from('expenses').select('id, amount, category_id, description, date').eq('user_id', user.id).gte('date', range.start).lte('date', range.end).order('date', { ascending: false }).limit(10000);
         const allExp = expenses || [];
         total = allExp.reduce((s: number, e: any) => s + Number(e.amount), 0);
-        allExp.forEach((e: any) => {
-          if (e.category_id) {
-            spendMap[e.category_id] = (spendMap[e.category_id] || 0) + Number(e.amount);
-            txMap[e.category_id] = (txMap[e.category_id] || 0) + 1;
-          }
-        });
+        allExp.forEach((e: any) => { if (e.category_id) { spendMap[e.category_id] = (spendMap[e.category_id] || 0) + Number(e.amount); txMap[e.category_id] = (txMap[e.category_id] || 0) + 1; } });
       }
-
       setTotalSpent(total);
-
-      const spending: CatSpend[] = tree
-        .map(node => buildSpend(node, spendMap, txMap, total))
-        .filter(c => c.spent > 0)
-        .sort((a, b) => b.spent - a.spent);
-
+      const spending: CatSpend[] = tree.map(node => buildSpend(node, spendMap, txMap, total)).filter(c => c.spent > 0).sort((a, b) => b.spent - a.spent);
       const allCatIds = new Set(activeCats.map((c: any) => c.id));
-      const uncatSpent = (rpcResult?.category_totals || [])
-        .filter((row: any) => !row.category_id || !allCatIds.has(row.category_id))
-        .reduce((s: number, row: any) => s + Number(row.total), 0);
-      const uncatTx = (rpcResult?.category_totals || [])
-        .filter((row: any) => !row.category_id || !allCatIds.has(row.category_id))
-        .reduce((s: number, row: any) => s + Number(row.tx_count), 0);
-
-      if (uncatSpent > 0) {
-        spending.push({ id: 'uncategorized', name: 'Sin categoría', icon: 'package', color: '#95A5A6', spent: uncatSpent, percentage: total > 0 ? (uncatSpent / total) * 100 : 0, transactions: uncatTx, children: [], allIds: ['uncategorized'] });
-      }
+      const uncatSpent = (rpcResult?.category_totals || []).filter((row: any) => !row.category_id || !allCatIds.has(row.category_id)).reduce((s: number, row: any) => s + Number(row.total), 0);
+      const uncatTx = (rpcResult?.category_totals || []).filter((row: any) => !row.category_id || !allCatIds.has(row.category_id)).reduce((s: number, row: any) => s + Number(row.tx_count), 0);
+      if (uncatSpent > 0) spending.push({ id: 'uncategorized', name: 'Sin categoría', icon: 'package', color: '#95A5A6', spent: uncatSpent, percentage: total > 0 ? (uncatSpent / total) * 100 : 0, transactions: uncatTx, children: [], allIds: ['uncategorized'] });
       setCatSpending(spending);
     } catch (err) { console.error(err); }
     finally { setLoading(false); }
@@ -280,7 +289,6 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
     if (viewMode === 'months') { const n = dir === 1 ? addMonths(currentDate, 1) : subMonths(currentDate, 1); if (n <= now) setCurrentDate(n); }
     else { const n = dir === 1 ? addYears(currentDate, 1) : subYears(currentDate, 1); if (n <= now) setCurrentDate(n); }
   }
-
   function onTouchStart(e: React.TouchEvent) { swipeStartX.current = e.touches[0].clientX; }
   function onTouchEnd(e: React.TouchEvent) {
     if (swipeStartX.current === null) return;
@@ -295,7 +303,9 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
   const nextLabel = isAtPresent ? '' : viewMode === 'months' ? format(addMonths(currentDate, 1), 'MMM yyyy', { locale: es }) : String(currentDate.getFullYear() + 1);
 
   if (drillDown) {
-    return <DrillDownView user={user} drillDown={drillDown} onBack={() => setDrillDown(null)} initialDate={currentDate} initialMode={viewMode} now={now} />;
+    // Pass initialMonth only when coming from a month view
+    const initialMonth = viewMode === 'months' ? format(currentDate, 'yyyy-MM') : null;
+    return <DrillDownView user={user} drillDown={drillDown} onBack={() => setDrillDown(null)} initialDate={currentDate} initialMonth={initialMonth} now={now} />;
   }
 
   function renderCatList(cats: CatSpend[], depth = 0): React.ReactNode {
@@ -306,51 +316,29 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
       const indent = depth * 16;
       const isSelected = selectedCatId === cat.id;
       const isDimmed = selectedCatId !== null && !isSelected;
-
       return (
-        <div
-          key={cat.id}
-          ref={el => { rowRefs.current[cat.id] = el; }}
-          className="border-b border-dark-800/40"
-          style={{ opacity: isDimmed ? 0.3 : 1, transition: 'opacity 0.2s ease' }}
-        >
+        <div key={cat.id} ref={el => { rowRefs.current[cat.id] = el; }} className="border-b border-dark-800/40"
+          style={{ opacity: isDimmed ? 0.3 : 1, transition: 'opacity 0.2s ease' }}>
           <div className="flex items-center gap-2.5 py-2.5" style={{ paddingLeft: `${12 + indent}px`, paddingRight: 12 }}>
-            <button
-              onClick={() => openDrillDown(cat)}
-              className="flex-shrink-0 active:opacity-70"
-            >
+            <button onClick={() => openDrillDown(cat)} className="flex-shrink-0 active:opacity-70">
               <CategoryIcon icon={cat.icon} color={cat.color} size={depth === 0 ? 36 : 28} rounded="xl" />
             </button>
-            <button
-              onClick={() => openDrillDown(cat)}
-              className="flex-1 min-w-0 text-left active:opacity-70"
-            >
+            <button onClick={() => openDrillDown(cat)} className="flex-1 min-w-0 text-left active:opacity-70">
               <p className={`font-semibold ${depth === 0 ? 'text-[12px]' : 'text-[11px] text-dark-200'}`}>{cat.name}</p>
               <p className="text-[10px] text-dark-500">{cat.transactions} {cat.transactions === 1 ? 'transacción' : 'transacciones'}</p>
             </button>
-            {/* Percentage left of amount, inline */}
             <div className="flex items-center gap-1.5 flex-shrink-0">
-              <span className={`text-dark-500 font-medium ${depth === 0 ? 'text-[11px]' : 'text-[10px]'}`}>
-                {Math.round(cat.percentage)}%
-              </span>
+              <span className={`text-dark-500 font-medium ${depth === 0 ? 'text-[11px]' : 'text-[10px]'}`}>{Math.round(cat.percentage)}%</span>
               <Amount value={cat.spent} size="sm" color="text-red-400" weight="bold" className={depth === 0 ? 'text-[12px]' : 'text-[11px]'} decimals={false} />
             </div>
             {hasChildren && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setExpanded(prev => { const n = new Set(prev); n.has(cat.id) ? n.delete(cat.id) : n.add(cat.id); return n; });
-                }}
-                className="p-0.5 text-dark-500 ml-0.5"
-              >
+              <button onClick={(e) => { e.stopPropagation(); setExpanded(prev => { const n = new Set(prev); n.has(cat.id) ? n.delete(cat.id) : n.add(cat.id); return n; }); }} className="p-0.5 text-dark-500 ml-0.5">
                 {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
               </button>
             )}
           </div>
           {hasChildren && isExpanded && (
-            <div className="border-l border-dark-700/40 ml-8">
-              {renderCatList(activeChildren, depth + 1)}
-            </div>
+            <div className="border-l border-dark-700/40 ml-8">{renderCatList(activeChildren, depth + 1)}</div>
           )}
         </div>
       );
@@ -381,12 +369,7 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
       ) : (
         <>
           <div className="px-2 mb-2">
-            <DonutChart
-              cats={catSpending}
-              total={totalSpent}
-              selectedId={selectedCatId}
-              onSelectId={handleSelectCat}
-            />
+            <DonutChart cats={catSpending} total={totalSpent} selectedId={selectedCatId} onSelectId={handleSelectCat} />
           </div>
           <div className="px-3">{renderCatList(catSpending)}</div>
         </>
@@ -395,28 +378,34 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
   );
 }
 
-// ── DrillDownView ─────────────────────────────────────────────────────────────
-function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now }: {
+// ── DrillDownView — year-only with selectable month ───────────────────────────
+function DrillDownView({ user, drillDown, onBack, initialDate, initialMonth, now }: {
   user: User; drillDown: DrillDown; onBack: () => void;
-  initialDate: Date; initialMode: ViewMode; now: Date;
+  initialDate: Date; initialMonth: string | null; now: Date;
 }) {
-  const [viewMode, setViewMode] = useState<ViewMode>(initialMode);
-  const [currentDate, setCurrentDate] = useState(initialDate);
-  const [expenses, setExpenses] = useState<ExpenseDetail[]>([]);
+  const currentYear = initialDate.getFullYear();
+  const [year, setYear] = useState(currentYear);
+  // selectedMonth: 'yyyy-MM' or null (= whole year)
+  const [selectedMonth, setSelectedMonth] = useState<string | null>(initialMonth);
+  const [allExpenses, setAllExpenses] = useState<ExpenseDetail[]>([]); // full year expenses
   const [barData, setBarData] = useState<BarEntry[]>([]);
-  const [periodTotal, setPeriodTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [allCats, setAllCats] = useState<RawCat[]>([]);
   const swipeStartX = useRef<number | null>(null);
   const [editingExpense, setEditingExpense] = useState<any>(null);
   const [showExpenseModal, setShowExpenseModal] = useState(false);
 
-  useEffect(() => { loadData(); }, [viewMode, currentDate]);
+  const nowYear = now.getFullYear();
+  const isAtPresent = year === nowYear;
+
+  useEffect(() => { loadData(); }, [year]);
 
   async function loadData() {
     setLoading(true);
     try {
-      const range = getRange(currentDate, viewMode);
+      const yearDate = new Date(year, 0, 1);
+      const start = format(startOfYear(yearDate), 'yyyy-MM-dd');
+      const end = format(endOfYear(yearDate), 'yyyy-MM-dd');
       const catsMap = await getCategories(user.id);
       const cats = Array.from(catsMap.values());
       setAllCats(cats);
@@ -424,72 +413,63 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
       let list: ExpenseDetail[] = [];
       if (drillDown.id === 'uncategorized') {
         const ids = new Set(cats.map((c: any) => c.id));
-        const { data: exp } = await supabase.from('expenses').select('id, amount, description, date, category_id').eq('user_id', user.id).gte('date', range.start).lte('date', range.end).order('date', { ascending: false }).limit(10000);
+        const { data: exp } = await supabase.from('expenses').select('id, amount, description, date, category_id').eq('user_id', user.id).gte('date', start).lte('date', end).order('date', { ascending: false }).limit(10000);
         list = (exp || []).filter((e: any) => !e.category_id || !ids.has(e.category_id)).map((e: any) => ({ id: e.id, date: e.date, description: e.description, amount: Number(e.amount), category_id: e.category_id }));
       } else {
-        const { data: exp } = await supabase.from('expenses').select('id, amount, description, date, category_id').eq('user_id', user.id).in('category_id', drillDown.allIds).gte('date', range.start).lte('date', range.end).order('date', { ascending: false }).limit(10000);
+        const { data: exp } = await supabase.from('expenses').select('id, amount, description, date, category_id').eq('user_id', user.id).in('category_id', drillDown.allIds).gte('date', start).lte('date', end).order('date', { ascending: false }).limit(10000);
         list = (exp || []).map((e: any) => ({ id: e.id, date: e.date, description: e.description, amount: Number(e.amount), category_id: e.category_id }));
       }
-      setExpenses(list);
-      setPeriodTotal(list.reduce((s, e) => s + e.amount, 0));
-      setBarData(buildBarData(list, currentDate, viewMode, cats));
+      setAllExpenses(list);
+      setBarData(buildBarData(list, year, cats));
     } catch (err) { console.error(err); }
     finally { setLoading(false); }
   }
 
-  function buildBarData(exp: ExpenseDetail[], date: Date, mode: ViewMode, cats: RawCat[] = allCats): BarEntry[] {
+  function buildBarData(exp: ExpenseDetail[], yr: number, cats: RawCat[]): BarEntry[] {
     const colorMap: Record<string, string> = {};
     cats.forEach(c => { colorMap[c.id] = c.color; });
-
-    function makeEntry(label: string, dayExps: ExpenseDetail[]): BarEntry {
-      const amount = dayExps.reduce((s, e) => s + e.amount, 0);
-      if (amount === 0) return { label, amount, segments: [] };
-      const bycat: Record<string, number> = {};
-      dayExps.forEach(e => {
-        const cid = e.category_id || '__none';
-        bycat[cid] = (bycat[cid] || 0) + e.amount;
-      });
-      const segments: BarSegment[] = Object.entries(bycat)
-        .sort((a, b) => b[1] - a[1])
-        .map(([cid, amt]) => ({ amount: amt, color: colorMap[cid] || drillDown.color }));
-      return { label, amount, segments };
-    }
-
-    if (mode === 'months') {
-      return eachDayOfInterval({ start: startOfMonth(date), end: endOfMonth(date) }).map(d => {
-        const key = format(d, 'yyyy-MM-dd');
-        return makeEntry(format(d, 'd'), exp.filter(e => e.date === key));
-      });
-    }
-    return eachMonthOfInterval({ start: startOfYear(date), end: endOfYear(date) }).map(m => {
+    const yearDate = new Date(yr, 0, 1);
+    return eachMonthOfInterval({ start: startOfYear(yearDate), end: endOfYear(yearDate) }).map(m => {
       const mStr = format(m, 'yyyy-MM');
-      return makeEntry(format(m, 'MMM', { locale: es }), exp.filter(e => e.date.startsWith(mStr)));
+      const monthExps = exp.filter(e => e.date.startsWith(mStr));
+      const amount = monthExps.reduce((s, e) => s + e.amount, 0);
+      if (amount === 0) return { label: format(m, 'MMM', { locale: es }), amount, monthKey: mStr, segments: [] };
+      const bycat: Record<string, number> = {};
+      monthExps.forEach(e => { const cid = e.category_id || '__none'; bycat[cid] = (bycat[cid] || 0) + e.amount; });
+      const segments: BarSegment[] = Object.entries(bycat).sort((a, b) => b[1] - a[1]).map(([cid, amt]) => ({ amount: amt, color: colorMap[cid] || drillDown.color }));
+      return { label: format(m, 'MMM', { locale: es }), amount, monthKey: mStr, segments };
     });
   }
 
-  function navigate(dir: 1 | -1) {
-    if (viewMode === 'months') { const n = dir === 1 ? addMonths(currentDate, 1) : subMonths(currentDate, 1); if (n <= now) setCurrentDate(n); }
-    else { const n = dir === 1 ? addYears(currentDate, 1) : subYears(currentDate, 1); if (n <= now) setCurrentDate(n); }
-  }
-  function onTouchStart(e: React.TouchEvent) { swipeStartX.current = e.touches[0].clientX; }
-  function onTouchEnd(e: React.TouchEvent) {
-    if (swipeStartX.current === null) return;
-    const dx = swipeStartX.current - e.changedTouches[0].clientX;
-    if (Math.abs(dx) > 40) navigate(dx > 0 ? 1 : -1);
-    swipeStartX.current = null;
-  }
+  // Expenses to show: filtered by selectedMonth if set
+  const visibleExpenses = useMemo(() => {
+    if (!selectedMonth) return allExpenses;
+    return allExpenses.filter(e => e.date.startsWith(selectedMonth));
+  }, [allExpenses, selectedMonth]);
 
-  const isAtPresent = viewMode === 'months' ? format(currentDate, 'yyyy-MM') === format(now, 'yyyy-MM') : currentDate.getFullYear() === now.getFullYear();
-  const prevLabel = viewMode === 'months' ? format(subMonths(currentDate, 1), 'MMM yyyy', { locale: es }) : String(currentDate.getFullYear() - 1);
-  const nextLabel = isAtPresent ? '' : viewMode === 'months' ? format(addMonths(currentDate, 1), 'MMM yyyy', { locale: es }) : String(currentDate.getFullYear() + 1);
-  const periodLabel = viewMode === 'months' ? format(currentDate, 'MMMM yyyy', { locale: es }) : currentDate.getFullYear().toString();
+  // Stats
+  const yearTotal = useMemo(() => allExpenses.reduce((s, e) => s + e.amount, 0), [allExpenses]);
+  const closedMonths = useMemo(() => {
+    // Count months with data up to (not including current month if this year)
+    const nowStr = format(now, 'yyyy-MM');
+    return barData.filter(b => b.amount > 0 && (year < nowYear || b.monthKey < nowStr)).length || 1;
+  }, [barData, year, nowYear, now]);
+  const monthAvg = yearTotal / closedMonths;
+  const selectedTotal = useMemo(() => visibleExpenses.reduce((s, e) => s + e.amount, 0), [visibleExpenses]);
+  const diffVsAvg = monthAvg > 0 ? ((selectedTotal - monthAvg) / monthAvg) * 100 : 0;
 
+  // Grouped transactions
   const todayStr = format(now, 'yyyy-MM-dd');
   const yestStr = format(new Date(now.getTime() - 86400000), 'yyyy-MM-dd');
   const dayMap = new Map<string, ExpenseDetail[]>();
-  expenses.forEach(e => { if (!dayMap.has(e.date)) dayMap.set(e.date, []); dayMap.get(e.date)!.push(e); });
+  visibleExpenses.forEach(e => { if (!dayMap.has(e.date)) dayMap.set(e.date, []); dayMap.get(e.date)!.push(e); });
   const grouped = Array.from(dayMap.entries())
-    .map(([dateStr, exps]) => ({ date: dateStr, label: dateStr === todayStr ? 'Hoy' : dateStr === yestStr ? 'Ayer' : format(parseISO(dateStr), "d 'de' MMMM", { locale: es }), total: exps.reduce((s, e) => s + e.amount, 0), expenses: exps }))
+    .map(([dateStr, exps]) => ({
+      date: dateStr,
+      label: dateStr === todayStr ? 'Hoy' : dateStr === yestStr ? 'Ayer' : format(parseISO(dateStr), "d MMM", { locale: es }).toUpperCase(),
+      total: exps.reduce((s, e) => s + e.amount, 0),
+      expenses: exps,
+    }))
     .sort((a, b) => b.date.localeCompare(a.date));
 
   function resolveCat(categoryId: string | null | undefined): RawCat | undefined {
@@ -505,14 +485,30 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
   async function deleteExpense(id: string) {
     if (!confirm('¿Eliminar este gasto?')) return;
     await supabase.from('expenses').delete().eq('id', id);
-    setExpenses(prev => prev.filter(e => e.id !== id));
-    setPeriodTotal(prev => prev - (expenses.find(e => e.id === id)?.amount || 0));
-    const updated = expenses.filter(e => e.id !== id);
-    setBarData(buildBarData(updated, currentDate, viewMode, allCats));
+    const updated = allExpenses.filter(e => e.id !== id);
+    setAllExpenses(updated);
+    setBarData(buildBarData(updated, year, allCats));
   }
+
+  function onTouchStart(e: React.TouchEvent) { swipeStartX.current = e.touches[0].clientX; }
+  function onTouchEnd(e: React.TouchEvent) {
+    if (swipeStartX.current === null) return;
+    const dx = swipeStartX.current - e.changedTouches[0].clientX;
+    if (Math.abs(dx) > 40) {
+      if (dx > 0 && !isAtPresent) setYear(y => y + 1);
+      else if (dx < 0) setYear(y => y - 1);
+    }
+    swipeStartX.current = null;
+  }
+
+  // Selected month label
+  const selectedMonthLabel = selectedMonth
+    ? format(parseISO(selectedMonth + '-01'), 'MMMM yyyy', { locale: es })
+    : null;
 
   return (
     <div className="max-w-lg mx-auto page-transition pb-8" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+      {/* Header */}
       <div className="flex items-center gap-2 px-3 pt-4 pb-3">
         <button onClick={onBack} className="p-1 text-dark-300 hover:text-white transition-colors"><ArrowLeft size={20} /></button>
         <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -521,37 +517,78 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
         </div>
       </div>
 
-      <div className="flex justify-center mb-2">
-        <div className="inline-flex bg-dark-800 rounded-full p-0.5">
-          <button onClick={() => { setViewMode('months'); setCurrentDate(now); }} className={`px-3 py-1 rounded-full text-[11px] font-medium transition-all ${viewMode === 'months' ? 'bg-dark-600 text-white' : 'text-dark-400'}`}>Por meses</button>
-          <button onClick={() => { setViewMode('years'); setCurrentDate(now); }} className={`px-3 py-1 rounded-full text-[11px] font-medium transition-all ${viewMode === 'years' ? 'bg-dark-600 text-white' : 'text-dark-400'}`}>Por año</button>
-        </div>
-      </div>
-
+      {/* Year nav */}
       <div className="flex items-center justify-between px-4 mb-2">
-        <button onClick={() => navigate(-1)} className="text-[11px] text-dark-500 capitalize py-1 px-2 active:text-dark-300">← {prevLabel}</button>
-        <p className="text-[13px] font-semibold capitalize">{periodLabel}</p>
-        {isAtPresent ? <div className="w-20" /> : <button onClick={() => navigate(1)} className="text-[11px] text-dark-500 capitalize py-1 px-2 active:text-dark-300">{nextLabel} →</button>}
+        <button onClick={() => setYear(y => y - 1)} className="text-[11px] text-dark-500 py-1 px-2 active:text-dark-300">← {year - 1}</button>
+        <p className="text-[13px] font-semibold">{year}</p>
+        {isAtPresent ? <div className="w-16" /> : <button onClick={() => setYear(y => y + 1)} className="text-[11px] text-dark-500 py-1 px-2 active:text-dark-300">{year + 1} →</button>}
       </div>
 
       {loading ? (
         <div className="flex items-center justify-center py-12"><div className="w-7 h-7 border-2 border-brand-500/30 border-t-brand-500 rounded-full animate-spin" /></div>
       ) : (
         <>
-          <div className="px-3 mb-1"><BarChart data={barData} color={drillDown.color} mode={viewMode} /></div>
-          <div className="flex items-center justify-between px-4 py-3 border-t border-b border-dark-800/60 mb-1">
-            <span className="text-xs text-dark-400 font-medium uppercase tracking-wider">Total en el período</span>
-            <Amount value={periodTotal} size="md" color="text-red-400" weight="bold" decimals={false} />
+          {/* Bar chart */}
+          <div className="px-3 mb-1">
+            <DrillBarChart data={barData} color={drillDown.color} selectedMonth={selectedMonth} onSelectMonth={setSelectedMonth} />
           </div>
+
+          {/* Stats row */}
+          <div className="flex items-stretch border-t border-b border-dark-800/60 mb-1">
+            {selectedMonth ? (
+              // Month selected: total mes + diff vs avg
+              <>
+                <div className="flex-1 px-4 py-3">
+                  <p className="text-[9px] font-semibold text-dark-500 uppercase tracking-wider mb-0.5">
+                    Total {selectedMonthLabel}
+                  </p>
+                  <p className="text-[15px] font-bold text-red-400">{formatCurrency(selectedTotal, undefined, true)}</p>
+                </div>
+                <div className="w-px bg-dark-800/60" />
+                <div className="flex-1 px-4 py-3">
+                  <p className="text-[9px] font-semibold text-dark-500 uppercase tracking-wider mb-0.5">vs prom mensual</p>
+                  <p className={`text-[15px] font-bold ${diffVsAvg > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                    {diffVsAvg > 0 ? '+' : ''}{Math.round(diffVsAvg)}%
+                  </p>
+                </div>
+              </>
+            ) : (
+              // Year view: total + prom/mes
+              <>
+                <div className="flex-1 px-4 py-3">
+                  <p className="text-[9px] font-semibold text-dark-500 uppercase tracking-wider mb-0.5">Total {year}</p>
+                  <p className="text-[15px] font-bold text-red-400">{formatCurrency(yearTotal, undefined, true)}</p>
+                </div>
+                <div className="w-px bg-dark-800/60" />
+                <div className="flex-1 px-4 py-3">
+                  <p className="text-[9px] font-semibold text-dark-500 uppercase tracking-wider mb-0.5">Prom / mes</p>
+                  <p className="text-[15px] font-bold text-dark-100">{formatCurrency(monthAvg, undefined, true)}</p>
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Subcategories */}
+          <SubcatSection
+            expenses={visibleExpenses}
+            allCats={allCats}
+            drillDown={drillDown}
+            total={selectedMonth ? selectedTotal : yearTotal}
+          />
+
+          {/* Transactions */}
           {grouped.length === 0 ? (
-            <div className="text-center py-10"><p className="text-dark-500 text-sm">Sin transacciones en este período</p></div>
+            <div className="text-center py-10"><p className="text-dark-500 text-sm">Sin transacciones</p></div>
           ) : (
             <div>
-              <p className="px-4 pt-3 pb-1 text-sm font-bold">Transacciones</p>
+              <div className="flex items-center gap-2 px-4 pt-3 pb-1">
+                <p className="text-sm font-bold">Transacciones</p>
+                <span className="text-[11px] text-dark-500">· {visibleExpenses.length} {selectedMonthLabel ? `en ${selectedMonthLabel}` : `en ${year}`}</span>
+              </div>
               {grouped.map(group => (
                 <div key={group.date}>
                   <div className="flex items-center justify-between px-4 py-1.5 bg-dark-800/60">
-                    <span className="text-[10px] font-semibold text-dark-500 uppercase tracking-wider capitalize">{group.label}</span>
+                    <span className="text-[10px] font-semibold text-dark-500 uppercase tracking-wider">{group.label}</span>
                     <Amount value={group.total} size="sm" weight="semibold" color="text-dark-500" className="text-[10px]" decimals={false} />
                   </div>
                   {group.expenses.map(exp => {
@@ -580,6 +617,7 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
           )}
         </>
       )}
+
       {showExpenseModal && (
         <Suspense fallback={null}>
           <AddExpenseModal
