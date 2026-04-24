@@ -541,7 +541,7 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
           <div className="px-3 mb-1"><BarChart data={barData} color={drillDown.color} mode={viewMode} /></div>
           <div className="flex items-center justify-between px-4 py-3 border-t border-b border-dark-800/60 mb-1">
             <span className="text-xs text-dark-400 font-medium uppercase tracking-wider">Total en el período</span>
-            <Amount value={periodTotal} size="md" color="text-red-400" weight="bold" />
+            <Amount value={periodTotal} size="md" color="text-red-400" weight="bold" decimals={false} />
           </div>
           {grouped.length === 0 ? (
             <div className="text-center py-10"><p className="text-dark-500 text-sm">Sin transacciones en este período</p></div>
