@@ -173,7 +173,7 @@ const ExpenseRow = memo(function ExpenseRow({
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function DashboardView({ user, onNavigate, defaultCurrency }: { user: User; onNavigate: (tab: any) => void; defaultCurrency: CurrencyCode }) {
+export default function DashboardView({ user, onNavigate, defaultCurrency }: { user: User; onNavigate: (tab: any, date?: Date, viewMode?: 'months' | 'years') => void; defaultCurrency: CurrencyCode }) {
   const cached = useMemo(() => readDashboardCache(user.id), [user.id]);
   const hasCachedData = !!cached;
 
