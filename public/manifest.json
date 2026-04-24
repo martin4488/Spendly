@@ -4,8 +4,8 @@
   "description": "Tu tracker de gastos personal",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0f172a",
-  "theme_color": "#22c55e",
+  "background_color": "#08080f",
+  "theme_color": "#08080f",
   "orientation": "portrait",
   "icons": [
     {
@@ -16,7 +16,8 @@
     {
       "src": "/icon-512.png",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ]
 }
