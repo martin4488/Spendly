@@ -40,7 +40,7 @@ function buildSpend(node: CatNode, spendMap: Record<string, number>, txMap: Reco
   const directSpent = spendMap[node.id] || 0;
   const spent = directSpent + childSpends.reduce((s, c) => s + c.spent, 0);
   const transactions = (txMap[node.id] || 0) + childSpends.reduce((s, c) => s + c.transactions, 0);
-  return { id: node.id, name: node.name, icon: node.icon, color: node.color, spent, percentage: total > 0 ? (spent / total) * 100 : 0, transactions, children: childSpends, allIds: allIds(node) };
+  return { id: node.id, name: node.name, icon: node.icon, color: node.color, spent, percentage: total > 0 ? (spent / total) * 100 : 0, transactions, children: childSpends.sort((a, b) => b.spent - a.spent), allIds: allIds(node) };
 }
 
 interface DrillDown { id: string; name: string; icon: string; color: string; allIds: string[]; children: CatSpend[]; }
