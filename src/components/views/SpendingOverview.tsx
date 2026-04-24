@@ -451,10 +451,15 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMonth, now
   const yearTotal = useMemo(() => allExpenses.reduce((s, e) => s + e.amount, 0), [allExpenses]);
   const closedMonths = useMemo(() => {
     if (year < nowYear) return 12;
-    const currentMonth = now.getMonth(); // 0-indexed, so January=0
-    return currentMonth > 0 ? currentMonth : 1;
+    return now.getMonth(); // 0-indexed: April=3 → 3 closed months (Jan/Feb/Mar)
   }, [year, nowYear, now]);
-  const monthAvg = yearTotal / closedMonths;
+  const monthAvg = useMemo(() => {
+    if (closedMonths === 0) return 0;
+    // Sum only expenses from closed months (exclude current month)
+    const currentMonthStr = format(now, 'yyyy-MM');
+    const closedTotal = allExpenses.filter(e => !e.date.startsWith(currentMonthStr)).reduce((s, e) => s + e.amount, 0);
+    return closedTotal / closedMonths;
+  }, [allExpenses, closedMonths, now, year]);
   const selectedTotal = useMemo(() => visibleExpenses.reduce((s, e) => s + e.amount, 0), [visibleExpenses]);
   const diffVsAvg = monthAvg > 0 ? ((selectedTotal - monthAvg) / monthAvg) * 100 : 0;
 
