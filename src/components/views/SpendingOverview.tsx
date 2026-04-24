@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, lazy, Suspense, useCallback } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/utils';
@@ -11,7 +11,7 @@ import {
   eachDayOfInterval, eachMonthOfInterval,
 } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { ArrowLeft, ChevronDown, ChevronRight, Trash2 } from 'lucide-react';
+import { ArrowLeft, ChevronDown, ChevronRight } from 'lucide-react';
 import CategoryIcon from '@/components/ui/CategoryIcon';
 import { getCategories } from '@/lib/categoryCache';
 import Amount from '@/components/ui/Amount';
@@ -24,12 +24,10 @@ type ViewMode = 'months' | 'years';
 
 interface RawCat { id: string; name: string; icon: string; color: string; parent_id: string | null; }
 
-// Collect all descendant ids including self
 function allIds(node: CatNode): string[] {
   return [node.id, ...node.children.flatMap(allIds)];
 }
 
-// ── CatSpend (flattened for donut) ────────────────────────────────────────────
 interface CatSpend {
   id: string; name: string; icon: string; color: string;
   spent: number; percentage: number; transactions: number;
@@ -45,16 +43,23 @@ function buildSpend(node: CatNode, spendMap: Record<string, number>, txMap: Reco
   return { id: node.id, name: node.name, icon: node.icon, color: node.color, spent, percentage: total > 0 ? (spent / total) * 100 : 0, transactions, children: childSpends, allIds: allIds(node) };
 }
 
-// ── DrillDown ─────────────────────────────────────────────────────────────────
 interface DrillDown { id: string; name: string; icon: string; color: string; allIds: string[]; children: CatSpend[]; }
-
 interface ExpenseDetail { id: string; date: string; description: string; amount: number; category_id?: string | null; }
 
-// ── SVG Donut ─────────────────────────────────────────────────────────────────
-function DonutChart({ cats, total }: { cats: CatSpend[]; total: number }) {
-  const CX = 185; const CY = 165;
-  const R_OUTER = 90; const R_INNER = 56; const R_ICON = 118;
-  const R_LINE_START = R_OUTER + 2;
+// ── SVG Donut — clean, no icons, no labels ────────────────────────────────────
+function DonutChart({
+  cats,
+  total,
+  selectedId,
+  onSelectId,
+}: {
+  cats: CatSpend[];
+  total: number;
+  selectedId: string | null;
+  onSelectId: (id: string | null) => void;
+}) {
+  const CX = 150; const CY = 140;
+  const R_OUTER = 100; const R_INNER = 62;
 
   let cumAngle = -90;
   const slices = cats.map(cat => {
@@ -73,47 +78,43 @@ function DonutChart({ cats, total }: { cats: CatSpend[]; total: number }) {
     return `M ${p1.x} ${p1.y} A ${ro} ${ro} 0 ${lg} 1 ${p2.x} ${p2.y} L ${p3.x} ${p3.y} A ${ri} ${ri} 0 ${lg} 0 ${p4.x} ${p4.y} Z`;
   }
 
+  const hasSelection = selectedId !== null;
+
   return (
-    <svg viewBox="0 0 370 330" width="100%" height={290} style={{ display: 'block', overflow: 'visible' }}>
+    <svg
+      viewBox="0 0 300 280"
+      width="100%"
+      height={260}
+      style={{ display: 'block' }}
+      onClick={() => onSelectId(null)}
+    >
       {slices.map((s, i) => {
         if (s.pct < 0.008) return null;
         const GAP = s.pct < 0.03 ? 0.4 : 1.2;
-        return <path key={i} d={arc(s.startA + GAP / 2, s.endA - GAP / 2, R_OUTER, R_INNER)} fill={s.color} />;
-      })}
-      {slices.map((s, i) => {
-        if (s.pct < 0.008) return null;
-        const midAngle = s.startA + (s.endA - s.startA) / 2;
-        const iconR = s.pct < 0.04 ? R_ICON - 5 : R_ICON;
-        const iconCircleR = s.pct < 0.04 ? 11 : 14;
-        const lineEndPt = polar(midAngle, iconR - iconCircleR);
-        const lineStartPt = polar(midAngle, R_LINE_START);
-        const prevMid = i > 0 ? slices[i-1].startA + (slices[i-1].endA - slices[i-1].startA) / 2 : 9999;
-        const nextMid = i < slices.length-1 ? slices[i+1].startA + (slices[i+1].endA - slices[i+1].startA) / 2 : 9999;
-        const crowded = Math.abs(midAngle - prevMid) < 20 || Math.abs(midAngle - nextMid) < 20;
-        const labelR = iconR + iconCircleR + (crowded ? 16 : 12);
-        const labelPos = polar(midAngle, labelR);
-        const iconPos = polar(midAngle, iconR);
+        const isSelected = s.id === selectedId;
+        const dimmed = hasSelection && !isSelected;
+        const R_OUT = isSelected ? R_OUTER + 6 : R_OUTER;
+        const R_IN = isSelected ? R_INNER - 3 : R_INNER;
         return (
-          <g key={i}>
-            <line x1={lineStartPt.x} y1={lineStartPt.y} x2={lineEndPt.x} y2={lineEndPt.y} stroke={s.color} strokeWidth={s.pct < 0.04 ? 1.2 : 1.8} opacity={0.9} />
-            <foreignObject
-              x={iconPos.x - iconCircleR}
-              y={iconPos.y - iconCircleR}
-              width={iconCircleR * 2}
-              height={iconCircleR * 2}
-            >
-              <CategoryIcon icon={s.icon} color={s.color} size={iconCircleR * 2} rounded="full" iconSize={Math.round(iconCircleR * 1.1)} />
-            </foreignObject>
-            {s.pct >= 0.025 && (
-              <text x={labelPos.x} y={labelPos.y} textAnchor="middle" dominantBaseline="middle" fill={s.color} fontSize={9.5} fontWeight={700}>
-                {`${(s.pct * 100).toFixed(1)}%`}
-              </text>
-            )}
-          </g>
+          <path
+            key={i}
+            d={arc(s.startA + GAP / 2, s.endA - GAP / 2, R_OUT, R_IN)}
+            fill={s.color}
+            opacity={dimmed ? 0.2 : 1}
+            style={{ cursor: 'pointer', transition: 'opacity 0.2s' }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelectId(isSelected ? null : s.id);
+            }}
+          />
         );
       })}
-      <text x={CX} y={CY - 9} textAnchor="middle" fill="white" fontSize={15} fontWeight={700}>-{formatCurrency(total, undefined, true)}</text>
-      <text x={CX} y={CY + 10} textAnchor="middle" fill="#64748b" fontSize={10}>Gastos totales</text>
+      <text x={CX} y={CY - 10} textAnchor="middle" fill="white" fontSize={17} fontWeight={700}>
+        {formatCurrency(total, undefined, true)}
+      </text>
+      <text x={CX} y={CY + 10} textAnchor="middle" fill="#64748b" fontSize={10} style={{ textTransform: 'uppercase', letterSpacing: 1 }}>
+        Gastos totales
+      </text>
     </svg>
   );
 }
@@ -146,13 +147,12 @@ function BarChart({ data, color, mode }: { data: BarEntry[]; color: string; mode
         const x = PAD_L + i * barGap + barGap / 2 - barW / 2;
         const opacity = i === data.length - 1 && mode === 'months' ? 0.5 : 1;
         const segs = d.segments && d.segments.length > 0 ? d.segments : [{ amount: d.amount, color: d.amount > 0 ? color : '#1e293b' }];
-        const totalBarH2 = totalBarH;
         const clipId = `clip-${i}`;
         let stackY = baseY;
         return <g key={i}>
           <defs>
             <clipPath id={clipId}>
-              <rect x={x} y={baseY - totalBarH2} width={barW} height={totalBarH2} rx={2} ry={2} />
+              <rect x={x} y={baseY - totalBarH} width={barW} height={totalBarH} rx={2} ry={2} />
             </clipPath>
           </defs>
           {segs.map((seg, si) => {
@@ -184,16 +184,28 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [drillDown, setDrillDown] = useState<DrillDown | null>(null);
+  const [selectedCatId, setSelectedCatId] = useState<string | null>(null);
   const swipeStartX = useRef<number | null>(null);
+  const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  const handleSelectCat = useCallback((id: string | null) => {
+    setSelectedCatId(id);
+    if (id) {
+      setTimeout(() => {
+        const el = rowRefs.current[id];
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 50);
+    }
+  }, []);
 
   useEffect(() => { loadData(); }, [viewMode, currentDate]);
+  useEffect(() => { setSelectedCatId(null); }, [viewMode, currentDate]);
 
   async function loadData() {
     setLoading(true);
     try {
       const range = getRange(currentDate, viewMode);
 
-      // Try RPC first (server-side aggregation — no row limit issues)
       const [{ data: rpcResult, error: rpcError }, catsMap] = await Promise.all([
         supabase.rpc('get_spending_overview', {
           p_user_id: user.id,
@@ -212,7 +224,6 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
       const txMap: Record<string, number> = {};
 
       if (!rpcError && rpcResult) {
-        // Use RPC result
         total = Number(rpcResult.total) || 0;
         (rpcResult.category_totals || []).forEach((row: any) => {
           if (row.category_id) {
@@ -221,7 +232,6 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
           }
         });
       } else {
-        // Fallback: client-side with high limit
         const { data: expenses } = await supabase.from('expenses')
           .select('id, amount, category_id, description, date')
           .eq('user_id', user.id)
@@ -246,7 +256,6 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
         .filter(c => c.spent > 0)
         .sort((a, b) => b.spent - a.spent);
 
-      // Uncategorized
       const allCatIds = new Set(activeCats.map((c: any) => c.id));
       const uncatSpent = (rpcResult?.category_totals || [])
         .filter((row: any) => !row.category_id || !allCatIds.has(row.category_id))
@@ -289,27 +298,51 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
     return <DrillDownView user={user} drillDown={drillDown} onBack={() => setDrillDown(null)} initialDate={currentDate} initialMode={viewMode} now={now} />;
   }
 
-  // Recursive category list renderer
   function renderCatList(cats: CatSpend[], depth = 0): React.ReactNode {
     return cats.map(cat => {
       const activeChildren = cat.children.filter(c => c.spent > 0);
       const hasChildren = activeChildren.length > 0;
       const isExpanded = expanded.has(cat.id);
       const indent = depth * 16;
+      const isSelected = selectedCatId === cat.id;
+      const isDimmed = selectedCatId !== null && !isSelected;
+
       return (
-        <div key={cat.id} className="border-b border-dark-800/40">
+        <div
+          key={cat.id}
+          ref={el => { rowRefs.current[cat.id] = el; }}
+          className="border-b border-dark-800/40"
+          style={{ opacity: isDimmed ? 0.3 : 1, transition: 'opacity 0.2s ease' }}
+        >
           <div className="flex items-center gap-2.5 py-2.5" style={{ paddingLeft: `${12 + indent}px`, paddingRight: 12 }}>
-            <button onClick={() => openDrillDown(cat)}
-              className="flex-shrink-0 active:opacity-70">
+            <button
+              onClick={() => openDrillDown(cat)}
+              className="flex-shrink-0 active:opacity-70"
+            >
               <CategoryIcon icon={cat.icon} color={cat.color} size={depth === 0 ? 36 : 28} rounded="xl" />
             </button>
-            <button onClick={() => openDrillDown(cat)} className="flex-1 min-w-0 text-left active:opacity-70">
+            <button
+              onClick={() => openDrillDown(cat)}
+              className="flex-1 min-w-0 text-left active:opacity-70"
+            >
               <p className={`font-semibold ${depth === 0 ? 'text-[12px]' : 'text-[11px] text-dark-200'}`}>{cat.name}</p>
               <p className="text-[10px] text-dark-500">{cat.transactions} {cat.transactions === 1 ? 'transacción' : 'transacciones'}</p>
             </button>
-            <Amount value={cat.spent} sign="-" size="sm" color="text-red-400" weight="bold" className={`flex-shrink-0 ${depth === 0 ? 'text-[12px]' : 'text-[11px]'}`} decimals={false} />
+            {/* Percentage left of amount, inline */}
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              <span className={`text-dark-500 font-medium ${depth === 0 ? 'text-[11px]' : 'text-[10px]'}`}>
+                {Math.round(cat.percentage)}%
+              </span>
+              <Amount value={cat.spent} size="sm" color="text-red-400" weight="bold" className={depth === 0 ? 'text-[12px]' : 'text-[11px]'} decimals={false} />
+            </div>
             {hasChildren && (
-              <button onClick={() => setExpanded(prev => { const n = new Set(prev); n.has(cat.id) ? n.delete(cat.id) : n.add(cat.id); return n; })} className="p-0.5 text-dark-500 ml-0.5">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setExpanded(prev => { const n = new Set(prev); n.has(cat.id) ? n.delete(cat.id) : n.add(cat.id); return n; });
+                }}
+                className="p-0.5 text-dark-500 ml-0.5"
+              >
                 {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
               </button>
             )}
@@ -347,10 +380,13 @@ export default function SpendingOverview({ user, onBack }: { user: User; onBack:
         <div className="text-center py-12"><div className="text-4xl mb-3">📊</div><p className="text-dark-300 text-sm">No hay datos para este período</p></div>
       ) : (
         <>
-          <div className="px-2 mb-2"><DonutChart cats={catSpending} total={totalSpent} /></div>
-          <div className="flex items-center justify-between px-4 py-3 mb-1 border-t border-b border-dark-800/60">
-            <span className="text-xs text-dark-400 font-medium uppercase tracking-wider">Total gastado</span>
-            <Amount value={totalSpent} sign="-" size="md" color="text-red-400" weight="bold" decimals={false} />
+          <div className="px-2 mb-2">
+            <DonutChart
+              cats={catSpending}
+              total={totalSpent}
+              selectedId={selectedCatId}
+              onSelectId={handleSelectCat}
+            />
           </div>
           <div className="px-3">{renderCatList(catSpending)}</div>
         </>
@@ -381,7 +417,6 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
     setLoading(true);
     try {
       const range = getRange(currentDate, viewMode);
-
       const catsMap = await getCategories(user.id);
       const cats = Array.from(catsMap.values());
       setAllCats(cats);
@@ -463,13 +498,7 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
   }
 
   function openEdit(exp: ExpenseDetail) {
-    setEditingExpense({
-      id: exp.id,
-      amount: Number(exp.amount),
-      description: exp.description,
-      category_id: exp.category_id,
-      date: exp.date,
-    });
+    setEditingExpense({ id: exp.id, amount: Number(exp.amount), description: exp.description, category_id: exp.category_id, date: exp.date });
     setShowExpenseModal(true);
   }
 
@@ -512,7 +541,7 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
           <div className="px-3 mb-1"><BarChart data={barData} color={drillDown.color} mode={viewMode} /></div>
           <div className="flex items-center justify-between px-4 py-3 border-t border-b border-dark-800/60 mb-1">
             <span className="text-xs text-dark-400 font-medium uppercase tracking-wider">Total en el período</span>
-            <Amount value={periodTotal} sign={periodTotal > 0 ? '-' : ''} size="md" color="text-red-400" weight="bold" />
+            <Amount value={periodTotal} size="md" color="text-red-400" weight="bold" />
           </div>
           {grouped.length === 0 ? (
             <div className="text-center py-10"><p className="text-dark-500 text-sm">Sin transacciones en este período</p></div>
@@ -523,7 +552,7 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
                 <div key={group.date}>
                   <div className="flex items-center justify-between px-4 py-1.5 bg-dark-800/60">
                     <span className="text-[10px] font-semibold text-dark-500 uppercase tracking-wider capitalize">{group.label}</span>
-                    <Amount value={group.total} sign="-" size="sm" weight="semibold" color="text-dark-500" className="text-[10px]" decimals={false} />
+                    <Amount value={group.total} size="sm" weight="semibold" color="text-dark-500" className="text-[10px]" decimals={false} />
                   </div>
                   {group.expenses.map(exp => {
                     const cat = resolveCat(exp.category_id);
@@ -540,7 +569,7 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMode, now 
                               <p className="text-[10px] text-dark-500 truncate">{exp.description}</p>
                             )}
                           </div>
-                          <Amount value={exp.amount} sign="-" size="sm" color="text-red-400" weight="bold" className="flex-shrink-0" decimals={false} />
+                          <Amount value={exp.amount} size="sm" color="text-red-400" weight="bold" className="flex-shrink-0" decimals={false} />
                         </div>
                       </SwipeableRow>
                     );
