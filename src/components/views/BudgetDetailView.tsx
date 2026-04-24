@@ -10,6 +10,7 @@ import { format, parseISO, differenceInDays, isWithinInterval } from 'date-fns';
 import { es } from 'date-fns/locale';
 import type { BudgetPeriod } from './BudgetsView';
 import Amount from '@/components/ui/Amount';
+import CategoryIcon from '@/components/ui/CategoryIcon';
 
 const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
 
@@ -509,7 +510,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
                   const catPct = periodAmount > 0 ? (cat.spent / periodAmount) * 100 : 0;
                   return (
                     <div key={cat.id} className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-xl flex items-center justify-center text-sm flex-shrink-0" style={{ backgroundColor: cat.color }}>{cat.icon}</div>
+                      <CategoryIcon icon={cat.icon} color={cat.color} size={32} rounded="xl" />
                       <div className="flex-1 min-w-0">
                         <div className="flex justify-between mb-0.5">
                           <span className="text-xs font-medium truncate">{cat.name}</span>
@@ -542,9 +543,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
                     const cat = categories.find(c => c.id === exp.category_id);
                     return (
                       <div key={exp.id} onClick={() => openExpenseEdit(exp)} className="flex items-center gap-2.5 px-4 py-2.5 border-b border-dark-800/40 active:bg-dark-700/40 cursor-pointer transition-colors">
-                        <div className="w-8 h-8 rounded-xl flex items-center justify-center text-base flex-shrink-0" style={{ backgroundColor: cat?.color || '#475569' }}>
-                          {cat?.icon || '💸'}
-                        </div>
+                        <CategoryIcon icon={cat?.icon || 'hand-coins'} color={cat?.color || '#475569'} size={32} rounded="xl" />
                         <div className="flex-1 min-w-0">
                           <p className="text-[12px] font-semibold truncate">{cat?.name || 'Sin categoría'}</p>
                           {exp.description && exp.description !== cat?.name && (
