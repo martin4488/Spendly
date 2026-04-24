@@ -26,7 +26,6 @@ function toDateStr(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-/** Parse 'yyyy-MM-dd' into day/month label without date-fns */
 function formatDayLabel(dateStr: string, todayStr: string, yesterdayStr: string): string {
   if (dateStr === todayStr) return 'Hoy';
   if (dateStr === yesterdayStr) return 'Ayer';
@@ -38,8 +37,12 @@ function formatDayLabel(dateStr: string, todayStr: string, yesterdayStr: string)
 // ── Custom chart ──────────────────────────────────────────────────────────────
 function WalletChart({
   data,
+  selectedIndex,
+  onSelect,
 }: {
   data: { name: string; year: string; total: number; isCurrent: boolean }[];
+  selectedIndex: number;
+  onSelect: (index: number) => void;
 }) {
   const W = 340;
   const H = 130;
@@ -51,7 +54,7 @@ function WalletChart({
   const plotW = W - padL - padR;
 
   const maxVal = Math.max(...data.map(d => d.total), 1);
-  const topVal = maxVal * 1.15; // 15% headroom
+  const topVal = maxVal * 1.15;
   const midVal = topVal / 2;
 
   const fmtGrid = (v: number) => v >= 1000 ? `${(v / 1000).toFixed(1).replace('.0', '')}k` : `${Math.round(v)}`;
@@ -72,14 +75,12 @@ function WalletChart({
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} style={{ display: 'block' }}>
-      {/* Dynamic gridlines */}
       {gridlines.map((g, i) => (
         <g key={i}>
           <line x1={padL} y1={g.y} x2={W - padR} y2={g.y} stroke="rgba(255,255,255,0.06)" strokeDasharray="2 3" strokeWidth={1} />
           <text x={padL - 4} y={g.y + 3} textAnchor="end" fill="#71717a" fontSize={9} fontFamily="var(--font-mono)">{g.label}</text>
         </g>
       ))}
-      {/* Baseline */}
       <line x1={padL} y1={baseY} x2={W - padR} y2={baseY} stroke="rgba(255,255,255,0.15)" strokeWidth={1.5} />
       <text x={padL - 4} y={baseY + 3} textAnchor="end" fill="#71717a" fontSize={9} fontFamily="var(--font-mono)">0</text>
 
@@ -88,18 +89,39 @@ function WalletChart({
         const barH = Math.max((entry.total / topVal) * plotH, entry.total > 0 ? 2 : 0);
         const barX = cx - barW / 2;
         const barY = baseY - barH;
+        const isSelected = i === selectedIndex;
+        // Tap/click zone covers full slot height
+        const tapX = padL + i * slotW;
+
         return (
-          <g key={i}>
+          <g key={i} style={{ cursor: 'pointer' }} onClick={() => onSelect(i)}>
+            {/* Invisible tap zone */}
+            <rect x={tapX} y={padTop} width={slotW} height={plotH + padBottom} fill="transparent" />
+            {/* Selection highlight */}
+            {isSelected && (
+              <rect x={tapX + 2} y={padTop} width={slotW - 4} height={plotH} rx={4} fill="rgba(248,113,113,0.08)" />
+            )}
             <title>{entry.name} {entry.year}: {Math.round(entry.total)}</title>
-            <rect x={barX} y={barY} width={barW} height={barH} rx={3}
-              fill={entry.isCurrent ? '#f87171' : 'rgba(248,113,113,0.32)'} />
+            <rect
+              x={barX}
+              y={barY}
+              width={barW}
+              height={barH}
+              rx={3}
+              fill={isSelected ? '#f87171' : entry.isCurrent ? '#f87171' : 'rgba(248,113,113,0.32)'}
+              opacity={isSelected ? 1 : entry.isCurrent ? 1 : 0.7}
+            />
+            {/* Selected indicator dot */}
+            {isSelected && (
+              <circle cx={cx} cy={barY - 5} r={2.5} fill="#f87171" />
+            )}
             <text x={cx} y={baseY + 13} textAnchor="middle"
-              fill={entry.isCurrent ? '#e4e4e7' : '#a1a1aa'} fontSize={10}
-              fontWeight={entry.isCurrent ? 700 : 500}>
+              fill={isSelected ? '#f4f4f5' : entry.isCurrent ? '#e4e4e7' : '#a1a1aa'} fontSize={10}
+              fontWeight={isSelected ? 700 : entry.isCurrent ? 700 : 500}>
               {entry.name}
             </text>
             {entry.year && (
-              <text x={cx} y={baseY + 24} textAnchor="middle" fill="#71717a" fontSize={9} fontFamily="var(--font-mono)">
+              <text x={cx} y={baseY + 24} textAnchor="middle" fill={isSelected ? '#a1a1aa' : '#71717a'} fontSize={9} fontFamily="var(--font-mono)">
                 {entry.year}
               </text>
             )}
@@ -158,7 +180,6 @@ const ExpenseRow = memo(function ExpenseRow({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function DashboardView({ user, onNavigate, defaultCurrency }: { user: User; onNavigate: (tab: any) => void; defaultCurrency: CurrencyCode }) {
-  // ── Instant init from cache ─────────────────────────────────────────────
   const cached = useMemo(() => readDashboardCache(user.id), [user.id]);
   const hasCachedData = !!cached;
 
@@ -166,7 +187,6 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
   const [categoriesMap, setCategoriesMap] = useState<Map<string, Category>>(
     cached ? buildCategoriesMapFromCache(cached.categories) : new Map()
   );
-  // Skip loading spinner if we have cached data to show
   const [loading, setLoading] = useState(!hasCachedData);
   const [chartTotals, setChartTotals] = useState<Record<string, number>>(cached?.chartTotals || {});
   const [yearTotals, setYearTotals] = useState<Record<number, number>>({});
@@ -178,7 +198,10 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
   const [searchQuery, setSearchQuery] = useState('');
   const searchRef = useRef<HTMLInputElement>(null);
 
-  // Stable date values — recalculated only on re-mount, not every render
+  // ── Selected bar: null means "current" (last bar, index 5) ────────────────
+  // We store the index into chartData (0–5). Default = 5 (current month/year).
+  const [selectedBarIndex, setSelectedBarIndex] = useState<number>(5);
+
   const currentMonth = useMemo(() => new Date().getMonth(), []);
   const currentYear = useMemo(() => new Date().getFullYear(), []);
 
@@ -188,12 +211,11 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     if (showSearch && searchRef.current) searchRef.current.focus();
   }, [showSearch]);
 
-  // ── Unified load: used both on mount and after save/delete ────────────────
   const loadDashboard = useCallback(async () => {
     try {
       const now = new Date();
       const start31 = new Date(now);
-      start31.setDate(start31.getDate() - 30); // 31 days inclusive
+      start31.setDate(start31.getDate() - 30);
       const startStr = toDateStr(start31);
 
       const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
@@ -212,7 +234,6 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       let freshTotals: Record<string, number> = {};
 
       if (rpcError || !rpcResult) {
-        // Fallback: 2-query approach
         const [{ data: exp }, { data: chartExp }] = await Promise.all([
           supabase.from('expenses').select('*').eq('user_id', user.id).gte('date', startStr).order('date', { ascending: false }).limit(500),
           supabase.from('expenses').select('date, amount').eq('user_id', user.id).gte('date', chartStart).limit(10000),
@@ -232,13 +253,48 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       setExpenses(freshExpenses);
       setChartTotals(freshTotals);
       setCategoriesMap(map);
-
-      // Persist to cache for next cold start
       writeDashboardCache(user.id, freshExpenses, freshTotals, map);
     } catch (err) {
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  }, [user.id]);
+
+  // ── Load expenses for a specific past month ───────────────────────────────
+  const loadMonthExpenses = useCallback(async (year: number, month: number) => {
+    try {
+      const start = `${year}-${String(month + 1).padStart(2, '0')}-01`;
+      const lastDay = new Date(year, month + 1, 0).getDate();
+      const end = `${year}-${String(month + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+      const { data } = await supabase
+        .from('expenses')
+        .select('*')
+        .eq('user_id', user.id)
+        .gte('date', start)
+        .lte('date', end)
+        .order('date', { ascending: false })
+        .limit(500);
+      setExpenses(data || []);
+    } catch (err) {
+      console.error(err);
+    }
+  }, [user.id]);
+
+  // ── Load expenses for a specific past year ────────────────────────────────
+  const loadYearExpenses = useCallback(async (year: number) => {
+    try {
+      const { data } = await supabase
+        .from('expenses')
+        .select('*')
+        .eq('user_id', user.id)
+        .gte('date', `${year}-01-01`)
+        .lte('date', `${year}-12-31`)
+        .order('date', { ascending: false })
+        .limit(2000);
+      setExpenses(data || []);
+    } catch (err) {
+      console.error(err);
     }
   }, [user.id]);
 
@@ -277,34 +333,60 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
 
   function handleViewModeChange(mode: ViewMode) {
     setViewMode(mode);
+    setSelectedBarIndex(5); // reset to current on mode switch
     if (mode === 'years') {
       loadExtended();
     } else if (extendedLoaded) {
-      // Switching back to months — reload 31-day window
       setExtendedLoaded(false);
       loadDashboard();
     }
   }
 
+  // ── Handle bar selection ──────────────────────────────────────────────────
+  const handleBarSelect = useCallback(async (index: number) => {
+    setSelectedBarIndex(index);
+    if (index === 5) {
+      // Current period — reload normal data
+      if (viewMode === 'months') {
+        loadDashboard();
+      } else {
+        loadYearExpenses(currentYear);
+      }
+      return;
+    }
+
+    if (viewMode === 'months') {
+      const offset = 5 - index;
+      const targetDate = new Date(currentYear, currentMonth - offset, 1);
+      await loadMonthExpenses(targetDate.getFullYear(), targetDate.getMonth());
+    } else {
+      const targetYear = currentYear - (5 - index);
+      await loadYearExpenses(targetYear);
+    }
+  }, [viewMode, currentYear, currentMonth, loadDashboard, loadMonthExpenses, loadYearExpenses]);
+
   const yearRange = useMemo(() => getYearRange(new Date(currentYear, currentMonth, 1)), [currentYear]);
 
-  const currentYearExp = useMemo(
-    () => expenses.filter(e => e.date >= yearRange.start && e.date <= yearRange.end),
-    [expenses, yearRange.start, yearRange.end]
-  );
+  // ── Derive the selected period info ──────────────────────────────────────
+  const selectedPeriod = useMemo(() => {
+    if (viewMode === 'months') {
+      const offset = 5 - selectedBarIndex;
+      const d = new Date(currentYear, currentMonth - offset, 1);
+      return { year: d.getFullYear(), month: d.getMonth(), isCurrentPeriod: selectedBarIndex === 5 };
+    } else {
+      const year = currentYear - (5 - selectedBarIndex);
+      return { year, month: -1, isCurrentPeriod: selectedBarIndex === 5 };
+    }
+  }, [selectedBarIndex, viewMode, currentYear, currentMonth]);
 
-  // Months mode: show all loaded expenses (already 31 days from query)
-  // Years mode: filter to current year
-  const displayExpenses = viewMode === 'months' ? expenses : currentYearExp;
-
-  // Header total: always from chartTotals for current month (months mode) or yearTotals (years mode)
-  const monthKey = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}`;
+  // ── Header total from selected bar ───────────────────────────────────────
   const accumulatedTotal = useMemo(() => {
     if (viewMode === 'months') {
-      return chartTotals[monthKey] || 0;
+      const key = `${selectedPeriod.year}-${String(selectedPeriod.month + 1).padStart(2, '0')}`;
+      return chartTotals[key] || 0;
     }
-    return yearTotals[currentYear] || 0;
-  }, [viewMode, chartTotals, yearTotals, monthKey, currentYear]);
+    return yearTotals[selectedPeriod.year] || 0;
+  }, [viewMode, chartTotals, yearTotals, selectedPeriod]);
 
   const chartData = useMemo(() => {
     if (viewMode === 'months') {
@@ -343,7 +425,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
 
   const groupedByDay = useMemo(() => {
     const filtered = searchQuery
-      ? displayExpenses.filter(e => {
+      ? expenses.filter(e => {
           const cat = e.category_id ? categoriesMap.get(e.category_id) : null;
           const parentCat = cat?.parent_id ? categoriesMap.get(cat.parent_id) : null;
           const q = searchQuery.toLowerCase();
@@ -353,7 +435,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
             (parentCat?.name || '').toLowerCase().includes(q)
           );
         })
-      : displayExpenses;
+      : expenses;
 
     const dayMap = new Map<string, Expense[]>();
     filtered.forEach(exp => {
@@ -369,7 +451,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
         expenses: exps,
       }))
       .sort((a, b) => b.date.localeCompare(a.date));
-  }, [displayExpenses, searchQuery, todayStr, yesterdayStr, categoriesMap]);
+  }, [expenses, searchQuery, todayStr, yesterdayStr, categoriesMap]);
 
   const openEdit = useCallback((expense: Expense) => {
     setEditingExpense({
@@ -389,10 +471,13 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     }
   }, [loadDashboard]);
 
-  // Header subtitle
-  const headerSubtitle = viewMode === 'months'
-    ? `${MONTHS_ES[currentMonth]} ${currentYear}`
-    : String(currentYear);
+  // ── Header subtitle from selected period ─────────────────────────────────
+  const headerSubtitle = useMemo(() => {
+    if (viewMode === 'months') {
+      return `${MONTHS_ES[selectedPeriod.month]} ${selectedPeriod.year}`;
+    }
+    return String(selectedPeriod.year);
+  }, [viewMode, selectedPeriod]);
 
   if (loading) {
     return (
@@ -464,7 +549,11 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       {/* Bar chart */}
       {!showSearch && (
         <div className="px-3 mb-0">
-          <WalletChart data={chartData} />
+          <WalletChart
+            data={chartData}
+            selectedIndex={selectedBarIndex}
+            onSelect={handleBarSelect}
+          />
         </div>
       )}
 
@@ -532,13 +621,15 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
         )}
       </div>
 
-      {/* FAB */}
-      <button
-        onClick={() => { setEditingExpense(null); setShowAddExpense(true); }}
-        className="fixed bottom-20 right-4 bg-brand-500 text-white w-12 h-12 rounded-full shadow-xl shadow-black/30 flex items-center justify-center z-40 active:scale-95 transition-transform"
-      >
-        <Plus size={24} strokeWidth={2.5} />
-      </button>
+      {/* FAB — only show for current period */}
+      {selectedPeriod.isCurrentPeriod && (
+        <button
+          onClick={() => { setEditingExpense(null); setShowAddExpense(true); }}
+          className="fixed bottom-20 right-4 bg-brand-500 text-white w-12 h-12 rounded-full shadow-xl shadow-black/30 flex items-center justify-center z-40 active:scale-95 transition-transform"
+        >
+          <Plus size={24} strokeWidth={2.5} />
+        </button>
+      )}
 
       {/* Modal — lazy loaded */}
       {showAddExpense && (
