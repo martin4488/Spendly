@@ -500,7 +500,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
             </div>
             <div className="flex-1 px-4 py-3 text-center">
               <p className="text-[9px] font-semibold text-dark-500 uppercase tracking-wider mb-0.5">% gastado</p>
-              <p className="text-[15px] font-bold text-dark-100">{pct.toFixed(1)}%</p>
+              <p className={`text-[15px] font-bold ${pct >= 100 ? 'text-red-400' : 'text-dark-100'}`}>{pct.toFixed(1)}%</p>
             </div>
           </div>
 
@@ -622,7 +622,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
                             {s.isCurrent && <span className="text-[9px] font-bold bg-brand-500/20 text-brand-400 px-1.5 py-0.5 rounded-full">actual</span>}
                           </div>
                           <span className="text-[11px] text-dark-500">
-                            {formatCurrency(s.spent, undefined, true)} / {formatCurrency(pAmt, undefined, true)} · {sPct.toFixed(0)}% gastado
+                            {formatCurrency(s.spent, undefined, true)} / {formatCurrency(pAmt, undefined, true)} · <span className={isOver ? 'text-red-400 font-semibold' : ''}>{sPct.toFixed(0)}% gastado</span>
                           </span>
                         </div>
                         <div className="text-right">
