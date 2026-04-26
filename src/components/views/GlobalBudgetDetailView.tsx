@@ -624,36 +624,44 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
                       onClick={() => { setCurrentMonth(s.month); setShowHistory(false); }}
                       className={`w-full text-left px-4 py-3 rounded-2xl active:bg-dark-800/60 transition-colors ${s.isCurrent ? 'bg-dark-800/60' : ''}`}>
                       <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
-                          <div className="w-2 h-2 rounded-full flex-shrink-0"
-                            style={{ backgroundColor: noBudget ? '#64748b' : dotColor, boxShadow: s.isCurrent ? `0 0 6px ${noBudget ? '#64748b88' : dotColor + '88'}` : undefined }} />
-                          <span className={`text-sm font-semibold capitalize ${s.isCurrent ? 'text-white' : 'text-dark-200'}`}>{label}</span>
-                          {s.isCurrent && <span className="text-[9px] font-bold bg-brand-500/20 text-brand-400 px-1.5 py-0.5 rounded-full">actual</span>}
+                        <div>
+                          <div className="flex items-center gap-2 mb-0.5">
+                            <span className={`text-sm font-bold capitalize ${s.isCurrent ? 'text-white' : 'text-dark-200'}`}>{label}</span>
+                            {s.isCurrent && <span className="text-[9px] font-bold bg-brand-500/20 text-brand-400 px-1.5 py-0.5 rounded-full">actual</span>}
+                          </div>
+                          {noBudget ? (
+                            <span className="text-[11px] text-dark-500">sin presupuesto</span>
+                          ) : (
+                            <span className="text-[11px] text-dark-500">
+                              {formatCurrency(s.spent, undefined, true)} / {formatCurrency(pAmt!, undefined, true)} · {sPct.toFixed(0)}% gastado
+                            </span>
+                          )}
                         </div>
-                        {noBudget ? (
-                          <span className="text-[11px] text-dark-500">sin presupuesto</span>
-                        ) : (
-                          <span className={`text-[11px] ${isOver ? 'text-red-400' : 'text-dark-400'}`}>{sPct.toFixed(1)}% gastado</span>
-                        )}
+                        <div className="text-right">
+                          {noBudget ? (
+                            <p className="text-[13px] font-bold text-dark-400">
+                              {s.spent > 0 ? formatCurrency(s.spent, undefined, true) : '—'}
+                            </p>
+                          ) : (
+                            <>
+                              <p className="text-[15px] font-bold" style={{ color: dotColor }}>
+                                {isOver ? formatCurrency(s.spent - pAmt!, undefined, true) : formatCurrency(sLeft, undefined, true)}
+                              </p>
+                              <p className="text-[10px] font-medium" style={{ color: dotColor, opacity: 0.7 }}>
+                                {isOver ? 'excedido' : s.isCurrent ? 'disponible' : 'sin usar'}
+                              </p>
+                            </>
+                          )}
+                        </div>
                       </div>
                       {!noBudget && (
-                        <div className="w-full bg-dark-700 rounded-full h-1.5 mb-1.5 overflow-hidden relative">
-                          {!isOver && <div className="absolute right-0 top-0 h-full rounded-full"
-                            style={{ width: `${availPct}%`, backgroundColor: dotColor }} />}
+                        <div className="w-full bg-dark-700 rounded-full h-1.5 overflow-hidden relative">
+                          {!isOver && (
+                            <div className="absolute right-0 top-0 h-full rounded-full"
+                              style={{ width: `${availPct}%`, backgroundColor: dotColor }} />
+                          )}
                         </div>
                       )}
-                      <div className="flex justify-between">
-                        {noBudget ? (
-                          <span className="text-[11px] text-dark-400">{s.spent > 0 ? `${formatCurrency(s.spent, undefined, true)} gastado` : 'Sin gastos'}</span>
-                        ) : (
-                          <>
-                            <span className="text-[11px] font-medium" style={{ color: dotColor }}>
-                              {isOver ? `${formatCurrency(s.spent - pAmt!, undefined, true)} excedido` : s.isCurrent ? `${formatCurrency(sLeft, undefined, true)} disponible` : `${formatCurrency(sLeft, undefined, true)} sin usar`}
-                            </span>
-                            <span className="text-[11px] text-dark-500">de {formatCurrency(pAmt!, undefined, true)}</span>
-                          </>
-                        )}
-                      </div>
                     </button>
                   );
                 })}
