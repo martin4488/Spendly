@@ -5,12 +5,14 @@ import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/utils';
 import { Budget, Category } from '@/types';
-import { ArrowLeft, ChevronLeft, ChevronRight, Edit3, Trash2, X, Delete, History } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, Edit3, Trash2, X, Delete, History, Search, Check } from 'lucide-react';
 import { format, parseISO, differenceInDays, isWithinInterval } from 'date-fns';
 import { es } from 'date-fns/locale';
 import type { BudgetPeriod } from './BudgetsView';
 import Amount from '@/components/ui/Amount';
 import CategoryIcon from '@/components/ui/CategoryIcon';
+import { CatNode, buildTree, flattenTree, allDescendantIds } from '@/lib/categoryTree';
+import { getCategories } from '@/lib/categoryCache';
 
 const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
 
@@ -45,29 +47,41 @@ interface PeriodSummary {
   isCurrent: boolean;
 }
 
-import { CatNode, buildTree, allDescendantIds } from '@/lib/categoryTree';
-import { getCategories } from '@/lib/categoryCache';
+// A single row from budget_category_periods
+interface BcPeriodRow {
+  category_id: string;
+  valid_from: string;
+  valid_to: string | null;
+}
 
-function expandCatIds(catIds: string[], categories: Category[]): string[] {
-  const tree = buildTree(categories);
-  const allIds: string[] = [...catIds];
+// Expand top-level cat ids to include all descendants
+function expandCatIds(catIds: string[], allCats: Category[]): string[] {
+  const tree = buildTree(allCats);
+  const set = new Set<string>(catIds);
   const addDesc = (nodes: CatNode[]) => {
     nodes.forEach(n => {
-      if (catIds.includes(n.id)) {
-        allDescendantIds(n).forEach(id => { if (!allIds.includes(id)) allIds.push(id); });
-      }
+      if (set.has(n.id)) allDescendantIds(n).forEach(id => set.add(id));
       addDesc(n.children);
     });
   };
   addDesc(tree);
-  return allIds;
+  return Array.from(set);
+}
+
+// Given all bcp rows for a budget, return the expanded cat ids valid on a given date
+function getCatIdsForDate(bcpRows: BcPeriodRow[], date: string, allCats: Category[]): string[] {
+  const active = bcpRows
+    .filter(r => r.valid_from <= date && (r.valid_to === null || r.valid_to > date))
+    .map(r => r.category_id);
+  return expandCatIds(active, allCats);
 }
 
 export default function BudgetDetailView({ user, budget, initialPeriodId, onBack, onRefresh }: Props) {
   const [periods, setPeriods] = useState<BudgetPeriod[]>([]);
   const [currentPeriodIndex, setCurrentPeriodIndex] = useState(0);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [allCatIds, setAllCatIds] = useState<string[]>([]);
+  const [allCats, setAllCats] = useState<Category[]>([]);
+  // All bcp rows for this budget — loaded once, used to derive per-period cat ids
+  const [bcpRows, setBcpRows] = useState<BcPeriodRow[]>([]);
 
   const periodCache = useRef<Map<string, { expenses: ExpenseRow[]; total: number; catSpending: CatSpend[] }>>(new Map());
 
@@ -86,6 +100,11 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
   // Edit form
   const [showEditForm, setShowEditForm] = useState(false);
   const [editAmount, setEditAmount] = useState('');
+  const [editName, setEditName] = useState('');
+  const [editCatIds, setEditCatIds] = useState<string[]>([]);
+  const [showEditCatPicker, setShowEditCatPicker] = useState(false);
+  const [editCatSearch, setEditCatSearch] = useState('');
+  const [allRoots, setAllRoots] = useState<CatNode[]>([]);
   const [saving, setSaving] = useState(false);
 
   // Expense editing
@@ -100,29 +119,39 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
   useEffect(() => { init(); }, [budget.id, user.id]);
 
   useEffect(() => {
-    if (periods.length > 0 && allCatIds.length > 0) {
+    if (periods.length > 0 && bcpRows.length > 0 && allCats.length > 0) {
       loadPeriodData(currentPeriodIndex);
     }
-  }, [currentPeriodIndex, periods, allCatIds]);
+  }, [currentPeriodIndex, periods, bcpRows, allCats]);
 
   async function init() {
     setLoading(true);
     setError(null);
     periodCache.current.clear();
     try {
-      const [{ data: periodsData }, catsMap, { data: bcData }] = await Promise.all([
+      // Single parallel fetch: periods + all cats + all bcp rows for this budget
+      const [{ data: periodsData }, catsMap, { data: bcpData }] = await Promise.all([
         supabase.from('budget_periods').select('*').eq('budget_id', budget.id).order('period_start', { ascending: false }),
         getCategories(user.id),
-        supabase.from('budget_categories').select('category_id').eq('budget_id', budget.id),
+        supabase.from('budget_category_periods')
+          .select('category_id, valid_from, valid_to')
+          .eq('budget_id', budget.id)
+          .order('valid_from', { ascending: true }),
       ]);
-      const allPeriods = periodsData || [];
-      const allCats = Array.from(catsMap.values());
-      const catIds = (bcData || []).map((bc: any) => bc.category_id);
-      const expanded = expandCatIds(catIds, allCats);
-      setPeriods(allPeriods);
-      setCategories(allCats);
-      setAllCatIds(expanded);
-      const idx = allPeriods.findIndex((p: BudgetPeriod) => p.id === initialPeriodId);
+
+      const cats = Array.from(catsMap.values());
+      const rows: BcPeriodRow[] = (bcpData || []).map((r: any) => ({
+        category_id: r.category_id,
+        valid_from: r.valid_from,
+        valid_to: r.valid_to,
+      }));
+
+      setAllCats(cats);
+      setAllRoots(buildTree(cats));
+      setBcpRows(rows);
+      setPeriods(periodsData || []);
+
+      const idx = (periodsData || []).findIndex((p: BudgetPeriod) => p.id === initialPeriodId);
       setCurrentPeriodIndex(idx >= 0 ? idx : 0);
     } catch (err) {
       console.error(err);
@@ -133,7 +162,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
   }
 
   async function loadPeriodData(index: number) {
-    if (periods.length === 0 || allCatIds.length === 0) return;
+    if (periods.length === 0 || bcpRows.length === 0) return;
     const period = periods[index];
 
     const cached = periodCache.current.get(period.id);
@@ -145,18 +174,28 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
       return;
     }
 
+    // Get the cat ids valid for this period's start date
+    const periodCatIds = getCatIdsForDate(bcpRows, period.period_start, allCats);
+    if (periodCatIds.length === 0) {
+      setExpenses([]);
+      setTotalSpent(0);
+      setCatSpending([]);
+      setEditAmount(String(period.amount ?? budget.amount));
+      return;
+    }
+
     setLoading(true);
     try {
       const { data: expData } = await supabase
         .from('expenses')
         .select('id, amount, description, date, category_id')
         .eq('user_id', user.id)
-        .in('category_id', allCatIds)
+        .in('category_id', periodCatIds)
         .gte('date', period.period_start)
         .lte('date', period.period_end)
         .order('date', { ascending: false });
 
-      const exps = (expData || []).map((e: any) => ({
+      const exps: ExpenseRow[] = (expData || []).map((e: any) => ({
         id: e.id, date: e.date, description: e.description,
         amount: Number(e.amount), category_id: e.category_id,
       }));
@@ -169,8 +208,8 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
           txByCat[e.category_id] = (txByCat[e.category_id] || 0) + 1;
         }
       });
-      const catSpends: CatSpend[] = categories
-        .filter(c => allCatIds.includes(c.id) && (spendByCat[c.id] || 0) > 0)
+      const catSpends: CatSpend[] = allCats
+        .filter(c => periodCatIds.includes(c.id) && (spendByCat[c.id] || 0) > 0)
         .map(c => ({ id: c.id, name: c.name, icon: c.icon, color: c.color, spent: spendByCat[c.id] || 0, transactions: txByCat[c.id] || 0 }))
         .sort((a, b) => b.spent - a.spent);
 
@@ -188,34 +227,48 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
   }
 
   async function loadHistorySummaries(year: number) {
-    if (allCatIds.length === 0 || periods.length === 0) return;
+    if (periods.length === 0) return;
     setHistoryLoading(true);
     try {
       const yearPeriods = periods.filter(p => parseISO(p.period_start).getFullYear() === year);
-      if (yearPeriods.length === 0) {
-        setHistorySummaries([]);
-        setHistoryLoading(false);
-        return;
-      }
+      if (yearPeriods.length === 0) { setHistorySummaries([]); setHistoryLoading(false); return; }
 
       const oldest = yearPeriods[yearPeriods.length - 1]?.period_start;
       const newest = yearPeriods[0]?.period_end;
 
+      // Collect ALL cat ids ever used in this budget across all periods in range
+      // to do a single expenses query, then filter per period
+      const allEverCatIds = Array.from(new Set(
+        yearPeriods.flatMap(p => getCatIdsForDate(bcpRows, p.period_start, allCats))
+      ));
+      if (allEverCatIds.length === 0) {
+        setHistorySummaries(yearPeriods.map(p => ({
+          period: p, spent: 0, isCurrent: todayStr >= p.period_start && todayStr <= p.period_end
+        })));
+        setHistoryLoading(false);
+        return;
+      }
+
       const { data: allExp } = await supabase
         .from('expenses')
-        .select('amount, date')
+        .select('amount, date, category_id')
         .eq('user_id', user.id)
-        .in('category_id', allCatIds)
+        .in('category_id', allEverCatIds)
         .gte('date', oldest)
         .lte('date', newest);
 
-      const expList = (allExp || []).map((e: any) => ({ amount: Number(e.amount), date: e.date as string }));
+      const expList = (allExp || []).map((e: any) => ({
+        amount: Number(e.amount), date: e.date as string, category_id: e.category_id as string
+      }));
 
       const summaries: PeriodSummary[] = periods.map(p => {
         const pYear = parseISO(p.period_start).getFullYear();
-        const spent = pYear === year
-          ? expList.filter(e => e.date >= p.period_start && e.date <= p.period_end).reduce((s, e) => s + e.amount, 0)
-          : 0;
+        if (pYear !== year) return { period: p, spent: 0, isCurrent: false };
+        // Use the cats valid for THIS period's start date
+        const pCatIds = new Set(getCatIdsForDate(bcpRows, p.period_start, allCats));
+        const spent = expList
+          .filter(e => e.date >= p.period_start && e.date <= p.period_end && pCatIds.has(e.category_id))
+          .reduce((s, e) => s + e.amount, 0);
         const isCurrent = todayStr >= p.period_start && todayStr <= p.period_end;
         return { period: p, spent, isCurrent };
       });
@@ -228,15 +281,8 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
     }
   }
 
-  function openHistory() {
-    setShowHistory(true);
-    loadHistorySummaries(historyYear);
-  }
-
-  function changeHistoryYear(newYear: number) {
-    setHistoryYear(newYear);
-    loadHistorySummaries(newYear);
-  }
+  function openHistory() { setShowHistory(true); loadHistorySummaries(historyYear); }
+  function changeHistoryYear(y: number) { setHistoryYear(y); loadHistorySummaries(y); }
 
   function navigatePeriod(dir: 1 | -1) {
     const next = currentPeriodIndex + dir;
@@ -261,34 +307,64 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
   }
 
   async function handleSaveAmount() {
-    if (!editAmount || isNaN(parseFloat(editAmount))) return;
+    if (!editAmount || isNaN(parseFloat(editAmount)) || !editName) return;
     setSaving(true);
     try {
       const newAmount = parseFloat(editAmount);
       const currentPeriod = periods[currentPeriodIndex];
       const oldAmount = currentPeriod.amount ?? budget.amount;
+      const periodStart = currentPeriod.period_start;
 
-      const { error } = await supabase.from('budget_periods').update({ amount: newAmount }).eq('id', currentPeriod.id);
-      if (error) throw error;
+      // 1. Save budget name
+      await supabase.from('budgets').update({ name: editName }).eq('id', budget.id);
 
+      // 2. Update categories: close current active rows, insert new ones
+      //    Only affects current+future by using valid_from = periodStart
+      //    Past rows (valid_to < periodStart) are untouched
+      await supabase
+        .from('budget_category_periods')
+        .update({ valid_to: periodStart })
+        .eq('budget_id', budget.id)
+        .is('valid_to', null);
+
+      if (editCatIds.length > 0) {
+        await supabase.from('budget_category_periods').insert(
+          editCatIds.map(cid => ({
+            budget_id: budget.id,
+            category_id: cid,
+            valid_from: periodStart,
+            valid_to: null,
+          }))
+        );
+      }
+
+      // 3. Update period amounts (current + future with same amount)
+      await supabase.from('budget_periods').update({ amount: newAmount }).eq('id', currentPeriod.id);
       const futurePeriods = periods.filter((p, i) =>
         i < currentPeriodIndex &&
-        p.period_start > currentPeriod.period_start &&
+        p.period_start > periodStart &&
         (p.amount == null || p.amount === oldAmount)
       );
       if (futurePeriods.length > 0) {
-        await supabase.from('budget_periods')
-          .update({ amount: newAmount })
-          .in('id', futurePeriods.map(p => p.id));
+        await supabase.from('budget_periods').update({ amount: newAmount }).in('id', futurePeriods.map(p => p.id));
       }
 
+      // 4. Reload bcp rows and clear cache
+      const { data: newBcp } = await supabase
+        .from('budget_category_periods')
+        .select('category_id, valid_from, valid_to')
+        .eq('budget_id', budget.id)
+        .order('valid_from', { ascending: true });
+
+      setBcpRows((newBcp || []).map((r: any) => ({
+        category_id: r.category_id, valid_from: r.valid_from, valid_to: r.valid_to,
+      })));
       setPeriods(prev => prev.map((p, i) => {
         if (i === currentPeriodIndex) return { ...p, amount: newAmount };
         if (futurePeriods.some(fp => fp.id === p.id)) return { ...p, amount: newAmount };
         return p;
       }));
-      futurePeriods.forEach(p => periodCache.current.delete(p.id));
-      periodCache.current.delete(currentPeriod.id);
+      periodCache.current.clear(); // clear all — cats changed
       setShowEditForm(false);
       onRefresh();
     } catch (err) {
@@ -301,20 +377,17 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
   async function handleDelete() {
     if (!confirm('¿Eliminar este presupuesto? Esta acción no se puede deshacer.')) return;
     try {
-      const { error } = await supabase.from('budgets').delete().eq('id', budget.id);
-      if (error) throw error;
+      await supabase.from('budgets').delete().eq('id', budget.id);
       onBack();
     } catch (err) { console.error(err); }
   }
 
   function openExpenseEdit(exp: ExpenseRow) {
-    setEditingExpense({
-      id: exp.id, amount: Number(exp.amount), description: exp.description,
-      category_id: exp.category_id, date: exp.date,
-    });
+    setEditingExpense({ id: exp.id, amount: Number(exp.amount), description: exp.description, category_id: exp.category_id, date: exp.date });
     setShowExpenseModal(true);
   }
 
+  // ── Derived ──────────────────────────────────────────────────────────────────
   const period = periods[currentPeriodIndex];
 
   const periodDerived = useMemo(() => {
@@ -327,12 +400,10 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
     const budgetColor = pct >= 100 ? '#ef4444' : (isCurrentPeriod && pct >= 80) ? '#f59e0b' : '#22c55e';
     const budgetTextColor = pct >= 100 ? 'text-red-400' : (isCurrentPeriod && pct >= 80) ? 'text-amber-400' : 'text-brand-400';
     const left = Math.max(periodAmount - totalSpent, 0);
-    const totalDays = differenceInDays(periodEnd, periodStart) + 1;
     const daysLeft = Math.max(differenceInDays(periodEnd, now), 0);
     const perDay = daysLeft > 0 ? left / daysLeft : 0;
     const periodLabel = format(periodStart, budget.recurrence === 'monthly' ? 'MMMM yyyy' : 'yyyy', { locale: es });
-
-    return { periodAmount, periodStart, periodEnd, isCurrentPeriod, pct, budgetColor, budgetTextColor, left, totalDays, daysLeft, perDay, periodLabel };
+    return { periodAmount, periodStart, periodEnd, isCurrentPeriod, pct, budgetColor, budgetTextColor, left, daysLeft, perDay, periodLabel };
   }, [period, totalSpent, budget.amount, budget.recurrence]);
 
   const grouped = useMemo(() => {
@@ -355,8 +426,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
       if (!byYear[y]) byYear[y] = [];
       byYear[y].push({ summary: s, originalIndex: i });
     });
-    const years = Object.keys(byYear).map(Number).sort((a, b) => b - a);
-    return { historyByYear: byYear, historyYears: years };
+    return { historyByYear: byYear, historyYears: Object.keys(byYear).map(Number).sort((a, b) => b - a) };
   }, [historySummaries]);
 
   const { historyYearData, historyAccumulated, histAccumMonths } = useMemo(() => {
@@ -375,17 +445,19 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
     return { historyYearData: yearData, historyAccumulated: accumulated, histAccumMonths: accumMonths };
   }, [historyByYear, historyYear, budget.amount]);
 
-  // ── Stacked bar for categories ─────────────────────────────────────────────
   const catStackedBar = useMemo(() => {
-    if (!periodDerived || catSpending.length === 0) return null;
-    const { periodAmount } = periodDerived;
+    if (catSpending.length === 0) return null;
     const total = catSpending.reduce((s, c) => s + c.spent, 0);
-    return catSpending.map(c => ({
-      ...c,
-      pct: total > 0 ? (c.spent / total) * 100 : 0,
-      pctOfBudget: periodAmount > 0 ? (c.spent / periodAmount) * 100 : 0,
-    }));
-  }, [catSpending, periodDerived]);
+    return catSpending.map(c => ({ ...c, pct: total > 0 ? (c.spent / total) * 100 : 0 }));
+  }, [catSpending]);
+
+  // Current active top-level cat ids for the edit form
+  const currentActiveCatIds = useMemo(() => {
+    if (!period) return [];
+    return bcpRows
+      .filter(r => r.valid_from <= period.period_start && (r.valid_to === null || r.valid_to > period.period_start))
+      .map(r => r.category_id);
+  }, [bcpRows, period]);
 
   if (periods.length === 0 && !loading) return <div className="text-center py-10 text-dark-400">No hay períodos disponibles</div>;
   if (!period || !periodDerived) return null;
@@ -394,6 +466,17 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
   const hasPrev = currentPeriodIndex < periods.length - 1;
   const hasNext = currentPeriodIndex > 0;
 
+  // Cat picker helpers
+  function toggleEditLeaf(id: string) {
+    setEditCatIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  }
+  function toggleEditRoot(root: CatNode) {
+    const ids = allDescendantIds(root);
+    const allSel = ids.every(id => editCatIds.includes(id));
+    if (allSel) setEditCatIds(prev => prev.filter(id => !ids.includes(id)));
+    else setEditCatIds(prev => Array.from(new Set([...prev, ...ids])));
+  }
+
   return (
     <div className="max-w-lg mx-auto pb-8 page-transition" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
 
@@ -401,7 +484,12 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
       <div className="flex items-center justify-between px-4 pt-5 pb-2">
         <button onClick={onBack} className="p-1 text-dark-300"><ArrowLeft size={20} /></button>
         <div className="flex items-center gap-1">
-          <button onClick={() => { setEditAmount(String(periodAmount)); setShowEditForm(true); }} className="p-1.5 text-dark-400 hover:text-white"><Edit3 size={16} /></button>
+          <button onClick={() => {
+            setEditAmount(String(periodAmount));
+            setEditName(budget.name);
+            setEditCatIds(currentActiveCatIds);
+            setShowEditForm(true);
+          }} className="p-1.5 text-dark-400 hover:text-white"><Edit3 size={16} /></button>
           <button onClick={handleDelete} className="p-1.5 text-dark-400 hover:text-red-400"><Trash2 size={16} /></button>
         </div>
       </div>
@@ -415,21 +503,17 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
           className={`p-1.5 rounded-full transition-colors ${hasPrev ? 'text-dark-300 active:bg-dark-800' : 'text-dark-700 cursor-not-allowed'}`}>
           <ChevronLeft size={20} />
         </button>
-        <div className="text-center">
-          <p className="text-base font-bold capitalize">{periodLabel}</p>
-        </div>
+        <p className="text-base font-bold capitalize">{periodLabel}</p>
         <button onClick={() => navigatePeriod(-1)} disabled={!hasNext}
           className={`p-1.5 rounded-full transition-colors ${hasNext ? 'text-dark-300 active:bg-dark-800' : 'text-dark-700 cursor-not-allowed'}`}>
           <ChevronRight size={20} />
         </button>
       </div>
 
-      {/* BUDGET HISTORY BUTTON — pill style like Spending Overview */}
+      {/* BUDGET HISTORY BUTTON */}
       <div className="flex justify-center pb-3 border-b border-dark-800/60">
-        <button
-          onClick={openHistory}
-          className="inline-flex items-center gap-2 bg-dark-800 rounded-full px-4 py-2 active:bg-dark-700 transition-colors"
-        >
+        <button onClick={openHistory}
+          className="inline-flex items-center gap-2 bg-dark-800 rounded-full px-4 py-2 active:bg-dark-700 transition-colors">
           <History size={14} className="text-brand-400" />
           <span className="text-[13px] font-semibold text-dark-100">Budget History</span>
           <ChevronRight size={13} className="text-dark-500" />
@@ -479,17 +563,15 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
             </div>
           )}
 
-          {/* PROGRESS BAR — green from right = available */}
+          {/* PROGRESS BAR */}
           <div className="px-4 mb-0">
             <div className="w-full bg-dark-700 rounded-full h-2.5 overflow-hidden relative">
-              <div
-                className="absolute right-0 top-0 h-full rounded-full transition-all duration-500"
-                style={{ width: `${pct >= 100 ? 0 : Math.max(100 - pct, 0)}%`, backgroundColor: budgetColor }}
-              />
+              <div className="absolute right-0 top-0 h-full rounded-full transition-all duration-500"
+                style={{ width: `${pct >= 100 ? 0 : Math.max(100 - pct, 0)}%`, backgroundColor: budgetColor }} />
             </div>
           </div>
 
-          {/* STATS ROW — replaces old "TOTAL GASTADO" */}
+          {/* STATS ROW */}
           <div className="flex items-stretch border-t border-b border-dark-800/60 mt-4">
             <div className="flex-1 px-4 py-3 text-center border-r border-dark-800/60">
               <p className="text-[9px] font-semibold text-dark-500 uppercase tracking-wider mb-0.5">Gastado</p>
@@ -504,19 +586,15 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
             </div>
           </div>
 
-          {/* CATEGORY BREAKDOWN — stacked bar + dot list */}
-          {catSpending.length > 0 && catStackedBar && (
+          {/* CATEGORY BREAKDOWN */}
+          {catStackedBar && catStackedBar.length > 0 && (
             <div className="mt-1">
               <p className="px-4 pt-3 pb-2 text-[10px] font-semibold text-dark-500 uppercase tracking-wider">Por categoría</p>
-
-              {/* Stacked bar */}
               <div className="mx-4 mb-2 h-2.5 rounded-full overflow-hidden flex gap-px">
                 {catStackedBar.map(cat => (
                   <div key={cat.id} style={{ width: `${cat.pct}%`, background: cat.color }} />
                 ))}
               </div>
-
-              {/* Category rows */}
               {catStackedBar.map(cat => (
                 <div key={cat.id} className="flex items-center gap-3 px-4 py-2 border-b border-dark-800/40">
                   <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: cat.color }} />
@@ -541,7 +619,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
                     <Amount value={group.total} sign="-" size="sm" weight="semibold" color="text-dark-500" className="text-[10px]" decimals={false} />
                   </div>
                   {group.expenses.map(exp => {
-                    const cat = categories.find(c => c.id === exp.category_id);
+                    const cat = allCats.find(c => c.id === exp.category_id);
                     return (
                       <div key={exp.id} onClick={() => openExpenseEdit(exp)} className="flex items-center gap-2.5 px-4 py-2.5 border-b border-dark-800/40 active:bg-dark-700/40 cursor-pointer transition-colors">
                         <CategoryIcon icon={cat?.icon || 'hand-coins'} color={cat?.color || '#475569'} size={32} rounded="xl" />
@@ -567,16 +645,13 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
         <div className="fixed inset-0 bg-dark-900 z-[60] flex flex-col slide-up">
           <div className="flex items-center justify-between px-4 pt-5 pb-3 flex-shrink-0 border-b border-dark-800">
             <button onClick={() => setShowHistory(false)} className="p-1 text-dark-400"><ArrowLeft size={22} /></button>
-            <h2 className="text-base font-bold">Historial · {budget.name}</h2>
+            <h2 className="text-base font-bold">Budget History · {budget.name}</h2>
             <div className="w-8" />
           </div>
           <div className="flex items-center justify-between px-4 pt-4 pb-2 flex-shrink-0">
-            <button
-              onClick={() => { const i = historyYears.indexOf(historyYear); if (i < historyYears.length - 1) changeHistoryYear(historyYears[i + 1]); }}
+            <button onClick={() => { const i = historyYears.indexOf(historyYear); if (i < historyYears.length - 1) changeHistoryYear(historyYears[i + 1]); }}
               disabled={historyYears.indexOf(historyYear) >= historyYears.length - 1}
-              className="p-2 rounded-xl bg-dark-800 text-dark-300 disabled:opacity-30 active:bg-dark-700">
-              <ChevronLeft size={18} />
-            </button>
+              className="p-2 rounded-xl bg-dark-800 text-dark-300 disabled:opacity-30 active:bg-dark-700"><ChevronLeft size={18} /></button>
             <div className="text-center">
               <p className="text-base font-bold">{historyYear}</p>
               {historyYearData.some(({ summary: s }) => !s.isCurrent) && (
@@ -585,19 +660,14 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
                 </p>
               )}
             </div>
-            <button
-              onClick={() => { const i = historyYears.indexOf(historyYear); if (i > 0) changeHistoryYear(historyYears[i - 1]); }}
+            <button onClick={() => { const i = historyYears.indexOf(historyYear); if (i > 0) changeHistoryYear(historyYears[i - 1]); }}
               disabled={historyYears.indexOf(historyYear) <= 0}
-              className="p-2 rounded-xl bg-dark-800 text-dark-300 disabled:opacity-30 active:bg-dark-700">
-              <ChevronRight size={18} />
-            </button>
+              className="p-2 rounded-xl bg-dark-800 text-dark-300 disabled:opacity-30 active:bg-dark-700"><ChevronRight size={18} /></button>
           </div>
           <div className="h-px bg-dark-800 mx-4 mb-1 flex-shrink-0" />
           <div className="flex-1 overflow-y-auto pb-8">
             {historyLoading ? (
-              <div className="flex justify-center py-16">
-                <div className="w-7 h-7 border-2 border-brand-500/30 border-t-brand-500 rounded-full animate-spin" />
-              </div>
+              <div className="flex justify-center py-16"><div className="w-7 h-7 border-2 border-brand-500/30 border-t-brand-500 rounded-full animate-spin" /></div>
             ) : historyYearData.length === 0 ? (
               <div className="text-center py-16 text-dark-500">Sin datos para {historyYear}</div>
             ) : (
@@ -635,10 +705,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
                         </div>
                       </div>
                       <div className="w-full bg-dark-700 rounded-full h-1.5 overflow-hidden relative">
-                        {!isOver && (
-                          <div className="absolute right-0 top-0 h-full rounded-full"
-                            style={{ width: `${availPct}%`, backgroundColor: dotColor }} />
-                        )}
+                        {!isOver && <div className="absolute right-0 top-0 h-full rounded-full" style={{ width: `${availPct}%`, backgroundColor: dotColor }} />}
                       </div>
                     </button>
                   );
@@ -649,29 +716,49 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
         </div>
       )}
 
-      {/* EDIT AMOUNT FORM */}
-      {showEditForm && (
+      {/* EDIT FORM */}
+      {showEditForm && !showEditCatPicker && (
         <div className="fixed inset-0 bg-dark-900 z-[60] flex flex-col slide-up">
           <div className="flex items-center justify-between px-4 pt-5 pb-3 flex-shrink-0">
             <button onClick={() => setShowEditForm(false)} className="p-1 text-dark-400"><X size={24} /></button>
-            <h2 className="text-base font-bold">Editar monto</h2>
+            <h2 className="text-base font-bold">Editar presupuesto</h2>
             <div className="w-8" />
           </div>
-          <div className="px-5 py-6 flex-shrink-0 border-b border-dark-800 text-center">
+          <div className="px-5 py-4 flex-shrink-0 border-b border-dark-800 text-center">
             <p className="text-xs text-dark-400 mb-1">Monto para {format(parseISO(period.period_start), 'MMMM yyyy', { locale: es })}</p>
             <p className="text-4xl font-extrabold">{editAmount || '0'}</p>
           </div>
-          <div className="flex-1" />
+          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+            <div>
+              <label className="text-xs text-dark-400 font-medium mb-1.5 block uppercase tracking-wider">Nombre</label>
+              <input type="text" value={editName} onChange={e => setEditName(e.target.value)}
+                className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors" />
+            </div>
+            <div>
+              <label className="text-xs text-dark-400 font-medium mb-1.5 block uppercase tracking-wider">
+                Categorías {editCatIds.length > 0 && `(${editCatIds.length})`}
+              </label>
+              <button onClick={() => setShowEditCatPicker(true)}
+                className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm text-left flex items-center justify-between">
+                <span className={`flex-1 min-w-0 truncate ${editCatIds.length > 0 ? 'text-white' : 'text-dark-500'}`}>
+                  {editCatIds.length > 0
+                    ? allCats.filter(c => editCatIds.includes(c.id)).map(c => c.name).join(', ')
+                    : 'Seleccionar categorías...'}
+                </span>
+                <ChevronRight size={16} className="text-dark-500 flex-shrink-0 ml-2" />
+              </button>
+            </div>
+          </div>
           <div className="flex-shrink-0">
             <div className="px-5 py-3">
-              <button onClick={handleSaveAmount} disabled={saving || !editAmount || isNaN(parseFloat(editAmount))}
+              <button onClick={handleSaveAmount} disabled={saving || !editAmount || isNaN(parseFloat(editAmount)) || !editName}
                 className="w-full bg-brand-600 disabled:opacity-30 text-white font-bold py-4 rounded-2xl text-base">
-                {saving ? 'Guardando...' : 'Guardar para este período'}
+                {saving ? 'Guardando...' : 'Guardar cambios'}
               </button>
             </div>
             <div className="border-t border-dark-700">
               <div className="grid grid-cols-3">
-                {['1','2','3','4','5','6','7','8','9','.','0','backspace'].map((key) => {
+                {['1','2','3','4','5','6','7','8','9','.','0','backspace'].map(key => {
                   const isDel = key === 'backspace';
                   return (
                     <button key={key} onClick={() => isDel ? handleNumpad('backspace') : handleNumpad(key)}
@@ -687,17 +774,99 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
         </div>
       )}
 
+      {/* CATEGORY PICKER */}
+      {showEditForm && showEditCatPicker && (
+        <div className="fixed inset-0 bg-dark-900 z-[70] flex flex-col slide-up">
+          <div className="flex items-center justify-between px-4 pt-5 pb-3 flex-shrink-0">
+            <button onClick={() => { setShowEditCatPicker(false); setEditCatSearch(''); }} className="p-1 text-dark-400"><ArrowLeft size={24} /></button>
+            <h2 className="text-base font-bold">Categorías</h2>
+            <button onClick={() => { setShowEditCatPicker(false); setEditCatSearch(''); }} className="text-xs text-brand-400 font-medium">Confirmar</button>
+          </div>
+          <div className="px-4 pb-3 flex-shrink-0">
+            <div className="flex items-center gap-2 bg-dark-800 rounded-2xl px-4 py-3">
+              <Search size={16} className="text-dark-400 flex-shrink-0" />
+              <input type="text" placeholder="Buscar categorías" value={editCatSearch}
+                onChange={e => setEditCatSearch(e.target.value)}
+                className="flex-1 bg-transparent text-sm placeholder:text-dark-500 focus:outline-none" />
+              {editCatSearch && <button onClick={() => setEditCatSearch('')} className="text-dark-400"><X size={14} /></button>}
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto pb-8">
+            {(() => {
+              const q = editCatSearch.trim().toLowerCase();
+              const allEntries = flattenTree(allRoots);
+              if (q) {
+                const results = allEntries.filter(e => e.cat.name.toLowerCase().includes(q));
+                return results.length === 0
+                  ? <div className="text-center py-10 text-dark-500 text-sm">Sin resultados</div>
+                  : results.map(({ cat, ancestors }) => {
+                      const isSel = editCatIds.includes(cat.id);
+                      return (
+                        <button key={cat.id} onClick={() => toggleEditLeaf(cat.id)}
+                          className={`w-full flex items-center gap-3 px-5 py-3.5 border-b border-dark-800/60 ${isSel ? 'bg-dark-800' : 'active:bg-dark-800/60'}`}>
+                          <CategoryIcon icon={cat.icon} color={cat.color} size={36} rounded="full" />
+                          <div className="flex-1 text-left">
+                            <p className="text-sm font-medium">{cat.name}</p>
+                            {ancestors.length > 0 && <p className="text-xs text-dark-400">{ancestors.map(a => a.name).join(' › ')}</p>}
+                          </div>
+                          {isSel && <Check size={18} className="text-brand-400 flex-shrink-0" />}
+                        </button>
+                      );
+                    });
+              }
+              return allRoots.map(root => {
+                const childEntries = flattenTree(root.children, [root]);
+                const ids = allDescendantIds(root);
+                const fullySel = ids.every(id => editCatIds.includes(id));
+                const partiallySel = ids.some(id => editCatIds.includes(id)) && !fullySel;
+                return (
+                  <div key={root.id} className="mb-6">
+                    <button onClick={() => toggleEditRoot(root)}
+                      className="w-full flex items-center justify-between px-4 pt-4 pb-2 active:opacity-70">
+                      <span className="text-xs font-bold text-dark-400 uppercase tracking-wider">{root.name}</span>
+                      <div className={`w-5 h-5 rounded flex items-center justify-center border transition-all ${fullySel ? 'bg-brand-500 border-brand-500' : partiallySel ? 'bg-brand-500/30 border-brand-500/50' : 'border-dark-600'}`}>
+                        {fullySel && <Check size={12} className="text-white" />}
+                        {partiallySel && !fullySel && <div className="w-2 h-2 rounded-sm bg-brand-400" />}
+                      </div>
+                    </button>
+                    {childEntries.length > 0 && (
+                      <div className="grid grid-cols-4 gap-x-2 gap-y-4 px-4">
+                        {childEntries.map(({ cat }) => {
+                          const isSel = editCatIds.includes(cat.id);
+                          return (
+                            <button key={cat.id} onClick={() => toggleEditLeaf(cat.id)} className="flex flex-col items-center gap-1.5 active:opacity-70">
+                              <div className="relative">
+                                <CategoryIcon icon={cat.icon} color={cat.color} size={52} rounded="full" />
+                                {isSel && (
+                                  <div className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-brand-500 flex items-center justify-center">
+                                    <Check size={9} className="text-white" strokeWidth={3} />
+                                  </div>
+                                )}
+                              </div>
+                              <span className="text-center text-[11px] text-dark-200 leading-tight w-full"
+                                style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as any, overflow: 'hidden' }}>
+                                {cat.name}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              });
+            })()}
+          </div>
+        </div>
+      )}
+
       {showExpenseModal && (
         <Suspense fallback={null}>
           <AddExpenseModal
             user={user}
             defaultCurrency={budget.currency as any}
             onClose={() => { setShowExpenseModal(false); setEditingExpense(null); }}
-            onSaved={() => {
-              periodCache.current.clear();
-              loadPeriodData(currentPeriodIndex);
-              onRefresh();
-            }}
+            onSaved={() => { periodCache.current.clear(); loadPeriodData(currentPeriodIndex); onRefresh(); }}
             editingExpense={editingExpense}
           />
         </Suspense>
