@@ -315,7 +315,6 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
     setShowExpenseModal(true);
   }
 
-  // ── Memoized derived data ──
   const period = periods[currentPeriodIndex];
 
   const periodDerived = useMemo(() => {
@@ -329,12 +328,11 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
     const budgetTextColor = pct >= 100 ? 'text-red-400' : (isCurrentPeriod && pct >= 80) ? 'text-amber-400' : 'text-brand-400';
     const left = Math.max(periodAmount - totalSpent, 0);
     const totalDays = differenceInDays(periodEnd, periodStart) + 1;
-    const daysPassed = isCurrentPeriod ? Math.min(differenceInDays(now, periodStart) + 1, totalDays) : totalDays;
     const daysLeft = Math.max(differenceInDays(periodEnd, now), 0);
     const perDay = daysLeft > 0 ? left / daysLeft : 0;
     const periodLabel = format(periodStart, budget.recurrence === 'monthly' ? 'MMMM yyyy' : 'yyyy', { locale: es });
 
-    return { periodAmount, periodStart, periodEnd, isCurrentPeriod, pct, budgetColor, budgetTextColor, left, totalDays, daysPassed, daysLeft, perDay, periodLabel };
+    return { periodAmount, periodStart, periodEnd, isCurrentPeriod, pct, budgetColor, budgetTextColor, left, totalDays, daysLeft, perDay, periodLabel };
   }, [period, totalSpent, budget.amount, budget.recurrence]);
 
   const grouped = useMemo(() => {
@@ -377,6 +375,18 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
     return { historyYearData: yearData, historyAccumulated: accumulated, histAccumMonths: accumMonths };
   }, [historyByYear, historyYear, budget.amount]);
 
+  // ── Stacked bar for categories ─────────────────────────────────────────────
+  const catStackedBar = useMemo(() => {
+    if (!periodDerived || catSpending.length === 0) return null;
+    const { periodAmount } = periodDerived;
+    const total = catSpending.reduce((s, c) => s + c.spent, 0);
+    return catSpending.map(c => ({
+      ...c,
+      pct: total > 0 ? (c.spent / total) * 100 : 0,
+      pctOfBudget: periodAmount > 0 ? (c.spent / periodAmount) * 100 : 0,
+    }));
+  }, [catSpending, periodDerived]);
+
   if (periods.length === 0 && !loading) return <div className="text-center py-10 text-dark-400">No hay períodos disponibles</div>;
   if (!period || !periodDerived) return null;
 
@@ -414,13 +424,15 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
         </button>
       </div>
 
-      {/* BUDGET HISTORY BUTTON */}
-      <div className="px-3 pb-2">
-        <button onClick={openHistory}
-          className="w-full flex items-center justify-center gap-1.5 py-1.5 text-dark-400 hover:text-dark-200 transition-colors">
-          <History size={13} className="text-brand-400" />
-          <span className="text-[11px] font-medium">Budget History</span>
-          <ChevronRight size={12} className="text-dark-500" />
+      {/* BUDGET HISTORY BUTTON — pill style like Spending Overview */}
+      <div className="flex justify-center pb-3 border-b border-dark-800/60">
+        <button
+          onClick={openHistory}
+          className="inline-flex items-center gap-2 bg-dark-800 rounded-full px-4 py-2 active:bg-dark-700 transition-colors"
+        >
+          <History size={14} className="text-brand-400" />
+          <span className="text-[13px] font-semibold text-dark-100">Budget History</span>
+          <ChevronRight size={13} className="text-dark-500" />
         </button>
       </div>
 
@@ -432,24 +444,26 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
         </div>
       ) : (
         <>
-          {/* AMOUNT */}
-          <div className="px-4 mb-4 text-center">
+          {/* HERO AMOUNT */}
+          <div className="px-4 pt-5 pb-1 text-center">
             {pct >= 100 ? (
               <>
                 <Amount value={totalSpent - periodAmount} size="xl" color="text-red-400" weight="extrabold" decimals={false} />
-                <p className="text-red-400/70 text-sm mt-0.5">excedido de <Amount value={periodAmount} size="sm" color="text-red-400/70" weight="medium" decimals={false} /></p>
+                <p className="text-red-400/70 text-[13px] mt-1">excedido</p>
               </>
             ) : (
               <>
                 <Amount value={left} size="xl" color={budgetTextColor} weight="extrabold" decimals={false} />
-                <p className="text-dark-500 text-sm mt-0.5">{isCurrentPeriod ? 'disponible' : 'sin usar'} de <Amount value={periodAmount} size="sm" color="text-dark-500" weight="medium" decimals={false} /></p>
+                <p className={`text-[13px] font-semibold mt-1 ${budgetTextColor}`} style={{ opacity: 0.75 }}>
+                  {isCurrentPeriod ? 'disponible' : 'sin usar'}
+                </p>
               </>
             )}
           </div>
 
           {/* ADVICE */}
           {isCurrentPeriod && (
-            <div className="mx-4 mb-4 bg-brand-500/8 border border-brand-500/15 rounded-2xl px-4 py-3">
+            <div className="mx-4 mb-3 bg-brand-500/8 border border-brand-500/15 rounded-2xl px-4 py-3">
               <p className="text-sm text-dark-200 text-center">
                 {pct >= 100 ? '¡Ya superaste el presupuesto!'
                   : daysLeft > 0
@@ -465,65 +479,52 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
             </div>
           )}
 
-          {/* PROGRESS BAR */}
-          <div className="px-4 mb-5">
+          {/* PROGRESS BAR — green from right = available */}
+          <div className="px-4 mb-0">
             <div className="w-full bg-dark-700 rounded-full h-2.5 overflow-hidden relative">
-              <div className="absolute right-0 top-0 h-full rounded-full transition-all duration-500"
-                style={{ width: `${pct >= 100 ? 0 : Math.max(100 - pct, 0)}%`, backgroundColor: budgetColor }} />
-            </div>
-            <div className="flex justify-between mt-1.5">
-              <span className="text-[10px] text-dark-500">{format(periodStart, 'MMM d', { locale: es })}</span>
-              <span className={`text-[10px] font-bold ${pct >= 100 ? 'text-red-400' : 'text-dark-400'}`}>{pct.toFixed(1)}% gastado</span>
-              <span className="text-[10px] text-dark-500">{format(periodEnd, 'MMM d', { locale: es })}</span>
+              <div
+                className="absolute right-0 top-0 h-full rounded-full transition-all duration-500"
+                style={{ width: `${pct >= 100 ? 0 : Math.max(100 - pct, 0)}%`, backgroundColor: budgetColor }}
+              />
             </div>
           </div>
 
-          {/* PERIOD DOTS */}
-          {periods.length > 1 && (
-            <div className="flex justify-center gap-1.5 mb-5">
-              {periods.length > 12 && <span className="text-[10px] text-dark-600">+{periods.length - 12}</span>}
-              {periods.slice(0, Math.min(periods.length, 12)).map((_, i) => {
-                const visibleCount = Math.min(periods.length, 12);
-                const reversedI = visibleCount - 1 - i;
-                const isActive = reversedI === currentPeriodIndex;
-                return (
-                  <button key={i} onClick={() => setCurrentPeriodIndex(reversedI)}
-                    className="w-2 h-2 rounded-full transition-all flex-shrink-0"
-                    style={{ backgroundColor: isActive ? budgetColor : '#334155' }} />
-                );
-              })}
+          {/* STATS ROW — replaces old "TOTAL GASTADO" */}
+          <div className="flex items-stretch border-t border-b border-dark-800/60 mt-4">
+            <div className="flex-1 px-4 py-3 text-center border-r border-dark-800/60">
+              <p className="text-[9px] font-semibold text-dark-500 uppercase tracking-wider mb-0.5">Gastado</p>
+              <p className="text-[15px] font-bold text-red-400">
+                {formatCurrency(totalSpent, undefined, true)}
+                <span className="text-[11px] font-normal text-dark-500 ml-1">/ {formatCurrency(periodAmount, undefined, true)}</span>
+              </p>
             </div>
-          )}
-
-          {/* TOTAL */}
-          <div className="flex items-center justify-between px-4 py-3 border-b border-dark-800/60 mb-1">
-            <span className="text-xs text-dark-400 font-medium uppercase tracking-wider">Total gastado</span>
-            <Amount value={totalSpent} sign="-" size="md" color="text-red-400" weight="bold" decimals={false} />
+            <div className="flex-1 px-4 py-3 text-center">
+              <p className="text-[9px] font-semibold text-dark-500 uppercase tracking-wider mb-0.5">% gastado</p>
+              <p className="text-[15px] font-bold text-dark-100">{pct.toFixed(1)}%</p>
+            </div>
           </div>
 
-          {/* CATEGORY BREAKDOWN */}
-          {catSpending.length > 0 && (
-            <div className="px-4 mb-5">
-              <p className="text-xs text-dark-500 font-medium uppercase tracking-wider mb-3 pt-3">Por categoría</p>
-              <div className="space-y-2">
-                {catSpending.map(cat => {
-                  const catPct = periodAmount > 0 ? (cat.spent / periodAmount) * 100 : 0;
-                  return (
-                    <div key={cat.id} className="flex items-center gap-3">
-                      <CategoryIcon icon={cat.icon} color={cat.color} size={32} rounded="xl" />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex justify-between mb-0.5">
-                          <span className="text-xs font-medium truncate">{cat.name}</span>
-                          <Amount value={cat.spent} size="sm" color="text-dark-400" weight="medium" className="flex-shrink-0 ml-2" decimals={false} />
-                        </div>
-                        <div className="w-full bg-dark-700 rounded-full h-1.5">
-                          <div className="h-1.5 rounded-full" style={{ width: `${catPct}%`, backgroundColor: cat.color }} />
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
+          {/* CATEGORY BREAKDOWN — stacked bar + dot list */}
+          {catSpending.length > 0 && catStackedBar && (
+            <div className="mt-1">
+              <p className="px-4 pt-3 pb-2 text-[10px] font-semibold text-dark-500 uppercase tracking-wider">Por categoría</p>
+
+              {/* Stacked bar */}
+              <div className="mx-4 mb-2 h-2.5 rounded-full overflow-hidden flex gap-px">
+                {catStackedBar.map(cat => (
+                  <div key={cat.id} style={{ width: `${cat.pct}%`, background: cat.color }} />
+                ))}
               </div>
+
+              {/* Category rows */}
+              {catStackedBar.map(cat => (
+                <div key={cat.id} className="flex items-center gap-3 px-4 py-2 border-b border-dark-800/40">
+                  <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: cat.color }} />
+                  <span className="flex-1 text-[12px] text-dark-200 font-medium">{cat.name}</span>
+                  <span className="text-[11px] text-dark-500 mr-1">{Math.round(cat.pct)}%</span>
+                  <Amount value={cat.spent} size="sm" color="text-dark-100" weight="bold" className="text-[12px]" decimals={false} />
+                </div>
+              ))}
             </div>
           )}
 
@@ -679,6 +680,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
           </div>
         </div>
       )}
+
       {showExpenseModal && (
         <Suspense fallback={null}>
           <AddExpenseModal
