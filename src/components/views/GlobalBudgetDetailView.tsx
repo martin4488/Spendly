@@ -435,7 +435,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
           className="inline-flex items-center gap-2 bg-dark-800 rounded-full px-4 py-2 active:bg-dark-700 transition-colors"
         >
           <History size={14} className="text-brand-400" />
-          <span className="text-[13px] font-semibold text-dark-100">Historial</span>
+          <span className="text-[13px] font-semibold text-dark-100">Budget History</span>
           <ChevronRight size={13} className="text-dark-500" />
         </button>
       </div>
@@ -512,7 +512,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
             </div>
             <div className="flex-1 px-4 py-3 text-center">
               <p className="text-[9px] font-semibold text-dark-500 uppercase tracking-wider mb-0.5">% gastado</p>
-              <p className="text-[15px] font-bold text-dark-100">{pct.toFixed(1)}%</p>
+              <p className={`text-[15px] font-bold ${pct >= 100 ? 'text-red-400' : 'text-dark-100'}`}>{pct.toFixed(1)}%</p>
             </div>
           </div>
 
@@ -574,7 +574,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
         <div className="fixed inset-0 bg-dark-900 z-[60] flex flex-col slide-up">
           <div className="flex items-center justify-between px-4 pt-5 pb-3 flex-shrink-0 border-b border-dark-800">
             <button onClick={() => setShowHistory(false)} className="p-1 text-dark-400"><ArrowLeft size={22} /></button>
-            <h2 className="text-base font-bold">Historial · Gasto global</h2>
+            <h2 className="text-base font-bold">Budget History · Gasto global</h2>
             <div className="w-8" />
           </div>
           <div className="flex items-center justify-between px-4 pt-4 pb-2 flex-shrink-0">
@@ -609,7 +609,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
               <div className="text-center py-16 text-dark-500">Sin datos para {historyYear}</div>
             ) : (
               <div className="px-4 py-2 flex flex-col gap-1">
-                {historySummaries.map(s => {
+                {[...historySummaries].reverse().map(s => {
                   const pAmt = s.amount;
                   const sPct = pAmt && pAmt > 0 ? (s.spent / pAmt) * 100 : 0;
                   const sLeft = pAmt ? Math.max(pAmt - s.spent, 0) : 0;
@@ -633,7 +633,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
                             <span className="text-[11px] text-dark-500">sin presupuesto</span>
                           ) : (
                             <span className="text-[11px] text-dark-500">
-                              {formatCurrency(s.spent, undefined, true)} / {formatCurrency(pAmt!, undefined, true)} · {sPct.toFixed(0)}% gastado
+                              {formatCurrency(s.spent, undefined, true)} / {formatCurrency(pAmt!, undefined, true)} · <span className={isOver ? 'text-red-400 font-semibold' : ''}>{sPct.toFixed(0)}% gastado</span>
                             </span>
                           )}
                         </div>
