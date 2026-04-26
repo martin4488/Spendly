@@ -121,7 +121,7 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
 
       const [{ data: bcData }, { data: periodsData }] = budgetIds.length > 0
         ? await Promise.all([
-            supabase.from('budget_categories').select('*').in('budget_id', budgetIds),
+            supabase.from('budget_category_periods').select('budget_id, category_id').in('budget_id', budgetIds).is('valid_to', null),
             supabase.from('budget_periods').select('id, budget_id, period_start, period_end, amount').in('budget_id', budgetIds),
           ])
         : [{ data: [] as any[] }, { data: [] as any[] }];
@@ -333,11 +333,12 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
       const newAmount = parseFloat(amount);
       const budgetData = { user_id: user.id, name, amount: newAmount, recurrence, start_date: startDate };
       let budgetId: string;
+      const today = format(new Date(), 'yyyy-MM-dd');
       if (editingBudget) {
         await supabase.from('budgets').update(budgetData).eq('id', editingBudget.id);
         budgetId = editingBudget.id;
-        await supabase.from('budget_categories').delete().eq('budget_id', budgetId);
-        const today = format(new Date(), 'yyyy-MM-dd');
+        // Note: editing from BudgetsView only changes name/amount/recurrence.
+        // Category edits from BudgetDetailView use budget_category_periods with valid_from.
         const { data: futurePeriods } = await supabase
           .from('budget_periods').select('id, amount').eq('budget_id', budgetId).gte('period_start', today);
         if (futurePeriods && futurePeriods.length > 0) {
@@ -350,11 +351,12 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
       } else {
         const { data } = await supabase.from('budgets').insert(budgetData).select().single();
         budgetId = data.id;
-      }
-      if (selectedCatIds.length > 0) {
-        await supabase.from('budget_categories').insert(
-          selectedCatIds.map(cid => ({ budget_id: budgetId, category_id: cid }))
-        );
+        // On create: insert into budget_category_periods with valid_from = startDate
+        if (selectedCatIds.length > 0) {
+          await supabase.from('budget_category_periods').insert(
+            selectedCatIds.map(cid => ({ budget_id: budgetId, category_id: cid, valid_from: startDate, valid_to: null }))
+          );
+        }
       }
       setShowForm(false);
       loadData();
