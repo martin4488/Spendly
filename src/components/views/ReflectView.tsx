@@ -495,11 +495,12 @@ export default function ReflectView({ user }: Props) {
           <div className="mb-4">
             <p className="text-[10px] text-dark-500 uppercase tracking-wider mb-1">Promedio mensual</p>
             <div className="flex items-baseline gap-2">
-              <Amount value={Math.round(avg)} size="xl" weight="extrabold" decimals={false} />
-              <span className="text-sm text-dark-500">/ mes</span>
+              <span className="text-[52px] font-extrabold leading-none text-white">
+                <Amount value={Math.round(avg)} size="xl" weight="extrabold" decimals={false} className="text-[52px]" />
+              </span>
             </div>
             {first && last && (
-              <p className="text-[11px] text-dark-500 mt-0.5">
+              <p className="text-[11px] text-dark-500 mt-1">
                 {first} – {last} · {closed.length} {closed.length === 1 ? 'mes cerrado' : 'meses cerrados'}
               </p>
             )}
@@ -515,7 +516,7 @@ export default function ReflectView({ user }: Props) {
                 return (
                   <div key={i} className="flex items-center gap-2.5">
                     <span className={`text-[11px] w-7 flex-shrink-0 ${m.isCurrent ? 'text-white font-semibold' : 'text-dark-400'}`}>{m.label}</span>
-                    <div className="flex-1 bg-dark-700 rounded-full h-1.5 overflow-hidden">
+                    <div className="flex-1 bg-dark-700 rounded-full h-2.5 overflow-hidden">
                       <div className="h-full rounded-full bg-brand-400 transition-all"
                         style={{ width: `${pct}%`, opacity }} />
                     </div>
@@ -528,7 +529,7 @@ export default function ReflectView({ user }: Props) {
               {closed.length > 0 && (
                 <div className="flex items-center gap-2.5 pt-2 border-t border-dark-700/60">
                   <span className="text-[11px] w-7 flex-shrink-0 text-dark-600">Avg</span>
-                  <div className="flex-1 relative h-1.5">
+                  <div className="flex-1 relative h-2.5">
                     <div className="absolute inset-0 border-t border-dashed border-dark-600" />
                     <div className="absolute top-[-4px] w-0.5 h-3.5 bg-dark-500 rounded"
                       style={{ left: `${(avg / maxAmt) * 100}%`, transform: 'translateX(-50%)' }} />
@@ -539,15 +540,55 @@ export default function ReflectView({ user }: Props) {
             </div>
           </div>
 
-          {/* Category breakdown */}
-          {d.cats.length > 0 && (
-            <div className="bg-dark-800 rounded-2xl mb-3 overflow-hidden">
-              <p className="text-[10px] text-dark-500 uppercase tracking-wider px-4 pt-4 pb-2">Promedio mensual · meses cerrados</p>
-              <div className="px-4">
-                {d.cats.map(cat => renderCatRow(cat, 0))}
+          {/* Category breakdown — stacked bar + dot list */}
+          {d.cats.length > 0 && (() => {
+            const catTotal = d.cats.reduce((s, c) => s + c.amount, 0);
+            return (
+              <div className="bg-dark-800 rounded-2xl mb-3 overflow-hidden">
+                <p className="text-[10px] text-dark-500 uppercase tracking-wider px-4 pt-4 pb-2">En qué se va tu plata</p>
+                {/* Stacked bar */}
+                <div className="mx-4 mb-3 h-2.5 rounded-full overflow-hidden flex gap-px">
+                  {d.cats.map(cat => (
+                    <div key={cat.id} style={{ width: `${catTotal > 0 ? (cat.amount / catTotal) * 100 : 0}%`, background: cat.color }} />
+                  ))}
+                </div>
+                {/* Cat rows */}
+                {d.cats.map((cat, i) => {
+                  const pct = catTotal > 0 ? Math.round((cat.amount / catTotal) * 100) : 0;
+                  const activeChildren = cat.children.filter(c => c.amount > 0).sort((a, b) => b.amount - a.amount);
+                  const hasChildren = activeChildren.length > 0;
+                  const isExp = expanded.has(cat.id);
+                  return (
+                    <div key={cat.id}>
+                      <div
+                        className={`flex items-center gap-3 px-4 py-2.5 ${i > 0 ? 'border-t border-dark-900/60' : ''} ${hasChildren ? 'cursor-pointer active:bg-dark-700/40' : ''}`}
+                        onClick={hasChildren ? () => toggleCat(cat.id) : undefined}
+                      >
+                        <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: cat.color }} />
+                        <span className="flex-1 text-[12px] font-medium text-dark-200">{cat.name}</span>
+                        {hasChildren && (
+                          <ChevronRight size={12} className={`text-dark-500 flex-shrink-0 transition-transform ${isExp ? 'rotate-90' : ''}`} />
+                        )}
+                        <span className="text-[11px] text-dark-500 w-8 text-right flex-shrink-0">{pct}%</span>
+                        <Amount value={Math.round(cat.amount)} size="sm" color="text-dark-100" weight="bold" className="text-[12px] w-14 text-right flex-shrink-0" decimals={false} />
+                      </div>
+                      {hasChildren && isExp && activeChildren.map(child => {
+                        const childPct = catTotal > 0 ? Math.round((child.amount / catTotal) * 100) : 0;
+                        return (
+                          <div key={child.id} className="flex items-center gap-3 px-4 py-2 border-t border-dark-900/60 pl-10">
+                            <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: child.color }} />
+                            <span className="flex-1 text-[11px] text-dark-300">{child.name}</span>
+                            <span className="text-[10px] text-dark-500 w-8 text-right flex-shrink-0">{childPct}%</span>
+                            <Amount value={Math.round(child.amount)} size="sm" color="text-dark-400" weight="medium" className="text-[11px] w-14 text-right flex-shrink-0" decimals={false} />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* Insights */}
           {year && computeInsights(d, year).length > 0 && (
