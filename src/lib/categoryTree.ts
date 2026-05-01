@@ -21,9 +21,31 @@ export function buildTree(flat: Category[]): CatNode[] {
 }
 
 export function flattenTree(nodes: CatNode[], ancestors: CatNode[] = []): FlatEntry[] {
-  return nodes.flatMap(n => [{ cat: n, ancestors }, ...flattenTree(n.children, [...ancestors, n])]);
+  const out: FlatEntry[] = [];
+  // Iterative-ish: avoid creating spread arrays + intermediate flatMaps for hot paths
+  function walk(ns: CatNode[], anc: CatNode[]) {
+    for (const n of ns) {
+      out.push({ cat: n, ancestors: anc });
+      if (n.children.length) walk(n.children, anc.concat(n));
+    }
+  }
+  walk(nodes, ancestors);
+  return out;
 }
 
 export function allDescendantIds(node: CatNode): string[] {
-  return [node.id, ...node.children.flatMap(allDescendantIds)];
+  const ids: string[] = [];
+  function walk(n: CatNode) {
+    ids.push(n.id);
+    for (const c of n.children) walk(c);
+  }
+  walk(node);
+  return ids;
+}
+
+/** Build a Map<id, Category> from a flat list — O(1) lookups everywhere. */
+export function indexById<T extends { id: string }>(list: T[]): Map<string, T> {
+  const m = new Map<string, T>();
+  for (const item of list) m.set(item.id, item);
+  return m;
 }
