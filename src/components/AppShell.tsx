@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, lazy, Suspense } from 'react';
+import { useState, lazy, Suspense, useCallback } from 'react';
 import { User } from '@supabase/supabase-js';
 import { LayoutDashboard, Wallet, RefreshCcw, Settings, BarChart2 } from 'lucide-react';
 import { setDefaultCurrency } from '@/lib/utils';
@@ -72,28 +72,34 @@ export default function AppShell({ user, initialCurrency }: AppShellProps) {
   const [selectedBudget, setSelectedBudget] = useState<Budget | null>(null);
   const [selectedPeriodId, setSelectedPeriodId] = useState<string>('');
   const [defaultCurrency, _setDefaultCurrency] = useState<CurrencyCode>(initialCurrency);
-  function updateCurrency(c: CurrencyCode) { _setDefaultCurrency(c); setDefaultCurrency(c); }
+  // Bumped to force a fresh BudgetDetailView mount after a save (replaces the old setTimeout hack)
+  const [budgetDetailKey, setBudgetDetailKey] = useState(0);
 
-  const openBudget = (budget: Budget, periodId: string = '') => {
+  const updateCurrency = useCallback((c: CurrencyCode) => {
+    _setDefaultCurrency(c);
+    setDefaultCurrency(c);
+  }, []);
+
+  const openBudget = useCallback((budget: Budget, periodId: string = '') => {
     setSelectedBudget(budget);
     setSelectedPeriodId(periodId);
     setActiveTab('budget-detail');
-  };
+  }, []);
 
-  const backFromBudgetDetail = () => {
+  const backFromBudgetDetail = useCallback(() => {
     setSelectedBudget(null);
     setSelectedPeriodId('');
     setActiveTab('budgets');
-  };
+  }, []);
 
   // Called by DashboardView with optional date+viewMode when navigating to overview
-  const handleNavigate = (tab: Tab, date?: Date, viewMode?: 'months' | 'years') => {
+  const handleNavigate = useCallback((tab: Tab, date?: Date, viewMode?: 'months' | 'years') => {
     if (tab === 'overview') {
       setOverviewDate(date);
       setOverviewViewMode(viewMode);
     }
     setActiveTab(tab);
-  };
+  }, []);
 
   const hideNav = activeTab === 'overview' || activeTab === 'budget-detail' || activeTab === 'global-budget-detail' || activeTab === 'categories';
 
@@ -108,14 +114,12 @@ export default function AppShell({ user, initialCurrency }: AppShellProps) {
           {activeTab === 'budgets' && <BudgetsView user={user} onOpenBudget={openBudget} onOpenGlobalBudget={() => setActiveTab('global-budget-detail')} />}
           {activeTab === 'budget-detail' && selectedBudget && (
             <BudgetDetailView
+              key={`bd-${selectedBudget.id}-${budgetDetailKey}`}
               user={user}
               budget={selectedBudget}
               initialPeriodId={selectedPeriodId}
               onBack={backFromBudgetDetail}
-              onRefresh={() => {
-                setActiveTab('budgets');
-                setTimeout(() => setActiveTab('budget-detail'), 50);
-              }}
+              onRefresh={() => setBudgetDetailKey(k => k + 1)}
             />
           )}
           {activeTab === 'global-budget-detail' && (
