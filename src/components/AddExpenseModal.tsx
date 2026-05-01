@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { Category } from '@/types';
@@ -11,6 +11,7 @@ import CategoryIcon from '@/components/ui/CategoryIcon';
 import { getIconComponent } from '@/lib/iconMap';
 import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
+import { deriveChildColor } from '@/lib/colorUtils';
 
 interface Props {
   user: User;
@@ -28,33 +29,7 @@ interface Props {
   } | null;
 }
 
-// ── Color derivation ──────────────────────────────────────────────────────────
-function hexToHsl(hex: string): [number, number, number] {
-  const r = parseInt(hex.slice(1,3),16)/255, g = parseInt(hex.slice(3,5),16)/255, b = parseInt(hex.slice(5,7),16)/255;
-  const max = Math.max(r,g,b), min = Math.min(r,g,b);
-  let h = 0, s = 0; const l = (max+min)/2;
-  if (max !== min) {
-    const d = max-min; s = l>0.5 ? d/(2-max-min) : d/(max+min);
-    switch(max) { case r: h=((g-b)/d+(g<b?6:0))/6; break; case g: h=((b-r)/d+2)/6; break; case b: h=((r-g)/d+4)/6; break; }
-  }
-  return [Math.round(h*360), Math.round(s*100), Math.round(l*100)];
-}
-function hslToHex(h: number, s: number, l: number): string {
-  const hn=h/360,sn=s/100,ln=l/100;
-  const hue2rgb=(p:number,q:number,t:number)=>{if(t<0)t+=1;if(t>1)t-=1;if(t<1/6)return p+(q-p)*6*t;if(t<1/2)return q;if(t<2/3)return p+(q-p)*(2/3-t)*6;return p;};
-  let r,g,b;
-  if(sn===0){r=g=b=ln;}else{const q=ln<0.5?ln*(1+sn):ln+sn-ln*sn;const p=2*ln-q;r=hue2rgb(p,q,hn+1/3);g=hue2rgb(p,q,hn);b=hue2rgb(p,q,hn-1/3);}
-  const th=(x:number)=>Math.round(x*255).toString(16).padStart(2,'0');
-  return `#${th(r)}${th(g)}${th(b)}`;
-}
-function deriveChildColor(parentHex: string, siblingCount: number): string {
-  const [h,s,l] = hexToHsl(parentHex);
-  const newL = Math.min(88, l + 4 + siblingCount * 7);
-  const newS = Math.max(15, s - 4 - siblingCount * 7);
-  return hslToHex(h, newS, newL);
-}
-
-import { CatNode, FlatEntry, buildTree, flattenTree } from '@/lib/categoryTree';
+import { CatNode, buildTree, flattenTree } from '@/lib/categoryTree';
 import { getCategories, invalidateCategories } from '@/lib/categoryCache';
 
 // ── Frecuentes: exponential decay scoring in localStorage ────────────────────
@@ -99,7 +74,7 @@ function bumpCatFrequency(catId: string) {
   } catch {}
 }
 
-function getTopFrequent(allCats: Category[], limit = 10): Category[] {
+function getTopFrequent(catsById: Map<string, Category>, limit = 10): Category[] {
   const data = loadFreqData();
   const now = Date.now();
   const scores: [string, number][] = [];
@@ -109,14 +84,18 @@ function getTopFrequent(allCats: Category[], limit = 10): Category[] {
     if (current > 0) scores.push([id, current]);
   }
   scores.sort((a, b) => b[1] - a[1]);
-  return scores
-    .slice(0, limit)
-    .map(([id]) => allCats.find(c => c.id === id))
-    .filter((c): c is Category => !!c && !c.hidden);
+  const out: Category[] = [];
+  for (const [id] of scores) {
+    if (out.length >= limit) break;
+    const c = catsById.get(id);
+    if (c && !c.hidden) out.push(c);
+  }
+  return out;
 }
 
 export default function AddExpenseModal({ user, defaultCurrency, onClose, onSaved, editingExpense }: Props) {
   const [categories, setCategories] = useState<Category[]>([]);
+  const [categoriesById, setCategoriesById] = useState<Map<string, Category>>(new Map());
   const [roots, setRoots] = useState<CatNode[]>([]);
   const [amountStr, setAmountStr] = useState(
     editingExpense ? String(editingExpense.original_amount || editingExpense.amount) : ''
@@ -142,13 +121,16 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
 
   async function loadCategories() {
     const catsMap = await getCategories(user.id);
-    const flat = Array.from(catsMap.values()).filter(c => !c.hidden);
+    const flat: Category[] = [];
+    for (const c of catsMap.values()) if (!c.hidden) flat.push(c);
     setCategories(flat);
+    setCategoriesById(catsMap);
     setRoots(buildTree(flat));
-    setFrequentCats(getTopFrequent(flat));
+    setFrequentCats(getTopFrequent(catsMap));
   }
 
-  const selectedCat = categories.find(c => c.id === categoryId);
+  // O(1) lookup instead of categories.find()
+  const selectedCat = categoryId ? categoriesById.get(categoryId) : undefined;
   const headerColor = selectedCat?.color || '#475569';
   const headerIcon = selectedCat?.icon || 'banknote';
   const headerName = selectedCat?.name || 'Categoría';
@@ -168,24 +150,41 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
   const currencyInfo = CURRENCIES[currency];
   const canSave = !saving && !!amountStr && parseFloat(amountStr) > 0 && !!categoryId;
 
-  // Format display amount: split integer and decimal parts
   const displayWhole = amountStr ? amountStr.split('.')[0] || '0' : '0';
   const displayDec = amountStr.includes('.') ? '.' + (amountStr.split('.')[1] || '') : '';
   const hasDecimals = amountStr.includes('.');
 
-  // Save button label with amount
   const saveBtnLabel = (() => {
-    if (saving) return editingExpense ? 'Guardando...' : 'Guardando...';
+    if (saving) return 'Guardando...';
     if (editingExpense) {
       return amt > 0 ? `Guardar ${formatWithCurrency(amt, currency)}` : 'Guardar cambios';
     }
     return amt > 0 ? `Agregar ${formatWithCurrency(amt, currency)}` : 'Agregar gasto';
   })();
 
-  const allEntries = flattenTree(roots);
+  // Memoize the heavy flatten + group structures so they don't recompute on every keystroke.
+  const allEntries = useMemo(() => flattenTree(roots), [roots]);
   const q = searchQuery.trim().toLowerCase();
-  const searchResults = q ? allEntries.filter(e => e.cat.name.toLowerCase().includes(q)) : [];
-  const rootCats = categories.filter(c => !c.parent_id);
+  const searchResults = useMemo(
+    () => q ? allEntries.filter(e => e.cat.name.toLowerCase().includes(q)) : [],
+    [allEntries, q]
+  );
+  // Pre-compute children-by-parent map (used by sibling counter on category creation) — avoids
+  // a fresh categories.filter() per call to openCreateCategory.
+  const siblingCountByParent = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const c of categories) {
+      if (c.parent_id) m.set(c.parent_id, (m.get(c.parent_id) || 0) + 1);
+    }
+    return m;
+  }, [categories]);
+  // Pre-compute root-grouped entries for the picker (recomputes only when the tree changes)
+  const rootGroups = useMemo(() => {
+    return roots.map(root => ({
+      root,
+      entries: flattenTree(root.children, [root]),
+    }));
+  }, [roots]);
 
   function handleNumpad(key: string) {
     if (key === 'backspace') { setAmountStr(prev => prev.slice(0, -1)); }
@@ -203,13 +202,13 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
     setSearchQuery('');
   }
 
-  function openCreateCategory(parentId: string | null = null) {
-    setNewCatParentId(parentId);
+  function openCreateCategory(parentIdLocal: string | null = null) {
+    setNewCatParentId(parentIdLocal);
     setNewCatName('');
-    if (parentId) {
-      const parent = categories.find(c => c.id === parentId);
+    if (parentIdLocal) {
+      const parent = categoriesById.get(parentIdLocal);
       setNewCatIcon(parent?.icon || 'package');
-      const siblingCount = categories.filter(c => c.parent_id === parentId).length;
+      const siblingCount = siblingCountByParent.get(parentIdLocal) || 0;
       setNewCatColor(parent ? deriveChildColor(parent.color, siblingCount) : CATEGORY_COLORS[0]);
     } else {
       setNewCatIcon('package');
@@ -233,13 +232,13 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
   }
 
   async function handleSave() {
-    const amt = parseFloat(amountStr);
-    if (!amt || amt <= 0 || !categoryId) return;
+    const amtLocal = parseFloat(amountStr);
+    if (!amtLocal || amtLocal <= 0 || !categoryId) return;
     setSaving(true);
-    let finalAmount = amt, originalCurrency: string | null = null, originalAmount: number | null = null;
+    let finalAmount = amtLocal, originalCurrency: string | null = null, originalAmount: number | null = null;
     if (isOtherCurrency) {
-      const converted = convertCurrency(amt, currency, defaultCurrency);
-      if (converted !== null) { finalAmount = converted; originalCurrency = currency; originalAmount = amt; }
+      const converted = convertCurrency(amtLocal, currency, defaultCurrency);
+      if (converted !== null) { finalAmount = converted; originalCurrency = currency; originalAmount = amtLocal; }
     }
     const data = { user_id: user.id, amount: finalAmount, description: description || null, notes: null, category_id: categoryId, date, original_currency: originalCurrency, original_amount: originalAmount };
     try {
@@ -253,7 +252,6 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
   return (
     <div className="fixed inset-0 z-[60] flex flex-col bg-dark-900">
 
-      {/* ── Full-screen gradient background ── */}
       <div
         className="absolute inset-0 pointer-events-none transition-all duration-300"
         style={{
@@ -261,9 +259,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
         }}
       />
 
-      {/* ── HEADER ── */}
       <div className="pt-14 pb-8 px-5 relative flex-shrink-0 text-center z-10">
-        {/* Close button */}
         <button
           onClick={onClose}
           className="absolute top-4 left-4 p-1.5 text-white/60 hover:text-white active:scale-95 transition-all"
@@ -271,7 +267,6 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
           <X size={22} />
         </button>
 
-        {/* Category chip */}
         <button
           onClick={() => setShowCategoryPicker(true)}
           className="inline-flex items-center gap-2.5 bg-white/15 rounded-full px-4 py-2 mb-6 active:bg-white/25 transition-colors"
@@ -281,7 +276,6 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
           <ChevronDown size={14} className="text-white/50" />
         </button>
 
-        {/* Hero amount */}
         <div className="mb-3">
           {amountStr ? (
             <>
@@ -302,14 +296,12 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
           </span>
         </div>
 
-        {/* Converted amount hint */}
         {isOtherCurrency && convertedAmount !== null && amt > 0 && (
           <p className="text-white/35 text-sm mb-3">
             ≈ {formatWithCurrency(convertedAmount, defaultCurrency)}
           </p>
         )}
 
-        {/* Description input inline */}
         <input
           type="text"
           placeholder="Agregar nota..."
@@ -318,7 +310,6 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
           className="bg-transparent border-none outline-none text-center text-base text-white/50 placeholder:text-white/25 w-full px-8 mb-5"
         />
 
-        {/* Date + Currency chips */}
         <div className="flex items-center justify-center gap-3">
           <button
             onClick={() => setShowDatePicker(!showDatePicker)}
@@ -339,7 +330,6 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
         </div>
       </div>
 
-      {/* ── Date picker (expandable) ── */}
       {showDatePicker && (
         <div className="px-5 py-3 bg-dark-800/50 flex-shrink-0 relative z-10">
           <input
@@ -354,12 +344,9 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
         </div>
       )}
 
-      {/* ── Spacer to push bottom to bottom ── */}
       <div className="flex-1" />
 
-      {/* ── BOTTOM: Save button + Numpad ── */}
       <div className="flex-shrink-0 relative z-10">
-        {/* Save button */}
         <div className="px-5 py-3">
           <button
             onClick={handleSave}
@@ -375,7 +362,6 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
           </button>
         </div>
 
-        {/* Numpad — gapped rounded keys */}
         <div className="px-2 pb-1">
           <div className="grid grid-cols-3 gap-[6px]">
             {['1','2','3','4','5','6','7','8','9','.','0','backspace'].map((key) => {
@@ -447,7 +433,6 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
             </button>
           </div>
 
-          {/* Search */}
           <div className="px-4 pb-3 flex-shrink-0">
             <div className="flex items-center gap-2 bg-dark-800 rounded-2xl px-4 py-2.5">
               <Search size={16} className="text-dark-400 flex-shrink-0" />
@@ -529,9 +514,8 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
                   </div>
                 )}
 
-                {/* All categories by parent */}
-                {roots.map(root => {
-                  const entries = flattenTree(root.children, [root]);
+                {/* All categories by parent — pre-grouped via useMemo */}
+                {rootGroups.map(({ root, entries }) => {
                   if (entries.length === 0) return null;
                   return (
                     <div key={root.id} className="mb-2">
@@ -607,7 +591,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
                 <button key={cat.id} onClick={() => {
                   setNewCatParentId(cat.id);
                   setNewCatIcon(cat.icon);
-                  const siblings = categories.filter(c => c.parent_id === cat.id).length;
+                  const siblings = siblingCountByParent.get(cat.id) || 0;
                   setNewCatColor(deriveChildColor(cat.color, siblings));
                 }}
                   className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${newCatParentId === cat.id ? 'bg-brand-600 text-white' : 'bg-dark-700 text-dark-300'}`}>
