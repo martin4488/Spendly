@@ -8,7 +8,7 @@ import {
   format, parseISO,
   addMonths, subMonths, startOfMonth, endOfMonth,
   addYears, subYears, startOfYear, endOfYear,
-  eachDayOfInterval, eachMonthOfInterval,
+  eachMonthOfInterval,
 } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { ArrowLeft, ChevronDown, ChevronRight } from 'lucide-react';
@@ -17,7 +17,6 @@ import { getCategories } from '@/lib/categoryCache';
 import Amount from '@/components/ui/Amount';
 import { CatNode, buildTree } from '@/lib/categoryTree';
 import SwipeableRow from '@/components/SwipeableRow';
-import type { Category } from '@/types';
 const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
 
 type ViewMode = 'months' | 'years';
@@ -25,7 +24,10 @@ type ViewMode = 'months' | 'years';
 interface RawCat { id: string; name: string; icon: string; color: string; parent_id: string | null; }
 
 function allIds(node: CatNode): string[] {
-  return [node.id, ...node.children.flatMap(allIds)];
+  const out: string[] = [];
+  function walk(n: CatNode) { out.push(n.id); for (const c of n.children) walk(c); }
+  walk(node);
+  return out;
 }
 
 interface CatSpend {
@@ -40,19 +42,25 @@ function buildSpend(node: CatNode, spendMap: Record<string, number>, txMap: Reco
   const directSpent = spendMap[node.id] || 0;
   const spent = directSpent + childSpends.reduce((s, c) => s + c.spent, 0);
   const transactions = (txMap[node.id] || 0) + childSpends.reduce((s, c) => s + c.transactions, 0);
-  return { id: node.id, name: node.name, icon: node.icon, color: node.color, spent, percentage: total > 0 ? (spent / total) * 100 : 0, transactions, children: childSpends.sort((a, b) => b.spent - a.spent), allIds: allIds(node) };
+  return {
+    id: node.id, name: node.name, icon: node.icon, color: node.color, spent,
+    percentage: total > 0 ? (spent / total) * 100 : 0,
+    transactions,
+    children: childSpends.sort((a, b) => b.spent - a.spent),
+    allIds: allIds(node),
+  };
 }
 
 interface DrillDown { id: string; name: string; icon: string; color: string; allIds: string[]; children: CatSpend[]; }
 interface ExpenseDetail { id: string; date: string; description: string; amount: number; category_id?: string | null; }
 
-// ── SVG Donut ─────────────────────────────────────────────────────────────────
+// ── SVG Donut ──
 function DonutChart({
   cats, total, selectedId, onSelectId,
 }: {
   cats: CatSpend[]; total: number; selectedId: string | null; onSelectId: (id: string | null) => void;
 }) {
-  const CX = 150; const CY = 140; const R_OUTER = 100; const R_INNER = 62;
+  const CX = 150, CY = 140, R_OUTER = 100, R_INNER = 62;
   let cumAngle = -90;
   const slices = cats.map(cat => {
     const pct = total > 0 ? cat.spent / total : 0;
@@ -90,7 +98,7 @@ function DonutChart({
   );
 }
 
-// ── Bar Chart ─────────────────────────────────────────────────────────────────
+// ── Bar Chart ──
 interface BarSegment { amount: number; color: string; }
 interface BarEntry { label: string; amount: number; monthKey: string; segments?: BarSegment[]; }
 
@@ -99,8 +107,8 @@ function DrillBarChart({
 }: {
   data: BarEntry[]; color: string; selectedMonth: string | null; onSelectMonth: (key: string | null) => void;
 }) {
-  const W = 320; const H = 120; const PAD_L = 36; const PAD_B = 22; const PAD_T = 8; const PAD_R = 8;
-  const chartW = W - PAD_L - PAD_R; const chartH = H - PAD_B - PAD_T;
+  const W = 320, H = 120, PAD_L = 36, PAD_B = 22, PAD_T = 8, PAD_R = 8;
+  const chartW = W - PAD_L - PAD_R, chartH = H - PAD_B - PAD_T;
   const max = Math.max(...data.map(d => d.amount), 1);
   const yTicks = [0, max * 0.5, max];
   function fmtAmt(v: number) { if (v === 0) return '0'; if (v >= 1000) return `${(v / 1000).toFixed(1)}k`; return Math.round(v).toString(); }
@@ -158,13 +166,12 @@ function DrillBarChart({
   );
 }
 
-// ── Subcategory section ───────────────────────────────────────────────────────
-function SubcatSection({ expenses, allCats, drillDown, total }: {
-  expenses: ExpenseDetail[]; allCats: RawCat[]; drillDown: DrillDown; total: number;
+function SubcatSection({ expenses, drillDown, total }: {
+  expenses: ExpenseDetail[]; drillDown: DrillDown; total: number;
 }) {
   const subcatMap = useMemo(() => {
     const map: Record<string, number> = {};
-    expenses.forEach(e => { const cid = e.category_id || '__none'; map[cid] = (map[cid] || 0) + e.amount; });
+    for (const e of expenses) { const cid = e.category_id || '__none'; map[cid] = (map[cid] || 0) + e.amount; }
     return map;
   }, [expenses]);
 
@@ -202,7 +209,7 @@ function getRange(date: Date, mode: ViewMode) {
   return { start: format(startOfYear(date), 'yyyy-MM-dd'), end: format(endOfYear(date), 'yyyy-MM-dd') };
 }
 
-// ── Main SpendingOverview ──────────────────────────────────────────────────────
+// ── Main ──
 export default function SpendingOverview({ user, onBack, initialDate, initialViewMode }: {
   user: User;
   onBack: () => void;
@@ -250,20 +257,30 @@ export default function SpendingOverview({ user, onBack, initialDate, initialVie
       const txMap: Record<string, number> = {};
       if (!rpcError && rpcResult) {
         total = Number(rpcResult.total) || 0;
-        (rpcResult.category_totals || []).forEach((row: any) => {
+        for (const row of (rpcResult.category_totals || [])) {
           if (row.category_id) { spendMap[row.category_id] = Number(row.total); txMap[row.category_id] = Number(row.tx_count); }
-        });
+        }
       } else {
         const { data: expenses } = await supabase.from('expenses').select('id, amount, category_id, description, date').eq('user_id', user.id).gte('date', range.start).lte('date', range.end).order('date', { ascending: false }).limit(10000);
         const allExp = expenses || [];
-        total = allExp.reduce((s: number, e: any) => s + Number(e.amount), 0);
-        allExp.forEach((e: any) => { if (e.category_id) { spendMap[e.category_id] = (spendMap[e.category_id] || 0) + Number(e.amount); txMap[e.category_id] = (txMap[e.category_id] || 0) + 1; } });
+        for (const e of allExp as any[]) {
+          total += Number(e.amount);
+          if (e.category_id) {
+            spendMap[e.category_id] = (spendMap[e.category_id] || 0) + Number(e.amount);
+            txMap[e.category_id] = (txMap[e.category_id] || 0) + 1;
+          }
+        }
       }
       setTotalSpent(total);
       const spending: CatSpend[] = tree.map(node => buildSpend(node, spendMap, txMap, total)).filter(c => c.spent > 0).sort((a, b) => b.spent - a.spent);
       const allCatIds = new Set(activeCats.map((c: any) => c.id));
-      const uncatSpent = (rpcResult?.category_totals || []).filter((row: any) => !row.category_id || !allCatIds.has(row.category_id)).reduce((s: number, row: any) => s + Number(row.total), 0);
-      const uncatTx = (rpcResult?.category_totals || []).filter((row: any) => !row.category_id || !allCatIds.has(row.category_id)).reduce((s: number, row: any) => s + Number(row.tx_count), 0);
+      let uncatSpent = 0, uncatTx = 0;
+      for (const row of (rpcResult?.category_totals || []) as any[]) {
+        if (!row.category_id || !allCatIds.has(row.category_id)) {
+          uncatSpent += Number(row.total);
+          uncatTx += Number(row.tx_count);
+        }
+      }
       if (uncatSpent > 0) spending.push({ id: 'uncategorized', name: 'Sin categoría', icon: 'package', color: '#95A5A6', spent: uncatSpent, percentage: total > 0 ? (uncatSpent / total) * 100 : 0, transactions: uncatTx, children: [], allIds: ['uncategorized'] });
       setCatSpending(spending);
     } catch (err) { console.error(err); }
@@ -366,7 +383,7 @@ export default function SpendingOverview({ user, onBack, initialDate, initialVie
   );
 }
 
-// ── DrillDownView ─────────────────────────────────────────────────────────────
+// ── DrillDownView ──
 function DrillDownView({ user, drillDown, onBack, initialDate, initialMonth, now }: {
   user: User; drillDown: DrillDown; onBack: () => void;
   initialDate: Date; initialMonth: string | null; now: Date;
@@ -378,6 +395,8 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMonth, now
   const [barData, setBarData] = useState<BarEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [allCats, setAllCats] = useState<RawCat[]>([]);
+  // O(1) lookup map — replaces allCats.find() in render loop
+  const [catsById, setCatsById] = useState<Map<string, RawCat>>(new Map());
   const swipeStartX = useRef<number | null>(null);
   const [editingExpense, setEditingExpense] = useState<any>(null);
   const [showExpenseModal, setShowExpenseModal] = useState(false);
@@ -396,6 +415,10 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMonth, now
       const catsMap = await getCategories(user.id);
       const cats = Array.from(catsMap.values());
       setAllCats(cats);
+      // Build id-indexed map once per load — used by the row render & buildBarData
+      const map = new Map<string, RawCat>();
+      for (const c of cats) map.set(c.id, c as any);
+      setCatsById(map);
 
       let list: ExpenseDetail[] = [];
       if (drillDown.id === 'uncategorized') {
@@ -407,24 +430,34 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMonth, now
         list = (exp || []).map((e: any) => ({ id: e.id, date: e.date, description: e.description, amount: Number(e.amount), category_id: e.category_id }));
       }
       setAllExpenses(list);
-      setBarData(buildBarData(list, year, cats));
+      setBarData(buildBarData(list, year, map));
     } catch (err) { console.error(err); }
     finally { setLoading(false); }
   }
 
-  function buildBarData(exp: ExpenseDetail[], yr: number, cats: RawCat[]): BarEntry[] {
-    const colorMap: Record<string, string> = {};
-    cats.forEach(c => { colorMap[c.id] = c.color; });
+  // Single pass over expenses + Map color lookups (was: per-month .filter loop)
+  function buildBarData(exp: ExpenseDetail[], yr: number, catMap: Map<string, RawCat>): BarEntry[] {
     const yearDate = new Date(yr, 0, 1);
-    return eachMonthOfInterval({ start: startOfYear(yearDate), end: endOfYear(yearDate) }).map(m => {
+    const months = eachMonthOfInterval({ start: startOfYear(yearDate), end: endOfYear(yearDate) });
+    // Aggregate by month + category in a single pass
+    const monthBuckets = new Map<string, { amount: number; bycat: Map<string, number> }>();
+    for (const e of exp) {
+      const mStr = e.date.slice(0, 7); // YYYY-MM
+      let bucket = monthBuckets.get(mStr);
+      if (!bucket) { bucket = { amount: 0, bycat: new Map() }; monthBuckets.set(mStr, bucket); }
+      bucket.amount += e.amount;
+      const cid = e.category_id || '__none';
+      bucket.bycat.set(cid, (bucket.bycat.get(cid) || 0) + e.amount);
+    }
+    return months.map(m => {
       const mStr = format(m, 'yyyy-MM');
-      const monthExps = exp.filter(e => e.date.startsWith(mStr));
-      const amount = monthExps.reduce((s, e) => s + e.amount, 0);
-      if (amount === 0) return { label: format(m, 'MMM', { locale: es }), amount, monthKey: mStr, segments: [] };
-      const bycat: Record<string, number> = {};
-      monthExps.forEach(e => { const cid = e.category_id || '__none'; bycat[cid] = (bycat[cid] || 0) + e.amount; });
-      const segments: BarSegment[] = Object.entries(bycat).sort((a, b) => b[1] - a[1]).map(([cid, amt]) => ({ amount: amt, color: colorMap[cid] || drillDown.color }));
-      return { label: format(m, 'MMM', { locale: es }), amount, monthKey: mStr, segments };
+      const label = format(m, 'MMM', { locale: es });
+      const bucket = monthBuckets.get(mStr);
+      if (!bucket || bucket.amount === 0) return { label, amount: 0, monthKey: mStr, segments: [] };
+      const segments: BarSegment[] = Array.from(bucket.bycat.entries())
+        .sort((a, b) => b[1] - a[1])
+        .map(([cid, amt]) => ({ amount: amt, color: catMap.get(cid)?.color || drillDown.color }));
+      return { label, amount: bucket.amount, monthKey: mStr, segments };
     });
   }
 
@@ -433,33 +466,46 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMonth, now
     return allExpenses.filter(e => e.date.startsWith(selectedMonth));
   }, [allExpenses, selectedMonth]);
 
-  const yearTotal = useMemo(() => allExpenses.reduce((s, e) => s + e.amount, 0), [allExpenses]);
-  const closedMonths = useMemo(() => { if (year < nowYear) return 12; return now.getMonth(); }, [year, nowYear, now]);
+  const yearTotal = useMemo(() => {
+    let s = 0; for (const e of allExpenses) s += e.amount; return s;
+  }, [allExpenses]);
+  const closedMonths = useMemo(() => year < nowYear ? 12 : now.getMonth(), [year, nowYear, now]);
   const monthAvg = useMemo(() => {
     if (closedMonths === 0) return 0;
     const currentMonthStr = format(now, 'yyyy-MM');
-    const closedTotal = allExpenses.filter(e => !e.date.startsWith(currentMonthStr)).reduce((s, e) => s + e.amount, 0);
+    let closedTotal = 0;
+    for (const e of allExpenses) if (!e.date.startsWith(currentMonthStr)) closedTotal += e.amount;
     return closedTotal / closedMonths;
-  }, [allExpenses, closedMonths, now, year]);
-  const selectedTotal = useMemo(() => visibleExpenses.reduce((s, e) => s + e.amount, 0), [visibleExpenses]);
+  }, [allExpenses, closedMonths, now]);
+  const selectedTotal = useMemo(() => {
+    let s = 0; for (const e of visibleExpenses) s += e.amount; return s;
+  }, [visibleExpenses]);
   const diffVsAvg = monthAvg > 0 ? ((selectedTotal - monthAvg) / monthAvg) * 100 : 0;
 
   const todayStr = format(now, 'yyyy-MM-dd');
   const yestStr = format(new Date(now.getTime() - 86400000), 'yyyy-MM-dd');
-  const dayMap = new Map<string, ExpenseDetail[]>();
-  visibleExpenses.forEach(e => { if (!dayMap.has(e.date)) dayMap.set(e.date, []); dayMap.get(e.date)!.push(e); });
-  const grouped = Array.from(dayMap.entries())
-    .map(([dateStr, exps]) => ({
-      date: dateStr,
-      label: dateStr === todayStr ? 'Hoy' : dateStr === yestStr ? 'Ayer' : format(parseISO(dateStr), "d MMM", { locale: es }).toUpperCase(),
-      total: exps.reduce((s, e) => s + e.amount, 0),
-      expenses: exps,
-    }))
-    .sort((a, b) => b.date.localeCompare(a.date));
 
+  // Group by day in single pass — using map.get pattern
+  const grouped = useMemo(() => {
+    const dayMap = new Map<string, ExpenseDetail[]>();
+    for (const e of visibleExpenses) {
+      const arr = dayMap.get(e.date);
+      if (arr) arr.push(e); else dayMap.set(e.date, [e]);
+    }
+    return Array.from(dayMap.entries())
+      .map(([dateStr, exps]) => ({
+        date: dateStr,
+        label: dateStr === todayStr ? 'Hoy' : dateStr === yestStr ? 'Ayer' : format(parseISO(dateStr), 'd MMM', { locale: es }).toUpperCase(),
+        total: exps.reduce((s, e) => s + e.amount, 0),
+        expenses: exps,
+      }))
+      .sort((a, b) => b.date.localeCompare(a.date));
+  }, [visibleExpenses, todayStr, yestStr]);
+
+  // O(1) cat lookup — replaces allCats.find()
   function resolveCat(categoryId: string | null | undefined): RawCat | undefined {
     if (!categoryId) return undefined;
-    return allCats.find(c => c.id === categoryId);
+    return catsById.get(categoryId);
   }
 
   function openEdit(exp: ExpenseDetail) {
@@ -472,7 +518,7 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMonth, now
     await supabase.from('expenses').delete().eq('id', id);
     const updated = allExpenses.filter(e => e.id !== id);
     setAllExpenses(updated);
-    setBarData(buildBarData(updated, year, allCats));
+    setBarData(buildBarData(updated, year, catsById));
   }
 
   function onTouchStart(e: React.TouchEvent) { swipeStartX.current = e.touches[0].clientX; }
@@ -542,7 +588,7 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMonth, now
             )}
           </div>
 
-          <SubcatSection expenses={visibleExpenses} allCats={allCats} drillDown={drillDown} total={selectedMonth ? selectedTotal : yearTotal} />
+          <SubcatSection expenses={visibleExpenses} drillDown={drillDown} total={selectedMonth ? selectedTotal : yearTotal} />
 
           {grouped.length === 0 ? (
             <div className="text-center py-10"><p className="text-dark-500 text-sm">Sin transacciones</p></div>
