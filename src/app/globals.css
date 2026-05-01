@@ -27,14 +27,10 @@ body {
   min-height: 100dvh;
   overscroll-behavior: none;
   font-feature-settings: 'cv02','cv03','cv04','cv11';
-}
-
-/* PWA safe areas */
-@supports (padding: env(safe-area-inset-top)) {
-  body {
-    padding-top: env(safe-area-inset-top);
-    padding-bottom: env(safe-area-inset-bottom);
-  }
+  /* Only top safe-area on body — bottom is handled by the bottom nav */
+  padding-top: env(safe-area-inset-top);
+  /* Hint to the browser this layer composites separately for smoother scroll */
+  -webkit-overflow-scrolling: touch;
 }
 
 /* Custom scrollbar */
@@ -53,11 +49,13 @@ body {
 
 /* Smooth transitions */
 .page-transition {
-  animation: fadeIn 0.2s ease-out;
+  animation: fadeIn 0.18s ease-out;
+  /* Promote to its own layer during the transition for jank-free fade */
+  will-change: opacity, transform;
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
@@ -67,7 +65,7 @@ body {
 }
 
 .slide-up {
-  animation: slideUp 0.3s ease-out;
+  animation: slideUp 0.25s ease-out;
 }
 
 /* Input styles for dark mode */
