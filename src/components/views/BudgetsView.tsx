@@ -231,8 +231,26 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
           const effectivePeriod = curPeriod || sortedDesc[0];
           if (effectivePeriod) setMonthlyBudget(Number(effectivePeriod.amount));
 
-          const closedMonths = (periods as any[]).filter(p => p.month < curMonth2 && p.month >= `${now2.getFullYear()}-01`);
-          if (closedMonths.length > 0) {
+          // Resolve a month's budget amount with fallback to most recent prior period
+          // (matches the logic used in GlobalBudgetDetailView's history view)
+          const getMonthAmount = (mo: string): number | null => {
+            const exact = (periods as any[]).find(p => p.month === mo);
+            if (exact) return Number(exact.amount);
+            const prior = (periods as any[]).filter(p => p.month < mo).sort((a, b) => b.month.localeCompare(a.month));
+            return prior.length > 0 ? Number(prior[0].amount) : null;
+          };
+
+          // Iterate all closed months of current year (Jan → previous month), not just those
+          // with a period row — otherwise missing rows silently drop months from the total.
+          const yearStr = String(now2.getFullYear());
+          const closedMonthsList: string[] = [];
+          for (let m = 1; m <= 12; m++) {
+            const mo = `${yearStr}-${String(m).padStart(2, '0')}`;
+            if (mo >= curMonth2) break;
+            closedMonthsList.push(mo);
+          }
+
+          if (closedMonthsList.length > 0) {
             // Group expense totals per month in one pass
             const spentByMonth = new Map<string, number>();
             for (const e of rows) {
@@ -240,13 +258,25 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
               spentByMonth.set(mo, (spentByMonth.get(mo) || 0) + Number(e.amount));
             }
             let acc = 0;
-            for (const p of closedMonths) acc += Number(p.amount) - (spentByMonth.get(p.month) || 0);
-            setGlobalAccumulated(acc);
-            const sortedAsc = closedMonths.slice().sort((a, b) => a.month.localeCompare(b.month));
-            const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-            const first = cap(format(new Date(`${sortedAsc[0].month}-01`), 'MMM', { locale: es }));
-            const last = cap(format(new Date(`${sortedAsc[sortedAsc.length - 1].month}-01`), 'MMM', { locale: es }));
-            setGlobalAccumMonths(first === last ? first : `${first} - ${last}`);
+            let countedMonths: string[] = [];
+            for (const mo of closedMonthsList) {
+              const amt = getMonthAmount(mo);
+              if (amt == null) continue; // no budget set yet for/before this month
+              acc += amt - (spentByMonth.get(mo) || 0);
+              countedMonths.push(mo);
+            }
+            // Only show the line when overspent (acc < 0). Savings are not shown to avoid
+            // a misleading "free money" message that doesn't carry forward.
+            if (acc < 0 && countedMonths.length > 0) {
+              setGlobalAccumulated(acc);
+              const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+              const first = cap(format(new Date(`${countedMonths[0]}-01`), 'MMM', { locale: es }));
+              const last = cap(format(new Date(`${countedMonths[countedMonths.length - 1]}-01`), 'MMM', { locale: es }));
+              setGlobalAccumMonths(first === last ? first : `${first} - ${last}`);
+            } else {
+              setGlobalAccumulated(null);
+              setGlobalAccumMonths('');
+            }
           }
         }
       }).catch(err => console.error('Global stats error:', err));
@@ -528,11 +558,11 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
                         style={{ width: `${availablePct}%`, backgroundColor: color }} />
                     )}
                   </div>
-                  {globalAccumulated !== null && (
+                  {globalAccumulated !== null && globalAccumulated < 0 && (
                     <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-white/5">
-                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: globalAccumulated >= 0 ? '#22c55e' : '#ef4444' }} />
-                      <span className="text-[11px] font-medium" style={{ color: globalAccumulated >= 0 ? '#22c55e' : '#ef4444' }}>
-                        {formatCurrency(Math.abs(globalAccumulated), undefined, true)} {globalAccumulated >= 0 ? 'ahorro acumulado' : 'excedido acumulado'} en {now.getFullYear()}{globalAccumMonths ? ` (${globalAccumMonths})` : ''}
+                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400" />
+                      <span className="text-[11px] font-medium text-red-400">
+                        {formatCurrency(Math.abs(globalAccumulated), undefined, true)} excedido acumulado en {now.getFullYear()}{globalAccumMonths ? ` (${globalAccumMonths})` : ''}
                       </span>
                     </div>
                   )}
