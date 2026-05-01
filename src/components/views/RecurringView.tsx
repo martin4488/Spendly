@@ -153,7 +153,7 @@ export default function RecurringView({ user }: { user: User }) {
   const searchResults: Array<{ cat: Category; parent?: Category }> = q
     ? categories.filter(c => c.name.toLowerCase().includes(q)).map(c => ({
         cat: c,
-        parent: c.parent_id ? categories.find(p => p.id === c.parent_id) : undefined,
+        parent: c.parent_id ? categoriesMap.get(c.parent_id) : undefined,
       }))
     : [];
 
@@ -192,7 +192,7 @@ export default function RecurringView({ user }: { user: User }) {
     finally { setSavingCat(false); }
   }
 
-  const selectedCat = categories.find(c => c.id === categoryId);
+  const selectedCat = categoryId ? categoriesMap.get(categoryId) : undefined;
 
   const totalMonthly = items.reduce((sum, i) => {
     if (i.frequency === 'monthly') return sum + Number(i.amount);
