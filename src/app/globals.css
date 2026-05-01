@@ -27,10 +27,14 @@ body {
   min-height: 100dvh;
   overscroll-behavior: none;
   font-feature-settings: 'cv02','cv03','cv04','cv11';
-  /* Only top safe-area on body — bottom is handled by the bottom nav */
-  padding-top: env(safe-area-inset-top);
-  /* Hint to the browser this layer composites separately for smoother scroll */
-  -webkit-overflow-scrolling: touch;
+}
+
+/* PWA safe areas */
+@supports (padding: env(safe-area-inset-top)) {
+  body {
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
 }
 
 /* Custom scrollbar */
@@ -50,7 +54,6 @@ body {
 /* Smooth transitions */
 .page-transition {
   animation: fadeIn 0.18s ease-out;
-  /* Promote to its own layer during the transition for jank-free fade */
   will-change: opacity, transform;
 }
 
