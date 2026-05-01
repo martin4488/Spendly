@@ -74,6 +74,12 @@ function buildSpendTree(
 export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }: Props) {
   const [periods, setPeriods] = useState<GlobalPeriod[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  // O(1) lookup — replaces categories.find() in render hot path
+  const catsById = useMemo(() => {
+    const m = new Map<string, Category>();
+    for (const c of categories) m.set(c.id, c);
+    return m;
+  }, [categories]);
   const [currentMonth, setCurrentMonth] = useState(format(new Date(), 'yyyy-MM'));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -548,7 +554,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
                     <Amount value={group.total} currency={defaultCurrency} sign="-" size="sm" weight="semibold" color="text-dark-500" className="text-[10px]" decimals={false} />
                   </div>
                   {group.expenses.map(exp => {
-                    const cat = categories.find(c => c.id === exp.category_id);
+                    const cat = exp.category_id ? catsById.get(exp.category_id) : undefined;
                     return (
                       <div key={exp.id} onClick={() => openExpenseEdit(exp)} className="flex items-center gap-2.5 px-4 py-2.5 border-b border-dark-800/40 active:bg-dark-700/40 cursor-pointer transition-colors">
                         <CategoryIcon icon={cat?.icon || 'hand-coins'} color={cat?.color || '#475569'} size={32} rounded="xl" />
