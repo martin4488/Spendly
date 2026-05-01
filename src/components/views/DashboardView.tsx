@@ -3,9 +3,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense, memo } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
-import { getYearRange } from '@/lib/utils';
-import { format } from 'date-fns';
-import { es } from 'date-fns/locale';
 import { Expense, Category } from '@/types';
 import { Plus, Search, X } from 'lucide-react';
 import CategoryIcon from '@/components/ui/CategoryIcon';
@@ -35,7 +32,7 @@ function formatDayLabel(dateStr: string, todayStr: string, yesterdayStr: string)
 }
 
 // ── Custom chart ──────────────────────────────────────────────────────────────
-function WalletChart({
+const WalletChart = memo(function WalletChart({
   data,
   selectedIndex,
   onSelect,
@@ -68,14 +65,12 @@ function WalletChart({
   const slotW = plotW / n;
   const barW = slotW * 0.45;
 
-  const gridlines = [
-    { y: topY, label: fmtGrid(topVal) },
-    { y: midY, label: fmtGrid(midVal) },
-  ];
-
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} style={{ display: 'block' }}>
-      {gridlines.map((g, i) => (
+      {[
+        { y: topY, label: fmtGrid(topVal) },
+        { y: midY, label: fmtGrid(midVal) },
+      ].map((g, i) => (
         <g key={i}>
           <line x1={padL} y1={g.y} x2={W - padR} y2={g.y} stroke="rgba(255,255,255,0.06)" strokeDasharray="2 3" strokeWidth={1} />
           <text x={padL - 4} y={g.y + 3} textAnchor="end" fill="#71717a" fontSize={9} fontFamily="var(--font-mono)">{g.label}</text>
@@ -90,14 +85,11 @@ function WalletChart({
         const barX = cx - barW / 2;
         const barY = baseY - barH;
         const isSelected = i === selectedIndex;
-        // Tap/click zone covers full slot height
         const tapX = padL + i * slotW;
 
         return (
           <g key={i} style={{ cursor: 'pointer' }} onClick={() => onSelect(i)}>
-            {/* Invisible tap zone */}
             <rect x={tapX} y={padTop} width={slotW} height={plotH + padBottom} fill="transparent" />
-
             <title>{entry.name} {entry.year}: {Math.round(entry.total)}</title>
             <rect
               x={barX}
@@ -108,7 +100,6 @@ function WalletChart({
               fill={isSelected ? '#f87171' : 'rgba(248,113,113,0.32)'}
               opacity={isSelected ? 1 : 0.7}
             />
-
             <text x={cx} y={baseY + 13} textAnchor="middle"
               fill={isSelected ? '#f4f4f5' : '#a1a1aa'} fontSize={10}
               fontWeight={isSelected ? 700 : 500}>
@@ -124,7 +115,7 @@ function WalletChart({
       })}
     </svg>
   );
-}
+});
 
 // ─── Memoized expense row ───────────────────────────────────────────────────
 const ExpenseRow = memo(function ExpenseRow({
@@ -174,6 +165,7 @@ const ExpenseRow = memo(function ExpenseRow({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function DashboardView({ user, onNavigate, defaultCurrency }: { user: User; onNavigate: (tab: any, date?: Date, viewMode?: 'months' | 'years') => void; defaultCurrency: CurrencyCode }) {
+  // Read cached snapshot once — on cold start this is what `page.tsx` boot RPC just wrote.
   const cached = useMemo(() => readDashboardCache(user.id), [user.id]);
   const hasCachedData = !!cached;
 
@@ -192,18 +184,10 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
   const [searchQuery, setSearchQuery] = useState('');
   const searchRef = useRef<HTMLInputElement>(null);
 
-  // ── Selected bar: null means "current" (last bar, index 5) ────────────────
-  // We store the index into chartData (0–5). Default = 5 (current month/year).
   const [selectedBarIndex, setSelectedBarIndex] = useState<number>(5);
 
   const currentMonth = useMemo(() => new Date().getMonth(), []);
   const currentYear = useMemo(() => new Date().getFullYear(), []);
-
-  useEffect(() => { loadDashboard(); }, []);
-
-  useEffect(() => {
-    if (showSearch && searchRef.current) searchRef.current.focus();
-  }, [showSearch]);
 
   const loadDashboard = useCallback(async () => {
     try {
@@ -255,6 +239,24 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     }
   }, [user.id]);
 
+  // Mount logic: skip the redundant fetch when boot RPC already populated the cache
+  // (which is the common case — see `page.tsx`'s `runUnifiedBoot`).
+  // Only refetch on mount if there's no usable cache. This halves request volume on
+  // every navigation back to Dashboard.
+  const didMountFetchRef = useRef(false);
+  useEffect(() => {
+    if (didMountFetchRef.current) return;
+    didMountFetchRef.current = true;
+    if (!hasCachedData) {
+      loadDashboard();
+    }
+    // If we have a cache, the boot RPC already refreshed it for this session.
+  }, [hasCachedData, loadDashboard]);
+
+  useEffect(() => {
+    if (showSearch && searchRef.current) searchRef.current.focus();
+  }, [showSearch]);
+
   // ── Load expenses for a specific past month ───────────────────────────────
   const loadMonthExpenses = useCallback(async (year: number, month: number) => {
     try {
@@ -292,7 +294,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     }
   }, [user.id]);
 
-  async function loadExtended() {
+  const loadExtended = useCallback(async () => {
     try {
       const yr = currentYear;
       const yearStart = `${yr}-01-01`;
@@ -323,32 +325,27 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     } catch (err) {
       console.error(err);
     }
-  }
+  }, [currentYear, user.id]);
 
-  function handleViewModeChange(mode: ViewMode) {
+  const handleViewModeChange = useCallback((mode: ViewMode) => {
     setViewMode(mode);
-    setSelectedBarIndex(5); // reset to current on mode switch
+    setSelectedBarIndex(5);
     if (mode === 'years') {
       loadExtended();
     } else if (extendedLoaded) {
       setExtendedLoaded(false);
       loadDashboard();
     }
-  }
+  }, [extendedLoaded, loadExtended, loadDashboard]);
 
   // ── Handle bar selection ──────────────────────────────────────────────────
   const handleBarSelect = useCallback(async (index: number) => {
     setSelectedBarIndex(index);
     if (index === 5) {
-      // Current period — reload normal data
-      if (viewMode === 'months') {
-        loadDashboard();
-      } else {
-        loadYearExpenses(currentYear);
-      }
+      if (viewMode === 'months') loadDashboard();
+      else loadYearExpenses(currentYear);
       return;
     }
-
     if (viewMode === 'months') {
       const offset = 5 - index;
       const targetDate = new Date(currentYear, currentMonth - offset, 1);
@@ -358,8 +355,6 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       await loadYearExpenses(targetYear);
     }
   }, [viewMode, currentYear, currentMonth, loadDashboard, loadMonthExpenses, loadYearExpenses]);
-
-  const yearRange = useMemo(() => getYearRange(new Date(currentYear, currentMonth, 1)), [currentYear]);
 
   // ── Derive the selected period info ──────────────────────────────────────
   const selectedPeriod = useMemo(() => {
@@ -383,31 +378,27 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
   }, [viewMode, chartTotals, yearTotals, selectedPeriod]);
 
   const chartData = useMemo(() => {
+    const data: { name: string; year: string; total: number; isCurrent: boolean }[] = [];
     if (viewMode === 'months') {
-      const data: { name: string; year: string; total: number; isCurrent: boolean }[] = [];
       for (let i = 5; i >= 0; i--) {
         const m = currentMonth - i;
         const y = currentYear + Math.floor(m / 12);
         const mo = ((m % 12) + 12) % 12;
         const key = `${y}-${String(mo + 1).padStart(2, '0')}`;
-        const total = chartTotals[key] || 0;
         data.push({
           name: MONTHS_SHORT_ES[mo],
           year: String(y),
-          total,
+          total: chartTotals[key] || 0,
           isCurrent: i === 0,
         });
       }
-      return data;
     } else {
-      const data: { name: string; year: string; total: number; isCurrent: boolean }[] = [];
       for (let i = 5; i >= 0; i--) {
         const year = currentYear - i;
-        const total = yearTotals[year] || 0;
-        data.push({ name: String(year), year: '', total, isCurrent: i === 0 });
+        data.push({ name: String(year), year: '', total: yearTotals[year] || 0, isCurrent: i === 0 });
       }
-      return data;
     }
+    return data;
   }, [viewMode, chartTotals, yearTotals, currentMonth, currentYear]);
 
   const todayStr = useMemo(() => toDateStr(new Date()), []);
@@ -432,10 +423,11 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       : expenses;
 
     const dayMap = new Map<string, Expense[]>();
-    filtered.forEach(exp => {
-      if (!dayMap.has(exp.date)) dayMap.set(exp.date, []);
-      dayMap.get(exp.date)!.push(exp);
-    });
+    for (const exp of filtered) {
+      const arr = dayMap.get(exp.date);
+      if (arr) arr.push(exp);
+      else dayMap.set(exp.date, [exp]);
+    }
 
     return Array.from(dayMap.entries())
       .map(([dateStr, exps]) => ({
@@ -460,8 +452,16 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
 
   const handleDelete = useCallback(async (id: string) => {
     if (confirm('¿Eliminar este gasto?')) {
-      await supabase.from('expenses').delete().eq('id', id);
-      loadDashboard();
+      // Optimistic update — remove instantly, no round-trip wait
+      setExpenses(prev => prev.filter(e => e.id !== id));
+      const { error } = await supabase.from('expenses').delete().eq('id', id);
+      if (error) {
+        // Rollback on failure
+        loadDashboard();
+      } else {
+        // Refresh to update chart totals (totals depend on the deleted row)
+        loadDashboard();
+      }
     }
   }, [loadDashboard]);
 
@@ -472,6 +472,14 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     }
     return String(selectedPeriod.year);
   }, [viewMode, selectedPeriod]);
+
+  // Pre-compute search result count so we don't reduce twice in JSX
+  const searchResultCount = useMemo(() => {
+    if (!searchQuery) return 0;
+    let n = 0;
+    for (const g of groupedByDay) n += g.expenses.length;
+    return n;
+  }, [groupedByDay, searchQuery]);
 
   if (loading) {
     return (
@@ -575,7 +583,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       {searchQuery && (
         <div className="px-3 py-1">
           <p className="text-[11px] text-dark-400">
-            {groupedByDay.reduce((s, g) => s + g.expenses.length, 0)} resultado{groupedByDay.reduce((s, g) => s + g.expenses.length, 0) !== 1 && 's'} para &quot;{searchQuery}&quot;
+            {searchResultCount} resultado{searchResultCount !== 1 && 's'} para &quot;{searchQuery}&quot;
           </p>
         </div>
       )}
