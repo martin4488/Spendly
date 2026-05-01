@@ -80,6 +80,12 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
   const [periods, setPeriods] = useState<BudgetPeriod[]>([]);
   const [currentPeriodIndex, setCurrentPeriodIndex] = useState(0);
   const [allCats, setAllCats] = useState<Category[]>([]);
+  // O(1) lookup map derived from allCats — replaces allCats.find() in render hot path
+  const catsById = useMemo(() => {
+    const m = new Map<string, Category>();
+    for (const c of allCats) m.set(c.id, c);
+    return m;
+  }, [allCats]);
   // All bcp rows for this budget — loaded once, used to derive per-period cat ids
   const [bcpRows, setBcpRows] = useState<BcPeriodRow[]>([]);
 
@@ -619,7 +625,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
                     <Amount value={group.total} sign="-" size="sm" weight="semibold" color="text-dark-500" className="text-[10px]" decimals={false} />
                   </div>
                   {group.expenses.map(exp => {
-                    const cat = allCats.find(c => c.id === exp.category_id);
+                    const cat = exp.category_id ? catsById.get(exp.category_id) : undefined;
                     return (
                       <div key={exp.id} onClick={() => openExpenseEdit(exp)} className="flex items-center gap-2.5 px-4 py-2.5 border-b border-dark-800/40 active:bg-dark-700/40 cursor-pointer transition-colors">
                         <CategoryIcon icon={cat?.icon || 'hand-coins'} color={cat?.color || '#475569'} size={32} rounded="xl" />
