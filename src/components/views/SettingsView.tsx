@@ -9,6 +9,8 @@ import {
   LogOut, Download, Upload, Mail, DollarSign, Tag, ChevronRight,
   CheckCircle, AlertCircle, X, Check,
 } from 'lucide-react';
+import { clearDashboardCache } from '@/lib/dashboardCache';
+import { invalidateCategories } from '@/lib/categoryCache';
 
 interface Props {
   user: User;
@@ -195,8 +197,15 @@ export default function SettingsView({ user, defaultCurrency, onCurrencyChange, 
         .eq('user_id', user.id);
 
       const allCats = categories || [];
-      const catMap = new Map<string, typeof allCats[0]>();
-      allCats.forEach(c => catMap.set(c.name.toLowerCase().trim(), c));
+      // Exact-match map (lowercased name → cat)
+      const exactMap = new Map<string, typeof allCats[0]>();
+      // Pre-built array for substring fallback — built once, reused per row
+      const fallbackList: { lower: string; cat: typeof allCats[0] }[] = [];
+      for (const c of allCats) {
+        const lower = c.name.toLowerCase().trim();
+        exactMap.set(lower, c);
+        fallbackList.push({ lower, cat: c });
+      }
 
       const importedSubCache = new Map<string, string>();
 
@@ -241,20 +250,20 @@ export default function SettingsView({ user, defaultCurrency, onCurrencyChange, 
         }
 
         const catNameLower = row.category.toLowerCase().trim();
-        let matchedCat = catMap.get(catNameLower) || null;
+        let matchedCat = exactMap.get(catNameLower) || null;
 
+        // Substring fallback — fallbackList iteration is now over a flat pre-built array,
+        // not Array.from(catMap.entries()) which used to be re-built every iteration.
         if (!matchedCat && catNameLower) {
-          const entries = Array.from(catMap.entries());
-          for (const [name, cat] of entries) {
-            if (name.includes(catNameLower) || catNameLower.includes(name)) {
-              matchedCat = cat;
+          for (const entry of fallbackList) {
+            if (entry.lower.includes(catNameLower) || catNameLower.includes(entry.lower)) {
+              matchedCat = entry.cat;
               break;
             }
           }
         }
 
         let categoryId: string | null = null;
-
         if (matchedCat) {
           const isParent = !matchedCat.parent_id;
           if (isParent) {
@@ -303,6 +312,9 @@ export default function SettingsView({ user, defaultCurrency, onCurrencyChange, 
 
   async function handleLogout() {
     if (confirm('¿Cerrar sesión?')) {
+      // Wipe local caches before sign-out so the next user can't see any leaked snapshot
+      clearDashboardCache();
+      invalidateCategories();
       await supabase.auth.signOut();
     }
   }
