@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
-import { formatCurrency, getBudgetPeriodRange } from '@/lib/utils';
+import { formatCurrency } from '@/lib/utils';
 import { Budget, Category } from '@/types';
 import { Plus, X, ChevronRight, Delete, ArrowLeft, Search, Check } from 'lucide-react';
 import CategoryIcon from '@/components/ui/CategoryIcon';
@@ -11,7 +11,7 @@ import { getIconEmoji } from '@/lib/iconMap';
 import Amount from '@/components/ui/Amount';
 import {
   format, addMonths, addYears, startOfMonth, endOfMonth,
-  startOfYear, endOfYear, parseISO, isBefore, isAfter
+  startOfYear, endOfYear, parseISO,
 } from 'date-fns';
 import { es } from 'date-fns/locale';
 
@@ -29,7 +29,7 @@ export interface BudgetPeriod {
   amount?: number;
 }
 
-import { CatNode, FlatEntry, buildTree, flattenTree, allDescendantIds } from '@/lib/categoryTree';
+import { CatNode, buildTree, flattenTree, allDescendantIds } from '@/lib/categoryTree';
 import { getCategories } from '@/lib/categoryCache';
 
 // ── Period generation ─────────────────────────────────────────────────────────
@@ -37,7 +37,6 @@ function getPeriodBounds(startDate: string, recurrence: 'monthly' | 'yearly', of
   const base = parseISO(startDate);
   let periodStart: Date;
   let periodEnd: Date;
-
   if (recurrence === 'monthly') {
     periodStart = startOfMonth(addMonths(base, offset));
     periodEnd = endOfMonth(addMonths(base, offset));
@@ -45,7 +44,6 @@ function getPeriodBounds(startDate: string, recurrence: 'monthly' | 'yearly', of
     periodStart = startOfYear(addYears(base, offset));
     periodEnd = endOfYear(addYears(base, offset));
   }
-
   return {
     start: format(periodStart, 'yyyy-MM-dd'),
     end: format(periodEnd, 'yyyy-MM-dd'),
@@ -54,26 +52,23 @@ function getPeriodBounds(startDate: string, recurrence: 'monthly' | 'yearly', of
 
 function generateMissingPeriods(budget: Budget, existingPeriods: BudgetPeriod[]): { start: string; end: string }[] {
   const today = format(new Date(), 'yyyy-MM-dd');
+  // O(1) lookups instead of .some() per iteration
+  const existingStarts = new Set(existingPeriods.filter(p => p.budget_id === budget.id).map(p => p.period_start));
   const missing: { start: string; end: string }[] = [];
   let offset = 0;
-
   while (true) {
     const bounds = getPeriodBounds(budget.start_date, budget.recurrence as 'monthly' | 'yearly', offset);
     if (bounds.start > today) break;
-
-    const exists = existingPeriods.some(p => p.period_start === bounds.start && p.budget_id === budget.id);
-    if (!exists) missing.push(bounds);
-
+    if (!existingStarts.has(bounds.start)) missing.push(bounds);
     offset++;
     if (offset > 120) break;
   }
-
   return missing;
 }
 
 export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: Props) {
   const [budgets, setBudgets] = useState<Budget[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
+  const [categoriesById, setCategoriesById] = useState<Map<string, Category>>(new Map());
   const [roots, setRoots] = useState<CatNode[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -87,12 +82,12 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
   const [budgetInput, setBudgetInput] = useState('');
   const [budgetStartMonth, setBudgetStartMonth] = useState(format(startOfMonth(new Date()), 'yyyy-MM'));
 
-  // Form state
+  // Form state — keep selectedCatIds as Set for O(1) toggle/has
   const [name, setName] = useState('');
   const [amount, setAmount] = useState('');
   const [recurrence, setRecurrence] = useState<'monthly' | 'yearly'>('monthly');
   const [startDate, setStartDate] = useState(format(new Date(), 'yyyy-MM-dd'));
-  const [selectedCatIds, setSelectedCatIds] = useState<string[]>([]);
+  const [selectedCatIds, setSelectedCatIds] = useState<Set<string>>(new Set());
   const [showCatPicker, setShowCatPicker] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [saving, setSaving] = useState(false);
@@ -129,78 +124,89 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
       const allBudgets = budgetsData || [];
       const allCats = Array.from(catsMap.values());
       const allPeriods = periodsData || [];
-      setCategories(allCats);
+      setCategoriesById(catsMap);
       const tree = buildTree(allCats);
       setRoots(tree);
 
-      const bcByBudget: Record<string, string[]> = {};
-      (bcData || []).forEach((bc: any) => {
-        if (!bcByBudget[bc.budget_id]) bcByBudget[bc.budget_id] = [];
-        bcByBudget[bc.budget_id].push(bc.category_id);
-      });
-      const periodsByBudget: Record<string, BudgetPeriod[]> = {};
-      allPeriods.forEach((p: BudgetPeriod) => {
-        if (!periodsByBudget[p.budget_id]) periodsByBudget[p.budget_id] = [];
-        periodsByBudget[p.budget_id].push(p);
-      });
+      // Group budget→categories and budget→periods in single passes
+      const bcByBudget = new Map<string, string[]>();
+      for (const bc of (bcData || []) as any[]) {
+        let arr = bcByBudget.get(bc.budget_id);
+        if (!arr) { arr = []; bcByBudget.set(bc.budget_id, arr); }
+        arr.push(bc.category_id);
+      }
+      const periodsByBudget = new Map<string, BudgetPeriod[]>();
+      for (const p of allPeriods as BudgetPeriod[]) {
+        let arr = periodsByBudget.get(p.budget_id);
+        if (!arr) { arr = []; periodsByBudget.set(p.budget_id, arr); }
+        arr.push(p);
+      }
 
+      // Build missing-period inserts (auto-generate up to today)
       const missingInserts: { budget_id: string; period_start: string; period_end: string; amount?: number }[] = [];
       for (const b of allBudgets) {
-        const existing = (periodsByBudget[b.id] || []).sort((a: BudgetPeriod, b: BudgetPeriod) => b.period_start.localeCompare(a.period_start));
-        const lastAmount = existing.find((p: BudgetPeriod) => p.amount != null)?.amount ?? null;
-        generateMissingPeriods(b as Budget, periodsByBudget[b.id] || []).forEach(m => {
-          const insert: { budget_id: string; period_start: string; period_end: string; amount?: number } = { budget_id: b.id, period_start: m.start, period_end: m.end };
+        const existing = (periodsByBudget.get(b.id) || []).slice().sort((a, b2) => b2.period_start.localeCompare(a.period_start));
+        const lastAmount = existing.find(p => p.amount != null)?.amount ?? null;
+        for (const m of generateMissingPeriods(b as Budget, periodsByBudget.get(b.id) || [])) {
+          const insert: { budget_id: string; period_start: string; period_end: string; amount?: number } = {
+            budget_id: b.id, period_start: m.start, period_end: m.end,
+          };
           if (lastAmount != null) insert.amount = lastAmount;
           missingInserts.push(insert);
-        });
+        }
       }
       if (missingInserts.length > 0) {
         const { data: newPeriods } = await supabase.from('budget_periods').insert(missingInserts).select();
-        if (newPeriods) newPeriods.forEach((p: BudgetPeriod) => {
-          if (!periodsByBudget[p.budget_id]) periodsByBudget[p.budget_id] = [];
-          periodsByBudget[p.budget_id].push(p);
-          allPeriods.push(p);
-        });
+        if (newPeriods) {
+          for (const p of newPeriods as BudgetPeriod[]) {
+            let arr = periodsByBudget.get(p.budget_id);
+            if (!arr) { arr = []; periodsByBudget.set(p.budget_id, arr); }
+            arr.push(p);
+            allPeriods.push(p);
+          }
+        }
       }
 
       const curPeriods: Record<string, BudgetPeriod> = {};
       for (const b of allBudgets) {
-        const cur = (periodsByBudget[b.id] || []).find(
-          (p: BudgetPeriod) => p.period_start <= today && p.period_end >= today
+        const cur = (periodsByBudget.get(b.id) || []).find(
+          p => p.period_start <= today && p.period_end >= today
         );
         if (cur) curPeriods[b.id] = cur;
       }
       setCurrentPeriods(curPeriods);
 
-      const budgetCatSetMap: Record<string, Set<string>> = {};
-      const budgetCatMap: Record<string, string[]> = {};
+      // Pre-build expanded-cat sets for each budget — single tree walk per budget
+      const budgetCatSetMap = new Map<string, Set<string>>();
       for (const b of allBudgets) {
-        const catIds = bcByBudget[b.id] || [];
-        const expandedSet = new Set<string>(catIds);
-        const addDesc = (nodes: CatNode[]) => {
-          nodes.forEach(n => {
-            if (expandedSet.has(n.id)) allDescendantIds(n).forEach(id => expandedSet.add(id));
-            addDesc(n.children);
-          });
-        };
+        const seedIds = bcByBudget.get(b.id) || [];
+        const expandedSet = new Set<string>(seedIds);
+        function addDesc(nodes: CatNode[]) {
+          for (const n of nodes) {
+            if (expandedSet.has(n.id)) {
+              for (const id of allDescendantIds(n)) expandedSet.add(id);
+            }
+            if (n.children.length) addDesc(n.children);
+          }
+        }
         addDesc(tree);
-        budgetCatSetMap[b.id] = expandedSet;
-        budgetCatMap[b.id] = Array.from(expandedSet);
+        budgetCatSetMap.set(b.id, expandedSet);
       }
 
-      // Show budgets immediately with spent=0
+      // Show budgets immediately with spent=0 — UI is responsive while we fetch expenses
       const enrichedPartial: Budget[] = allBudgets.map(b => {
-        const catIds = bcByBudget[b.id] || [];
-        const bCats = allCats.filter(c => catIds.includes(c.id));
+        const catIds = bcByBudget.get(b.id) || [];
+        // O(n*m) → O(n+m): take ids, look up each in O(1)
+        const bCats = catIds.map(id => catsMap.get(id)).filter((c): c is Category => !!c);
         return { ...b, category_ids: catIds, categories: bCats, spent: 0, prevAccumulated: null } as any;
       });
-      const sortedPartial = [...enrichedPartial].sort((a, b) =>
+      const sortedPartial = enrichedPartial.slice().sort((a, b) =>
         a.recurrence !== b.recurrence ? (a.recurrence === 'monthly' ? -1 : 1) : 0
       );
       setBudgets(sortedPartial);
       setLoading(false);
 
-      // Load global month stats + accumulated (fire-and-forget, non-blocking)
+      // ── Background work: global stats + accumulated ──
       const now2 = new Date();
       const curMonth2 = format(now2, 'yyyy-MM');
       const yearStart = `${now2.getFullYear()}-01-01`;
@@ -212,86 +218,101 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
         supabase.from('global_budget_periods').select('month, amount').eq('user_id', user.id),
       ]).then(([{ data: expRows }, { data: periods }]) => {
         const rows = expRows || [];
-        const curSpent = rows.filter(e => e.date >= curMonthStart && e.date <= curMonthEnd).reduce((s, e) => s + Number(e.amount), 0);
+        // Single pass over rows for current month total
+        let curSpent = 0;
+        for (const e of rows) {
+          if (e.date >= curMonthStart && e.date <= curMonthEnd) curSpent += Number(e.amount);
+        }
         setGlobalStats({ spent: curSpent, prevSpent: 0 });
 
         if (periods && periods.length > 0) {
-          const sorted = [...(periods as any[])].sort((a: any, b: any) => b.month.localeCompare(a.month));
-          const curPeriod = sorted.find((p: any) => p.month === curMonth2);
-          const effectivePeriod = curPeriod || sorted[0];
+          const sortedDesc = (periods as any[]).slice().sort((a, b) => b.month.localeCompare(a.month));
+          const curPeriod = sortedDesc.find(p => p.month === curMonth2);
+          const effectivePeriod = curPeriod || sortedDesc[0];
           if (effectivePeriod) setMonthlyBudget(Number(effectivePeriod.amount));
 
           const closedMonths = (periods as any[]).filter(p => p.month < curMonth2 && p.month >= `${now2.getFullYear()}-01`);
           if (closedMonths.length > 0) {
+            // Group expense totals per month in one pass
+            const spentByMonth = new Map<string, number>();
+            for (const e of rows) {
+              const mo = e.date.slice(0, 7);
+              spentByMonth.set(mo, (spentByMonth.get(mo) || 0) + Number(e.amount));
+            }
             let acc = 0;
-            closedMonths.forEach(p => {
-              const mStart = `${p.month}-01`;
-              const mEnd = format(endOfMonth(new Date(`${p.month}-01`)), 'yyyy-MM-dd');
-              const mSpent = rows.filter(e => e.date >= mStart && e.date <= mEnd).reduce((s, e) => s + Number(e.amount), 0);
-              acc += Number(p.amount) - mSpent;
-            });
+            for (const p of closedMonths) acc += Number(p.amount) - (spentByMonth.get(p.month) || 0);
             setGlobalAccumulated(acc);
-            const sortedClosed = [...closedMonths].sort((a, b) => a.month.localeCompare(b.month));
+            const sortedAsc = closedMonths.slice().sort((a, b) => a.month.localeCompare(b.month));
             const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-            const first = cap(format(new Date(`${sortedClosed[0].month}-01`), 'MMM', { locale: es }));
-            const last = cap(format(new Date(`${sortedClosed[sortedClosed.length - 1].month}-01`), 'MMM', { locale: es }));
+            const first = cap(format(new Date(`${sortedAsc[0].month}-01`), 'MMM', { locale: es }));
+            const last = cap(format(new Date(`${sortedAsc[sortedAsc.length - 1].month}-01`), 'MMM', { locale: es }));
             setGlobalAccumMonths(first === last ? first : `${first} - ${last}`);
           }
         }
       }).catch(err => console.error('Global stats error:', err));
 
-      // Roundtrip 2: expenses for individual budgets (background)
-      const allExpandedCatIds = Array.from(new Set(Object.values(budgetCatMap).flat()));
+      // ── Roundtrip 2: budget expenses ──
+      const allExpandedCatIds = new Set<string>();
+      for (const set of budgetCatSetMap.values()) {
+        for (const id of set) allExpandedCatIds.add(id);
+      }
       const globalMinDate = allBudgets.reduce((min, b) => b.start_date < min ? b.start_date : min, today);
-      const expByCat: Record<string, { amount: number; date: string }[]> = {};
-      if (allExpandedCatIds.length > 0) {
+
+      // Group by date ranges via a per-cat list of {amount, date}
+      const expByCat = new Map<string, { amount: number; date: string }[]>();
+      if (allExpandedCatIds.size > 0) {
         const { data: expData } = await supabase
           .from('expenses')
           .select('category_id, amount, date')
           .eq('user_id', user.id)
-          .in('category_id', allExpandedCatIds)
+          .in('category_id', Array.from(allExpandedCatIds))
           .gte('date', globalMinDate)
           .lte('date', today);
-        (expData || []).forEach((e: any) => {
-          if (!expByCat[e.category_id]) expByCat[e.category_id] = [];
-          expByCat[e.category_id].push({ amount: Number(e.amount), date: e.date });
-        });
+        for (const e of (expData || []) as any[]) {
+          let arr = expByCat.get(e.category_id);
+          if (!arr) { arr = []; expByCat.set(e.category_id, arr); }
+          arr.push({ amount: Number(e.amount), date: e.date });
+        }
       }
 
       const enriched: Budget[] = allBudgets.map(b => {
-        const catIds = (bcData || []).filter((bc: any) => bc.budget_id === b.id).map((bc: any) => bc.category_id);
-        const bCats = allCats.filter(c => catIds.includes(c.id));
-        const expandedSet = budgetCatSetMap[b.id] || new Set<string>();
+        const catIds = bcByBudget.get(b.id) || [];
+        const bCats = catIds.map(id => catsMap.get(id)).filter((c): c is Category => !!c);
+        const expandedSet = budgetCatSetMap.get(b.id) || new Set<string>();
         const curPeriod = curPeriods[b.id];
         let spent = 0;
         if (curPeriod && expandedSet.size > 0) {
-          expandedSet.forEach(catId => {
-            (expByCat[catId] || []).forEach(e => {
+          for (const catId of expandedSet) {
+            const list = expByCat.get(catId);
+            if (!list) continue;
+            for (const e of list) {
               if (e.date >= curPeriod.period_start && e.date <= curPeriod.period_end) spent += e.amount;
-            });
-          });
+            }
+          }
         }
         let prevAccumulated: number | null = null;
         let prevAccumMonths = '';
         if (b.recurrence === 'monthly' && curPeriod) {
           const curYear = new Date().getFullYear();
-          const bPeriods = allPeriods.filter((p: BudgetPeriod) =>
+          const bPeriods = allPeriods.filter(p =>
             p.budget_id === b.id &&
             p.period_end < curPeriod.period_start &&
             p.period_start >= `${curYear}-01-01`
           );
           if (bPeriods.length > 0 && expandedSet.size > 0) {
-            prevAccumulated = bPeriods.reduce((acc, p: BudgetPeriod) => {
+            prevAccumulated = bPeriods.reduce((acc, p) => {
               const pAmt = (p as any).amount ?? b.amount;
               let pSpent = 0;
-              expandedSet.forEach(catId => {
-                (expByCat[catId] || []).forEach(e => {
+              for (const catId of expandedSet) {
+                const list = expByCat.get(catId);
+                if (!list) continue;
+                for (const e of list) {
                   if (e.date >= p.period_start && e.date <= p.period_end) pSpent += e.amount;
-                });
-              });
+                }
+              }
               return acc + (pAmt - pSpent);
             }, 0);
-            const sorted = [...bPeriods].sort((a, b) => a.period_start.localeCompare(b.period_start));
+            const sorted = bPeriods.slice().sort((a, b2) => a.period_start.localeCompare(b2.period_start));
             const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
             const fmt = (d: string) => cap(format(parseISO(d), 'MMM', { locale: es }));
             const first = fmt(sorted[0].period_start);
@@ -301,7 +322,7 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
         }
         return { ...b, category_ids: catIds, categories: bCats, spent, prevAccumulated, prevAccumMonths } as any;
       });
-      const sorted = [...enriched].sort((a, b) => {
+      const sorted = enriched.slice().sort((a, b) => {
         if (a.recurrence !== b.recurrence)
           return a.recurrence === 'monthly' ? -1 : 1;
         const pctA = a.amount > 0 ? (a.spent || 0) / a.amount : 0;
@@ -316,12 +337,12 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
     if (budget) {
       setEditingBudget(budget); setName(budget.name); setAmount(String(budget.amount));
       setRecurrence(budget.recurrence as 'monthly' | 'yearly'); setStartDate(budget.start_date);
-      setSelectedCatIds(budget.category_ids || []);
+      setSelectedCatIds(new Set(budget.category_ids || []));
     } else {
       setEditingBudget(null); setName(''); setAmount('');
       setRecurrence('monthly');
       setStartDate(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
-      setSelectedCatIds([]);
+      setSelectedCatIds(new Set());
     }
     setShowForm(true);
   }
@@ -337,8 +358,6 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
       if (editingBudget) {
         await supabase.from('budgets').update(budgetData).eq('id', editingBudget.id);
         budgetId = editingBudget.id;
-        // Note: editing from BudgetsView only changes name/amount/recurrence.
-        // Category edits from BudgetDetailView use budget_category_periods with valid_from.
         const { data: futurePeriods } = await supabase
           .from('budget_periods').select('id, amount').eq('budget_id', budgetId).gte('period_start', today);
         if (futurePeriods && futurePeriods.length > 0) {
@@ -351,10 +370,9 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
       } else {
         const { data } = await supabase.from('budgets').insert(budgetData).select().single();
         budgetId = data.id;
-        // On create: insert into budget_category_periods with valid_from = startDate
-        if (selectedCatIds.length > 0) {
+        if (selectedCatIds.size > 0) {
           await supabase.from('budget_category_periods').insert(
-            selectedCatIds.map(cid => ({ budget_id: budgetId, category_id: cid, valid_from: startDate, valid_to: null }))
+            Array.from(selectedCatIds).map(cid => ({ budget_id: budgetId, category_id: cid, valid_from: startDate, valid_to: null }))
           );
         }
       }
@@ -371,26 +389,39 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
     }
   }
 
-  function toggleLeaf(catId: string) {
-    setSelectedCatIds(prev => prev.includes(catId) ? prev.filter(id => id !== catId) : [...prev, catId]);
-  }
+  // O(1) per toggle now that selectedCatIds is a Set
+  const toggleLeaf = useCallback((catId: string) => {
+    setSelectedCatIds(prev => {
+      const next = new Set(prev);
+      if (next.has(catId)) next.delete(catId);
+      else next.add(catId);
+      return next;
+    });
+  }, []);
 
-  function toggleRoot(root: CatNode) {
+  const toggleRoot = useCallback((root: CatNode) => {
     const ids = allDescendantIds(root);
-    const allSelected = ids.every(id => selectedCatIds.includes(id));
-    if (allSelected) {
-      setSelectedCatIds(prev => prev.filter(id => !ids.includes(id)));
-    } else {
-      setSelectedCatIds(prev => Array.from(new Set([...prev, ...ids])));
-    }
-  }
+    setSelectedCatIds(prev => {
+      const next = new Set(prev);
+      const allSel = ids.every(id => next.has(id));
+      if (allSel) for (const id of ids) next.delete(id);
+      else for (const id of ids) next.add(id);
+      return next;
+    });
+  }, []);
 
   function isRootFullySelected(root: CatNode) {
-    return allDescendantIds(root).every(id => selectedCatIds.includes(id));
+    const ids = allDescendantIds(root);
+    for (const id of ids) if (!selectedCatIds.has(id)) return false;
+    return true;
   }
   function isRootPartiallySelected(root: CatNode) {
     const ids = allDescendantIds(root);
-    return ids.some(id => selectedCatIds.includes(id)) && !ids.every(id => selectedCatIds.includes(id));
+    let some = false, all = true;
+    for (const id of ids) {
+      if (selectedCatIds.has(id)) some = true; else all = false;
+    }
+    return some && !all;
   }
 
   async function saveMonthlyBudget() {
@@ -420,21 +451,23 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
   );
 
   const selectedLabel = useMemo(() => {
-    if (selectedCatIds.length === 0) return '';
+    if (selectedCatIds.size === 0) return '';
     const parts: string[] = [];
-    roots.forEach(r => {
+    for (const r of roots) {
       const ids = allDescendantIds(r);
-      if (ids.every(id => selectedCatIds.includes(id))) {
+      const allSel = ids.every(id => selectedCatIds.has(id));
+      if (allSel) {
         parts.push(`${getIconEmoji(r.icon)} ${r.name} (todo)`);
       } else {
-        ids.filter(id => selectedCatIds.includes(id)).forEach(id => {
-          const c = categories.find(c => c.id === id);
+        for (const id of ids) {
+          if (!selectedCatIds.has(id)) continue;
+          const c = categoriesById.get(id);
           if (c) parts.push(`${getIconEmoji(c.icon)} ${c.name}`);
-        });
+        }
       }
-    });
+    }
     return parts.join(', ');
-  }, [selectedCatIds, roots, categories]);
+  }, [selectedCatIds, roots, categoriesById]);
 
   const recurrenceLabels: Record<string, string> = { monthly: 'Mensual', yearly: 'Anual' };
 
@@ -458,8 +491,6 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
         const color = isOver ? '#ef4444' : pct >= 80 ? '#f59e0b' : '#22c55e';
         const textColor = isOver ? 'text-red-400' : pct >= 80 ? 'text-amber-400' : 'text-brand-400';
         const monthLabel = format(now, 'MMMM', { locale: es });
-        const daysInMonth = endOfMonth(now).getDate();
-
         const availablePct = Math.max(100 - pct, 0);
         const overAmount = isOver ? spent - (monthlyBudget || 0) : 0;
 
@@ -542,7 +573,6 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
             const isOver = spent > budgetAmount;
             const left = isOver ? spent - budgetAmount : budgetAmount - spent;
             const pct = budgetAmount > 0 ? (spent / budgetAmount) * 100 : 0;
-            // Bar fills from right = available portion
             const availablePct = Math.max(100 - pct, 0);
             const barColor = isOver ? null : pct >= 80 ? '#f59e0b' : '#22c55e';
             const valueColor = isOver ? 'text-red-400' : pct >= 80 ? 'text-amber-400' : 'text-brand-400';
@@ -553,7 +583,6 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
                 onClick={() => curPeriod && onOpenBudget(budget, curPeriod.id)}
                 className="w-full bg-dark-800 rounded-2xl p-4 text-left transition-colors">
 
-                {/* Header: name + recurrence */}
                 <div className="flex items-center justify-between mb-2">
                   <h3 className="text-sm font-bold">{budget.name}</h3>
                   <div className="flex items-center gap-1">
@@ -564,7 +593,6 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
                   </div>
                 </div>
 
-                {/* Spent info + available/exceeded */}
                 <div className="flex items-baseline justify-between mb-2.5">
                   <span className="text-xs text-dark-500">
                     <Amount value={spent} size="sm" color="text-dark-500" weight="medium" decimals={false} />
@@ -581,7 +609,6 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
                   </div>
                 </div>
 
-                {/* Progress bar: fills from right = available */}
                 <div className="w-full bg-dark-700 rounded-full h-1.5 overflow-hidden relative">
                   {!isOver && barColor && (
                     <div
@@ -591,7 +618,6 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
                   )}
                 </div>
 
-                {/* Accumulated warning */}
                 {(budget as any).prevAccumulated !== null && (budget as any).prevAccumulated < 0 && (
                   <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-red-500/10">
                     <div className="w-1.5 h-1.5 rounded-full bg-red-400 flex-shrink-0" />
@@ -653,12 +679,12 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
 
             <div>
               <label className="text-xs text-dark-400 font-medium mb-1.5 block uppercase tracking-wider">
-                Categorías {selectedCatIds.length > 0 && `(${selectedCatIds.length})`}
+                Categorías {selectedCatIds.size > 0 && `(${selectedCatIds.size})`}
               </label>
               <button onClick={() => setShowCatPicker(true)}
                 className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3.5 px-4 text-sm text-left flex items-center justify-between">
-                <span className={`flex-1 min-w-0 truncate ${selectedCatIds.length > 0 ? 'text-white' : 'text-dark-500'}`}>
-                  {selectedCatIds.length > 0 ? selectedLabel : 'Seleccionar categorías...'}
+                <span className={`flex-1 min-w-0 truncate ${selectedCatIds.size > 0 ? 'text-white' : 'text-dark-500'}`}>
+                  {selectedCatIds.size > 0 ? selectedLabel : 'Seleccionar categorías...'}
                 </span>
                 <ChevronRight size={16} className="text-dark-500 flex-shrink-0 ml-2" />
               </button>
@@ -720,7 +746,7 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
               ) : (
                 <div>
                   {searchResults.map(({ cat, ancestors }) => {
-                    const isSelected = selectedCatIds.includes(cat.id);
+                    const isSelected = selectedCatIds.has(cat.id);
                     return (
                       <button key={cat.id} onClick={() => toggleLeaf(cat.id)}
                         className={`w-full flex items-center gap-3 px-5 py-3.5 border-b border-dark-800/60 transition-colors ${isSelected ? 'bg-dark-800' : 'active:bg-dark-800/60'}`}>
@@ -756,7 +782,7 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
                     {childEntries.length > 0 && (
                       <div className="grid grid-cols-4 gap-x-2 gap-y-4 px-4">
                         {childEntries.map(({ cat, ancestors }) => {
-                          const isSelected = selectedCatIds.includes(cat.id);
+                          const isSelected = selectedCatIds.has(cat.id);
                           const depth = ancestors.length - 1;
                           const iconSize = depth === 0 ? 52 : depth === 1 ? 46 : 40;
                           return (
