@@ -5,16 +5,15 @@ import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { getMonthRange, CATEGORY_ICONS, CATEGORY_COLORS } from '@/lib/utils';
 import { Category } from '@/types';
-import { Plus, Trash2, X, FolderPlus, GripVertical, ArrowLeft } from 'lucide-react';
+import { Plus, X, FolderPlus, GripVertical, ArrowLeft } from 'lucide-react';
 import SwipeableRow from '@/components/SwipeableRow';
 import CategoryIcon from '@/components/ui/CategoryIcon';
 import { getIconComponent } from '@/lib/iconMap';
 
-// ── Tree node (up to 3 levels) ────────────────────────────────────────────────
 import { CatNode, buildTree } from '@/lib/categoryTree';
 import { invalidateCategories } from '@/lib/categoryCache';
+import { deriveChildColor } from '@/lib/colorUtils';
 
-// ── Drag state ────────────────────────────────────────────────────────────────
 interface DragState {
   type: 'root';
   index: number;
@@ -23,56 +22,6 @@ interface DragState {
   itemHeight: number;
 }
 
-// ── Derive child color: same hue, higher lightness, slightly lower saturation ─
-function hexToHsl(hex: string): [number, number, number] {
-  const r = parseInt(hex.slice(1, 3), 16) / 255;
-  const g = parseInt(hex.slice(3, 5), 16) / 255;
-  const b = parseInt(hex.slice(5, 7), 16) / 255;
-  const max = Math.max(r, g, b), min = Math.min(r, g, b);
-  let h = 0, s = 0;
-  const l = (max + min) / 2;
-  if (max !== min) {
-    const d = max - min;
-    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-    switch (max) {
-      case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break;
-      case g: h = ((b - r) / d + 2) / 6; break;
-      case b: h = ((r - g) / d + 4) / 6; break;
-    }
-  }
-  return [Math.round(h * 360), Math.round(s * 100), Math.round(l * 100)];
-}
-
-function hslToHex(h: number, s: number, l: number): string {
-  const hNorm = h / 360, sNorm = s / 100, lNorm = l / 100;
-  const hue2rgb = (p: number, q: number, t: number) => {
-    if (t < 0) t += 1; if (t > 1) t -= 1;
-    if (t < 1/6) return p + (q - p) * 6 * t;
-    if (t < 1/2) return q;
-    if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
-    return p;
-  };
-  let r, g, b;
-  if (sNorm === 0) { r = g = b = lNorm; }
-  else {
-    const q = lNorm < 0.5 ? lNorm * (1 + sNorm) : lNorm + sNorm - lNorm * sNorm;
-    const p = 2 * lNorm - q;
-    r = hue2rgb(p, q, hNorm + 1/3);
-    g = hue2rgb(p, q, hNorm);
-    b = hue2rgb(p, q, hNorm - 1/3);
-  }
-  const toHex = (x: number) => Math.round(x * 255).toString(16).padStart(2, '0');
-  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
-}
-
-function deriveChildColor(parentHex: string, siblingCount: number): string {
-  const [h, s, l] = hexToHsl(parentHex);
-  const newL = Math.min(88, l + 4 + siblingCount * 7);
-  const newS = Math.max(15, s - 4 - siblingCount * 7);
-  return hslToHex(h, newS, newL);
-}
-
-// ── Main component ────────────────────────────────────────────────────────────
 export default function CategoriesView({ user, onBack }: { user: User; onBack?: () => void }) {
   const [flatCats, setFlatCats] = useState<Category[]>([]);
   const [roots, setRoots] = useState<CatNode[]>([]);
@@ -154,9 +103,15 @@ export default function CategoriesView({ user, onBack }: { user: User; onBack?: 
   useEffect(() => {
     function onMove(e: TouchEvent) { if (!dragRef.current) return; e.preventDefault(); onRootDragMove(e); }
     function onEnd() { if (!dragRef.current) return; onRootDragEnd(); }
+    // touchmove must be non-passive because we call preventDefault to suppress page scroll while dragging
     window.addEventListener('touchmove', onMove, { passive: false });
     window.addEventListener('touchend', onEnd);
-    return () => { window.removeEventListener('touchmove', onMove); window.removeEventListener('touchend', onEnd); };
+    window.addEventListener('touchcancel', onEnd);
+    return () => {
+      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchend', onEnd);
+      window.removeEventListener('touchcancel', onEnd);
+    };
   }, [roots]);
 
   // ── Form ──────────────────────────────────────────────────────────────────
@@ -202,25 +157,47 @@ export default function CategoriesView({ user, onBack }: { user: User; onBack?: 
     finally { setSaving(false); }
   }
 
-  async function cascadeColors(parentId: string, parentColor: string, allCats: Category[]) {
-    const children = allCats.filter(c => c.parent_id === parentId);
+  // ── Cascade with batched updates ──
+  // Old version did a network call PER descendant; this batches per-color into a single UPDATE.
+  async function cascadeColors(parentIdLocal: string, parentColor: string, allCats: Category[]) {
+    // Group descendants by the new color they should receive
+    const updates: { id: string; color: string }[] = [];
+    function walk(pid: string, color: string) {
+      const children = allCats.filter(c => c.parent_id === pid);
+      children.forEach((child, idx) => {
+        const newColor = deriveChildColor(color, idx);
+        updates.push({ id: child.id, color: newColor });
+        walk(child.id, newColor);
+      });
+    }
+    walk(parentIdLocal, parentColor);
+    if (updates.length === 0) return;
+
+    // Group by color so we can send one UPDATE per distinct color (typically 1–3 round trips total
+    // instead of one per descendant)
+    const byColor = new Map<string, string[]>();
+    for (const u of updates) {
+      let arr = byColor.get(u.color);
+      if (!arr) { arr = []; byColor.set(u.color, arr); }
+      arr.push(u.id);
+    }
     await Promise.all(
-      children.map(async (child, idx) => {
-        const newColor = deriveChildColor(parentColor, idx);
-        await supabase.from('categories').update({ color: newColor }).eq('id', child.id);
-        await cascadeColors(child.id, newColor, allCats);
-      })
+      Array.from(byColor.entries()).map(([col, ids]) =>
+        supabase.from('categories').update({ color: col }).in('id', ids)
+      )
     );
   }
 
-  async function cascadeIcons(parentId: string, icon: string, allCats: Category[]) {
-    const children = allCats.filter(c => c.parent_id === parentId);
-    await Promise.all(
-      children.map(async (child) => {
-        await supabase.from('categories').update({ icon }).eq('id', child.id);
-        await cascadeIcons(child.id, icon, allCats);
-      })
-    );
+  async function cascadeIcons(parentIdLocal: string, icon: string, allCats: Category[]) {
+    const ids: string[] = [];
+    function walk(pid: string) {
+      const children = allCats.filter(c => c.parent_id === pid);
+      for (const c of children) { ids.push(c.id); walk(c.id); }
+    }
+    walk(parentIdLocal);
+    if (ids.length === 0) return;
+    // Single UPDATE for all descendants → 1 round trip instead of N
+    await supabase.from('categories').update({ icon }).in('id', ids);
   }
 
   async function handleDelete(id: string) {
@@ -231,18 +208,15 @@ export default function CategoriesView({ user, onBack }: { user: User; onBack?: 
     }
   }
 
-  // ── Recursive spending sum ────────────────────────────────────────────────
   function totalSpend(node: CatNode): number {
     return (spending[node.id] || 0) + node.children.reduce((s, c) => s + totalSpend(c), 0);
   }
 
-  // ── Recursive render of children (level 1+ = indented) ───────────────────
   function renderChildren(nodes: CatNode[], depth: number) {
     if (nodes.length === 0) return null;
     return (
       <div className="bg-dark-800">
         {nodes.map((node, idx) => {
-          const spent = totalSpend(node);
           const isLast = idx === nodes.length - 1;
           const indent = depth * 14 + 20;
           return (
@@ -312,7 +286,6 @@ export default function CategoriesView({ user, onBack }: { user: User; onBack?: 
       ) : (
         <div className="space-y-3">
           {roots.map((cat, gi) => {
-            const spent = totalSpend(cat);
             const isBeingDragged = dragActive?.index === gi;
             return (
               <div key={cat.id} data-root={gi}
