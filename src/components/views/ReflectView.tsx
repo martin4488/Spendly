@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/utils';
@@ -464,6 +464,9 @@ export default function ReflectView({ user }: Props) {
   const first = d?.months[0]?.label;
   const last = d?.months[d.months.length - 1]?.label;
 
+  // Memoize: previously called twice per render (length check + map)
+  const insights = useMemo(() => (d && year) ? computeInsights(d, year) : [], [d, year]);
+
   return (
     <div className="max-w-lg mx-auto px-3 pt-5 pb-24 page-transition">
 
@@ -591,11 +594,11 @@ export default function ReflectView({ user }: Props) {
           })()}
 
           {/* Insights */}
-          {year && computeInsights(d, year).length > 0 && (
+          {insights.length > 0 && (
             <div className="bg-dark-800 rounded-2xl p-4">
               <p className="text-[10px] text-dark-500 uppercase tracking-wider mb-3">Insights</p>
               <div className="flex flex-col gap-3">
-                {computeInsights(d, year).map((ins, i) => (
+                {insights.map((ins, i) => (
                   ins.isHeader ? (
                     <p key={i} className="text-[11px] text-dark-500 mt-1" dangerouslySetInnerHTML={{ __html: ins.text }} />
                   ) : (
