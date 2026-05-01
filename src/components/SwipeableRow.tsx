@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, memo } from 'react';
+import { useState, useRef, memo, useEffect } from 'react';
 import { Trash2 } from 'lucide-react';
 
 const DELETE_THRESHOLD = 72;
@@ -12,15 +12,12 @@ interface SwipeableRowProps {
   onDelete: () => void;
   /** Extra classes on the outer wrapper (e.g. rounded-xl) */
   className?: string;
-  /** Optional drag handle props for reorderable lists (e.g. CategoriesView) */
-  dragHandleProps?: React.HTMLAttributes<HTMLDivElement>;
-  /** Optional wrapper around children — used by CategoriesView to add drag handle layout */
-  renderContent?: (children: React.ReactNode) => React.ReactNode;
 }
 
 /**
  * Generic swipe-to-reveal-delete row.
- * Used in DashboardView, SpendingOverview, RecurringView, CategoriesView, etc.
+ * Touch handlers are attached natively as PASSIVE listeners (default), letting the
+ * browser scroll without waiting for our handlers to run — fewer jank frames.
  */
 const SwipeableRow = memo(function SwipeableRow({
   children,
@@ -30,35 +27,51 @@ const SwipeableRow = memo(function SwipeableRow({
 }: SwipeableRowProps) {
   const [offset, setOffset] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
+  const innerRef = useRef<HTMLDivElement | null>(null);
   const startXRef = useRef<number | null>(null);
   const currentXRef = useRef<number>(0);
+  // Mirror state in refs so passive handlers don't need re-binding on every render
+  const offsetRef = useRef(0);
+  offsetRef.current = offset;
 
-  function onTouchStart(e: React.TouchEvent) {
-    startXRef.current = e.touches[0].clientX;
-    setIsDragging(false);
-  }
+  useEffect(() => {
+    const el = innerRef.current;
+    if (!el) return;
 
-  function onTouchMove(e: React.TouchEvent) {
-    if (startXRef.current === null) return;
-    const dx = startXRef.current - e.touches[0].clientX;
-    if (dx > 5) setIsDragging(true);
-    if (dx > 0) {
-      currentXRef.current = Math.min(dx, DELETE_THRESHOLD);
-      setOffset(currentXRef.current);
-    } else if (dx < 0 && offset > 0) {
-      currentXRef.current = Math.max(0, offset + dx);
-      setOffset(currentXRef.current);
+    function handleStart(e: TouchEvent) {
+      startXRef.current = e.touches[0].clientX;
+      setIsDragging(false);
     }
-  }
-
-  function onTouchEnd() {
-    if (currentXRef.current > SNAP_THRESHOLD) {
-      setOffset(DELETE_THRESHOLD);
-    } else {
-      setOffset(0);
+    function handleMove(e: TouchEvent) {
+      if (startXRef.current === null) return;
+      const dx = startXRef.current - e.touches[0].clientX;
+      if (dx > 5) setIsDragging(true);
+      if (dx > 0) {
+        currentXRef.current = Math.min(dx, DELETE_THRESHOLD);
+        setOffset(currentXRef.current);
+      } else if (dx < 0 && offsetRef.current > 0) {
+        currentXRef.current = Math.max(0, offsetRef.current + dx);
+        setOffset(currentXRef.current);
+      }
     }
-    startXRef.current = null;
-  }
+    function handleEnd() {
+      if (currentXRef.current > SNAP_THRESHOLD) setOffset(DELETE_THRESHOLD);
+      else setOffset(0);
+      startXRef.current = null;
+    }
+
+    // passive: true → does not block scroll → smoother UX
+    el.addEventListener('touchstart', handleStart, { passive: true });
+    el.addEventListener('touchmove', handleMove, { passive: true });
+    el.addEventListener('touchend', handleEnd, { passive: true });
+    el.addEventListener('touchcancel', handleEnd, { passive: true });
+    return () => {
+      el.removeEventListener('touchstart', handleStart);
+      el.removeEventListener('touchmove', handleMove);
+      el.removeEventListener('touchend', handleEnd);
+      el.removeEventListener('touchcancel', handleEnd);
+    };
+  }, []);
 
   function handleClick() {
     if (isDragging) return;
@@ -85,13 +98,13 @@ const SwipeableRow = memo(function SwipeableRow({
 
       {/* Sliding content */}
       <div
+        ref={innerRef}
         style={{
           transform: `translateX(-${offset}px)`,
           transition: isDragging ? 'none' : 'transform 0.2s ease',
+          // Hint compositor — animated transform stays on GPU layer
+          willChange: isDragging ? 'transform' : 'auto',
         }}
-        onTouchStart={onTouchStart}
-        onTouchMove={onTouchMove}
-        onTouchEnd={onTouchEnd}
         onClick={handleClick}
       >
         {children}
