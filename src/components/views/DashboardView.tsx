@@ -10,6 +10,7 @@ import type { CurrencyCode } from '@/lib/currency';
 import { getCategories } from '@/lib/categoryCache';
 import SwipeableRow from '@/components/SwipeableRow';
 import { readDashboardCache, writeDashboardCache, buildCategoriesMapFromCache } from '@/lib/dashboardCache';
+import { useSyncOnForeground } from '@/lib/useSyncOnForeground';
 import Amount from '@/components/ui/Amount';
 
 const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
@@ -367,6 +368,18 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       return { year, month: -1, isCurrentPeriod: selectedBarIndex === 5 };
     }
   }, [selectedBarIndex, viewMode, currentYear, currentMonth]);
+
+  // ── Cross-device sync ────────────────────────────────────────────────────
+  // Refetch when the app returns to the foreground or a realtime change lands.
+  // Only refresh the current period + non-search view so we never clobber a
+  // historical month/year the user is inspecting.
+  const syncNow = useCallback(() => {
+    if (searchQuery || !selectedPeriod.isCurrentPeriod) return;
+    if (viewMode === 'months') loadDashboard();
+    else loadExtended();
+  }, [searchQuery, selectedPeriod.isCurrentPeriod, viewMode, loadDashboard, loadExtended]);
+
+  useSyncOnForeground(user.id, syncNow);
 
   // ── Header total from selected bar ───────────────────────────────────────
   const accumulatedTotal = useMemo(() => {

@@ -179,3 +179,21 @@ begin
   end loop;
 end;
 $$ language plpgsql security definer;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Realtime
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Broadcast row-level changes on `expenses` so other devices/tabs update live
+-- (see src/lib/useSyncOnForeground.ts). RLS still applies: clients only receive
+-- changes to rows they're allowed to read. Idempotent — safe to re-run.
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'expenses'
+  ) then
+    alter publication supabase_realtime add table public.expenses;
+  end if;
+end $$;
