@@ -15,6 +15,7 @@ import { toast } from '@/lib/toast';
 import { confirmDialog } from '@/lib/confirm';
 import { getPendingExpenses, onQueueChange, flushQueue, startAutoFlush, dequeueExpense, type PendingExpense } from '@/lib/offlineQueue';
 import Amount from '@/components/ui/Amount';
+import DashboardSkeleton from '@/components/ui/DashboardSkeleton';
 
 const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
 
@@ -550,11 +551,9 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
   }, [groupedByDay, searchQuery]);
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="w-8 h-8 border-3 border-brand-500/30 border-t-brand-500 rounded-full animate-spin" />
-      </div>
-    );
+    // Show the page skeleton (not a bare spinner) so a cold start with no cache
+    // still reveals the dashboard's structure while data loads.
+    return <DashboardSkeleton />;
   }
 
   return (
