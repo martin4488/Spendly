@@ -31,6 +31,7 @@ export interface BudgetPeriod {
 
 import { CatNode, buildTree, flattenTree, allDescendantIds } from '@/lib/categoryTree';
 import { getCategories } from '@/lib/categoryCache';
+import { useSyncOnForeground } from '@/lib/useSyncOnForeground';
 
 // ── Period generation ─────────────────────────────────────────────────────────
 function getPeriodBounds(startDate: string, recurrence: 'monthly' | 'yearly', offset: number = 0): { start: string; end: string } {
@@ -103,8 +104,12 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
 
   useEffect(() => { loadData(); }, []);
 
-  async function loadData() {
-    setLoading(true);
+  // Refresh budget spend across devices when the app returns to the foreground
+  // or a realtime expense change lands. Silent (no spinner) so the list doesn't flash.
+  useSyncOnForeground(user.id, () => loadData(true));
+
+  async function loadData(silent = false) {
+    if (!silent) setLoading(true);
     try {
       const today = format(new Date(), 'yyyy-MM-dd');
 

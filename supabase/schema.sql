@@ -197,3 +197,13 @@ begin
     alter publication supabase_realtime add table public.expenses;
   end if;
 end $$;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Índices para las tablas de presupuestos
+-- ─────────────────────────────────────────────────────────────────────────────
+-- BudgetsView filtra por budget_id / user_id en estas tablas en cada carga.
+-- Idempotente — seguro de re-correr; no hace nada si el índice ya existe.
+create index if not exists idx_budgets_user on public.budgets(user_id);
+create index if not exists idx_budget_periods_budget on public.budget_periods(budget_id, period_start);
+create index if not exists idx_budget_category_periods_budget on public.budget_category_periods(budget_id);
+create index if not exists idx_global_budget_periods_user_month on public.global_budget_periods(user_id, month);
