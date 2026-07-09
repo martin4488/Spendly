@@ -34,6 +34,7 @@ import { getCategories } from '@/lib/categoryCache';
 import { useSyncOnForeground } from '@/lib/useSyncOnForeground';
 import { toast } from '@/lib/toast';
 import { confirmDialog } from '@/lib/confirm';
+import OfflineState from '@/components/ui/OfflineState';
 
 // ── Period generation ─────────────────────────────────────────────────────────
 function getPeriodBounds(startDate: string, recurrence: 'monthly' | 'yearly', offset: number = 0): { start: string; end: string } {
@@ -74,6 +75,7 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
   const [categoriesById, setCategoriesById] = useState<Map<string, Category>>(new Map());
   const [roots, setRoots] = useState<CatNode[]>([]);
   const [loading, setLoading] = useState(true);
+  const [offline, setOffline] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingBudget, setEditingBudget] = useState<Budget | null>(null);
   const [currentPeriods, setCurrentPeriods] = useState<Record<string, BudgetPeriod>>({});
@@ -111,14 +113,25 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
   useSyncOnForeground(user.id, () => loadData(true));
 
   async function loadData(silent = false) {
+    // Offline: a silent background sync just no-ops; an explicit load shows the
+    // offline state instead of hanging then rendering an empty budget list.
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      if (!silent) { setOffline(true); setLoading(false); }
+      return;
+    }
     if (!silent) setLoading(true);
     try {
       const today = format(new Date(), 'yyyy-MM-dd');
 
-      const [{ data: budgetsData }, catsMap] = await Promise.all([
+      const [{ data: budgetsData, error: budgetsError }, catsMap] = await Promise.all([
         supabase.from('budgets').select('*').eq('user_id', user.id).order('name'),
         getCategories(user.id),
       ]);
+      if (budgetsError) {
+        if (!silent) { setOffline(true); setLoading(false); }
+        return;
+      }
+      setOffline(false);
       const budgetIds = (budgetsData || []).map((b: any) => b.id);
 
       const [{ data: bcData }, { data: periodsData }] = budgetIds.length > 0
@@ -511,6 +524,8 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
   }, [selectedCatIds, roots, categoriesById]);
 
   const recurrenceLabels: Record<string, string> = { monthly: 'Mensual', yearly: 'Anual' };
+
+  if (offline) return <OfflineState onRetry={() => loadData()} />;
 
   return (
     <div className="px-4 pt-6 pb-4 max-w-lg mx-auto page-transition">

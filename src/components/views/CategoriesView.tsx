@@ -15,6 +15,7 @@ import { invalidateCategories } from '@/lib/categoryCache';
 import { deriveChildColor } from '@/lib/colorUtils';
 import { toast } from '@/lib/toast';
 import { confirmDialog } from '@/lib/confirm';
+import OfflineState from '@/components/ui/OfflineState';
 
 interface DragState {
   type: 'root';
@@ -28,6 +29,7 @@ export default function CategoriesView({ user, onBack }: { user: User; onBack?: 
   const [flatCats, setFlatCats] = useState<Category[]>([]);
   const [roots, setRoots] = useState<CatNode[]>([]);
   const [loading, setLoading] = useState(true);
+  const [offline, setOffline] = useState(false);
   const [spending, setSpending] = useState<Record<string, number>>({});
 
   // Form
@@ -47,12 +49,17 @@ export default function CategoriesView({ user, onBack }: { user: User; onBack?: 
   useEffect(() => { loadData(); }, []);
 
   async function loadData() {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setOffline(true); setLoading(false); return;
+    }
+    setOffline(false);
     setLoading(true);
     const monthRange = getMonthRange();
-    const [{ data: cats }, { data: expenses }] = await Promise.all([
+    const [{ data: cats, error }, { data: expenses }] = await Promise.all([
       supabase.from('categories').select('*').eq('user_id', user.id).neq('deleted', true).neq('hidden', true).order('position').order('created_at'),
       supabase.from('expenses').select('amount, category_id').eq('user_id', user.id).gte('date', monthRange.start).lte('date', monthRange.end),
     ]);
+    if (error) { setOffline(true); setLoading(false); return; }
     const spendMap: Record<string, number> = {};
     expenses?.forEach(e => { if (e.category_id) spendMap[e.category_id] = (spendMap[e.category_id] || 0) + Number(e.amount); });
     setSpending(spendMap);
@@ -256,6 +263,8 @@ export default function CategoriesView({ user, onBack }: { user: User; onBack?: 
       </div>
     );
   }
+
+  if (offline) return <OfflineState onRetry={loadData} onBack={onBack} />;
 
   return (
     <div className="px-4 pt-6 pb-4 max-w-lg mx-auto page-transition">

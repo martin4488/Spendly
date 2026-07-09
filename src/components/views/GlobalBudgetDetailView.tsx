@@ -117,6 +117,11 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
   }, [currentMonth, categories]);
 
   async function init() {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setLoading(false);
+      setError('Sin conexión. Reconectá para ver esto.');
+      return;
+    }
     setLoading(true);
     setError(null);
     monthCache.current.clear();

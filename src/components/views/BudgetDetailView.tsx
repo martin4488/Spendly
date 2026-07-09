@@ -133,6 +133,11 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
   }, [currentPeriodIndex, periods, bcpRows, allCats]);
 
   async function init() {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setLoading(false);
+      setError('Sin conexión. Reconectá para ver este presupuesto.');
+      return;
+    }
     setLoading(true);
     setError(null);
     periodCache.current.clear();

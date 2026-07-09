@@ -19,6 +19,7 @@ import { CatNode, buildTree } from '@/lib/categoryTree';
 import SwipeableRow from '@/components/SwipeableRow';
 import { toast } from '@/lib/toast';
 import { confirmDialog } from '@/lib/confirm';
+import OfflineState from '@/components/ui/OfflineState';
 const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
 
 type ViewMode = 'months' | 'years';
@@ -224,6 +225,7 @@ export default function SpendingOverview({ user, onBack, initialDate, initialVie
   const [catSpending, setCatSpending] = useState<CatSpend[]>([]);
   const [totalSpent, setTotalSpent] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [offline, setOffline] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [drillDown, setDrillDown] = useState<DrillDown | null>(null);
   const [selectedCatId, setSelectedCatId] = useState<string | null>(null);
@@ -244,6 +246,10 @@ export default function SpendingOverview({ user, onBack, initialDate, initialVie
   useEffect(() => { setSelectedCatId(null); }, [viewMode, currentDate]);
 
   async function loadData() {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setOffline(true); setLoading(false); return;
+    }
+    setOffline(false);
     setLoading(true);
     try {
       const range = getRange(currentDate, viewMode);
@@ -263,7 +269,8 @@ export default function SpendingOverview({ user, onBack, initialDate, initialVie
           if (row.category_id) { spendMap[row.category_id] = Number(row.total); txMap[row.category_id] = Number(row.tx_count); }
         }
       } else {
-        const { data: expenses } = await supabase.from('expenses').select('id, amount, category_id, description, date').eq('user_id', user.id).gte('date', range.start).lte('date', range.end).order('date', { ascending: false }).limit(10000);
+        const { data: expenses, error: expErr } = await supabase.from('expenses').select('id, amount, category_id, description, date').eq('user_id', user.id).gte('date', range.start).lte('date', range.end).order('date', { ascending: false }).limit(10000);
+        if (expErr) { setOffline(true); setLoading(false); return; }
         const allExp = expenses || [];
         for (const e of allExp as any[]) {
           total += Number(e.amount);
@@ -285,7 +292,7 @@ export default function SpendingOverview({ user, onBack, initialDate, initialVie
       }
       if (uncatSpent > 0) spending.push({ id: 'uncategorized', name: 'Sin categoría', icon: 'package', color: '#95A5A6', spent: uncatSpent, percentage: total > 0 ? (uncatSpent / total) * 100 : 0, transactions: uncatTx, children: [], allIds: ['uncategorized'] });
       setCatSpending(spending);
-    } catch (err) { console.error(err); }
+    } catch (err) { console.error(err); setOffline(true); }
     finally { setLoading(false); }
   }
 
@@ -314,6 +321,8 @@ export default function SpendingOverview({ user, onBack, initialDate, initialVie
     const initialMonth = viewMode === 'months' ? format(currentDate, 'yyyy-MM') : null;
     return <DrillDownView user={user} drillDown={drillDown} onBack={() => setDrillDown(null)} initialDate={currentDate} initialMonth={initialMonth} now={now} />;
   }
+
+  if (offline) return <OfflineState onRetry={loadData} onBack={onBack} />;
 
   function renderCatList(cats: CatSpend[], depth = 0): React.ReactNode {
     return cats.map(cat => {

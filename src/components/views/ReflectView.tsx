@@ -12,6 +12,7 @@ import { getCategories } from '@/lib/categoryCache';
 import { CatNode, buildTree } from '@/lib/categoryTree';
 import { format, startOfYear, endOfYear } from 'date-fns';
 import { es } from 'date-fns/locale';
+import OfflineState from '@/components/ui/OfflineState';
 
 interface Props { user: User; }
 
@@ -53,6 +54,7 @@ export default function ReflectView({ user }: Props) {
   const [yearData, setYearData] = useState<Record<number, YearData>>({});
   const [availableYears, setAvailableYears] = useState<number[]>([]);
   const [loading, setLoading] = useState(true);
+  const [offline, setOffline] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const yearDataRef = useRef<Record<number, YearData>>({});
 
@@ -70,18 +72,28 @@ export default function ReflectView({ user }: Props) {
   }, [yearData]);
 
   async function init(cy: number, cm: string) {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setOffline(true); setLoading(false); return;
+    }
+    setOffline(false);
     setLoading(true);
     try {
-      const { data: first } = await supabase
+      const { data: first, error } = await supabase
         .from('expenses').select('date').eq('user_id', user.id)
         .order('date', { ascending: true }).limit(1);
+      if (error) throw error;
       const firstYear = first?.[0] ? new Date(first[0].date).getFullYear() : cy;
       const years = Array.from({ length: cy - firstYear + 1 }, (_, i) => cy - i);
       setAvailableYears(years);
       await loadYear(cy, firstYear < cy ? cy - 1 : null, cm);
-    } catch (err) { console.error(err); }
+    } catch (err) { console.error(err); setOffline(true); }
     finally { setLoading(false); }
   }
+
+  const retryLoad = () => {
+    const now = new Date();
+    init(year ?? now.getFullYear(), currentMonth || format(now, 'yyyy-MM'));
+  };
 
   async function loadPrevYearData(prevYr: number): Promise<{
     monthMap: Record<string, number>;
@@ -466,6 +478,8 @@ export default function ReflectView({ user }: Props) {
 
   // Memoize: previously called twice per render (length check + map)
   const insights = useMemo(() => (d && year) ? computeInsights(d, year) : [], [d, year]);
+
+  if (offline) return <OfflineState onRetry={retryLoad} />;
 
   return (
     <div className="max-w-lg mx-auto px-3 pt-5 pb-24 page-transition">

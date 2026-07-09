@@ -14,6 +14,7 @@ import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 import SwipeableRow from '@/components/SwipeableRow';
 import Amount from '@/components/ui/Amount';
+import OfflineState from '@/components/ui/OfflineState';
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function RecurringView({ user }: { user: User }) {
@@ -21,6 +22,7 @@ export default function RecurringView({ user }: { user: User }) {
   const [categories, setCategories] = useState<Category[]>([]);
   const [categoriesMap, setCategoriesMap] = useState<Map<string, Category>>(new Map());
   const [loading, setLoading] = useState(true);
+  const [offline, setOffline] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -48,11 +50,16 @@ export default function RecurringView({ user }: { user: User }) {
   useEffect(() => { loadData(); }, []);
 
   async function loadData() {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setOffline(true); setLoading(false); return;
+    }
+    setOffline(false);
     setLoading(true);
-    const [{ data: rec }, catsMap] = await Promise.all([
+    const [{ data: rec, error }, catsMap] = await Promise.all([
       supabase.from('recurring_expenses').select('*').eq('user_id', user.id).eq('is_active', true).order('description'),
       getCategories(user.id),
     ]);
+    if (error) { setOffline(true); setLoading(false); return; }
     setItems(rec || []);
     setCategoriesMap(catsMap);
     setCategories(Array.from(catsMap.values()));
@@ -202,6 +209,8 @@ export default function RecurringView({ user }: { user: User }) {
   }, 0);
 
   const freqLabels: Record<string, string> = { weekly: 'Semanal', monthly: 'Mensual', yearly: 'Anual' };
+
+  if (offline) return <OfflineState onRetry={loadData} />;
 
   return (
     <div className="px-4 pt-6 pb-24 max-w-lg mx-auto page-transition">
