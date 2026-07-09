@@ -13,6 +13,7 @@ import { CatNode, buildTree } from '@/lib/categoryTree';
 import { format, startOfYear, endOfYear } from 'date-fns';
 import { es } from 'date-fns/locale';
 import OfflineState from '@/components/ui/OfflineState';
+import { readViewCache, writeViewCache } from '@/lib/viewCache';
 
 interface Props { user: User; }
 
@@ -48,45 +49,239 @@ function buildCatData(node: CatNode, spendMap: Record<string, number>): CatData 
   };
 }
 
+const REFLECT_CACHE = 'reflect';
+interface ReflectSnapshot {
+  year: number;
+  currentMonth: string;
+  availableYears: number[];
+  yearData: Record<number, YearData>;
+}
+
+// ── Module-scope fetchers (shared by the component and the boot prefetch) ──────
+
+/** Years with data, newest first (current year always included). */
+async function fetchAvailableYears(userId: string, cy: number): Promise<number[]> {
+  const { data: first, error } = await supabase
+    .from('expenses').select('date').eq('user_id', userId)
+    .order('date', { ascending: true }).limit(1);
+  if (error) throw error;
+  const firstYear = first?.[0] ? new Date(first[0].date).getFullYear() : cy;
+  return Array.from({ length: cy - firstYear + 1 }, (_, i) => cy - i);
+}
+
+async function fetchPrevYearData(userId: string, prevYr: number): Promise<{
+  monthMap: Record<string, number>;
+  catMap: Record<string, number>;
+}> {
+  const pStart = format(startOfYear(new Date(prevYr, 0, 1)), 'yyyy-MM-dd');
+  const pEnd = format(endOfYear(new Date(prevYr, 0, 1)), 'yyyy-MM-dd');
+
+  const { data: rpcData, error: rpcError } = await supabase.rpc('get_reflect_data', {
+    p_user_id: userId, p_year_start: pStart, p_year_end: pEnd,
+  });
+
+  const monthMap: Record<string, number> = {};
+  const catMap: Record<string, number> = {};
+
+  const hasRpcData = !rpcError && rpcData
+    && Array.isArray(rpcData.monthly_totals) && rpcData.monthly_totals.length > 0;
+
+  if (hasRpcData) {
+    rpcData.monthly_totals.forEach((row: any) => {
+      monthMap[row.month] = Number(row.total);
+    });
+    (rpcData.category_totals || []).forEach((row: any) => {
+      if (row.category_id) {
+        catMap[row.category_id] = (catMap[row.category_id] || 0) + Number(row.total);
+      }
+    });
+  } else {
+    const { data: expData } = await supabase.from('expenses')
+      .select('date, amount, category_id').eq('user_id', userId)
+      .gte('date', pStart).lte('date', pEnd).limit(10000);
+
+    (expData || []).forEach((e: any) => {
+      const mo = e.date.slice(0, 7);
+      monthMap[mo] = (monthMap[mo] || 0) + Number(e.amount);
+      if (e.category_id) {
+        catMap[e.category_id] = (catMap[e.category_id] || 0) + Number(e.amount);
+      }
+    });
+  }
+
+  return { monthMap, catMap };
+}
+
+/** Fetch + compute a full YearData snapshot (no React state). */
+async function fetchYearData(userId: string, yr: number, prevYr: number | null, activeMonth: string): Promise<YearData> {
+  const yearStart = format(startOfYear(new Date(yr, 0, 1)), 'yyyy-MM-dd');
+  const yearEnd = format(endOfYear(new Date(yr, 0, 1)), 'yyyy-MM-dd');
+
+  const [{ data: rpcResult, error: rpcError }, catsMap] = await Promise.all([
+    supabase.rpc('get_reflect_data', { p_user_id: userId, p_year_start: yearStart, p_year_end: yearEnd }),
+    getCategories(userId),
+  ]);
+
+  const cats = Array.from(catsMap.values());
+  const tree = buildTree(cats);
+
+  let monthMap: Record<string, number> = {};
+  let catMonthMap: Record<string, Record<string, number>> = {};
+
+  if (!rpcError && rpcResult) {
+    (rpcResult.monthly_totals || []).forEach((row: any) => {
+      monthMap[row.month] = Number(row.total);
+    });
+    (rpcResult.category_totals || []).forEach((row: any) => {
+      if (!catMonthMap[row.category_id]) catMonthMap[row.category_id] = {};
+      catMonthMap[row.category_id][row.month] = Number(row.total);
+    });
+  } else {
+    const { data: expData } = await supabase.from('expenses')
+      .select('date, amount, category_id').eq('user_id', userId)
+      .gte('date', yearStart).lte('date', yearEnd).limit(10000);
+    (expData || []).forEach((e: any) => {
+      const mo = e.date.slice(0, 7);
+      monthMap[mo] = (monthMap[mo] || 0) + Number(e.amount);
+      if (e.category_id) {
+        if (!catMonthMap[e.category_id]) catMonthMap[e.category_id] = {};
+        catMonthMap[e.category_id][mo] = (catMonthMap[e.category_id][mo] || 0) + Number(e.amount);
+      }
+    });
+  }
+
+  // Build months array
+  const months: MonthData[] = [];
+  for (let m = 0; m < 12; m++) {
+    const mo = format(new Date(yr, m, 1), 'yyyy-MM');
+    if (mo > activeMonth) break;
+    const label = format(new Date(yr, m, 1), 'MMM', { locale: es });
+    const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+    months.push({ label: cap(label), amount: monthMap[mo] || 0, isCurrent: mo === activeMonth });
+  }
+
+  const closedMonths = months.filter(m => !m.isCurrent);
+  const numClosed = Math.max(closedMonths.length, 1);
+
+  // Build spend map from closed months only
+  const closedKeys = new Set<string>();
+  for (let m = 0; m < 12; m++) {
+    const mo = format(new Date(yr, m, 1), 'yyyy-MM');
+    if (mo < activeMonth) closedKeys.add(mo);
+  }
+
+  const spendMap: Record<string, number> = {};
+  Object.entries(catMonthMap).forEach(([catId, monthTotals]) => {
+    Object.entries(monthTotals).forEach(([mo, total]) => {
+      if (closedKeys.has(mo)) {
+        spendMap[catId] = (spendMap[catId] || 0) + total;
+      }
+    });
+  });
+
+  const catData: CatData[] = tree
+    .map(node => {
+      const d = buildCatData(node, spendMap);
+      return { ...d, amount: d.amount / numClosed, children: d.children.map(c => ({ ...c, amount: c.amount / numClosed })) };
+    })
+    .filter(c => c.amount > 0)
+    .sort((a, b) => b.amount - a.amount);
+
+  // Previous year — load separately with fallback, always divide by 12
+  let prevYearCats: Record<string, number> | null = null;
+  let prevYearAvg: number | null = null;
+
+  if (prevYr != null) {
+    const prev = await fetchPrevYearData(userId, prevYr);
+
+    let prevTotal = 0;
+    Object.values(prev.monthMap).forEach(v => { prevTotal += v; });
+
+    if (prevTotal > 0) {
+      prevYearAvg = prevTotal / 12;
+      prevYearCats = {};
+
+      tree.forEach(node => {
+        const parentTotal = sumNode(node, prev.catMap);
+        if (parentTotal > 0) prevYearCats![node.id] = parentTotal / 12;
+        node.children.forEach(child => {
+          const childTotal = sumNode(child, prev.catMap);
+          if (childTotal > 0) prevYearCats![child.id] = childTotal / 12;
+        });
+      });
+    }
+  }
+
+  return { months, cats: catData, tree, prevYearCats, prevYearAvg };
+}
+
+// Warm the Reflect snapshot (current year) during boot idle → instant first visit.
+export async function prefetchReflect(userId: string): Promise<void> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+  try {
+    const now = new Date();
+    const cy = now.getFullYear();
+    const cm = format(now, 'yyyy-MM');
+    const years = await fetchAvailableYears(userId, cy);
+    const prevYr = years.includes(cy - 1) ? cy - 1 : null;
+    const yd = await fetchYearData(userId, cy, prevYr, cm);
+    writeViewCache<ReflectSnapshot>(REFLECT_CACHE, userId, {
+      year: cy, currentMonth: cm, availableYears: years, yearData: { [cy]: yd },
+    });
+  } catch { /* offline / no data — leave any existing snapshot untouched */ }
+}
+
 export default function ReflectView({ user }: Props) {
-  const [year, setYear] = useState<number | null>(null);
-  const [currentMonth, setCurrentMonth] = useState<string>('');
-  const [yearData, setYearData] = useState<Record<number, YearData>>({});
-  const [availableYears, setAvailableYears] = useState<number[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Stale-while-revalidate: hydrate from the last snapshot (only if it's for the
+  // current year — otherwise a year-boundary stale snapshot would show old data).
+  const cached = useMemo(() => {
+    const snap = readViewCache<ReflectSnapshot>(REFLECT_CACHE, user.id);
+    return snap && snap.year === new Date().getFullYear() ? snap : null;
+  }, [user.id]);
+
+  const [year, setYear] = useState<number | null>(cached?.year ?? null);
+  const [currentMonth, setCurrentMonth] = useState<string>(cached?.currentMonth ?? '');
+  const [yearData, setYearData] = useState<Record<number, YearData>>(cached?.yearData ?? {});
+  const [availableYears, setAvailableYears] = useState<number[]>(cached?.availableYears ?? []);
+  const [loading, setLoading] = useState(!cached);
   const [offline, setOffline] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const yearDataRef = useRef<Record<number, YearData>>({});
+  const yearDataRef = useRef<Record<number, YearData>>(cached?.yearData ?? {});
 
   useEffect(() => {
     const now = new Date();
     const cy = now.getFullYear();
     const cm = format(now, 'yyyy-MM');
-    setYear(cy);
-    setCurrentMonth(cm);
-    init(cy, cm);
+    if (!cached) { setYear(cy); setCurrentMonth(cm); }
+    // Silent when we already have a snapshot: refresh in the background, no spinner.
+    init(cy, cm, !!cached);
   }, []);
 
   useEffect(() => {
     yearDataRef.current = yearData;
   }, [yearData]);
 
-  async function init(cy: number, cm: string) {
+  async function init(cy: number, cm: string, silent = false) {
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      setOffline(true); setLoading(false); return;
+      if (!silent) { setOffline(true); setLoading(false); }
+      return;
     }
     setOffline(false);
-    setLoading(true);
+    if (!silent) setLoading(true);
     try {
-      const { data: first, error } = await supabase
-        .from('expenses').select('date').eq('user_id', user.id)
-        .order('date', { ascending: true }).limit(1);
-      if (error) throw error;
-      const firstYear = first?.[0] ? new Date(first[0].date).getFullYear() : cy;
-      const years = Array.from({ length: cy - firstYear + 1 }, (_, i) => cy - i);
+      const years = await fetchAvailableYears(user.id, cy);
       setAvailableYears(years);
-      await loadYear(cy, firstYear < cy ? cy - 1 : null, cm);
-    } catch (err) { console.error(err); setOffline(true); }
+      const prevYr = years.includes(cy - 1) ? cy - 1 : null;
+      const yd = await fetchYearData(user.id, cy, prevYr, cm);
+      setYearData(prev => {
+        const next = { ...prev, [cy]: yd };
+        yearDataRef.current = next;
+        return next;
+      });
+      writeViewCache<ReflectSnapshot>(REFLECT_CACHE, user.id, {
+        year: cy, currentMonth: cm, availableYears: years, yearData: { [cy]: yd },
+      });
+    } catch (err) { console.error(err); if (!silent) setOffline(true); }
     finally { setLoading(false); }
   }
 
@@ -95,155 +290,14 @@ export default function ReflectView({ user }: Props) {
     init(year ?? now.getFullYear(), currentMonth || format(now, 'yyyy-MM'));
   };
 
-  async function loadPrevYearData(prevYr: number): Promise<{
-    monthMap: Record<string, number>;
-    catMap: Record<string, number>;
-  }> {
-    const pStart = format(startOfYear(new Date(prevYr, 0, 1)), 'yyyy-MM-dd');
-    const pEnd = format(endOfYear(new Date(prevYr, 0, 1)), 'yyyy-MM-dd');
-
-    const { data: rpcData, error: rpcError } = await supabase.rpc('get_reflect_data', {
-      p_user_id: user.id, p_year_start: pStart, p_year_end: pEnd,
-    });
-
-    const monthMap: Record<string, number> = {};
-    const catMap: Record<string, number> = {};
-
-    const hasRpcData = !rpcError && rpcData
-      && Array.isArray(rpcData.monthly_totals) && rpcData.monthly_totals.length > 0;
-
-    if (hasRpcData) {
-      rpcData.monthly_totals.forEach((row: any) => {
-        monthMap[row.month] = Number(row.total);
-      });
-      (rpcData.category_totals || []).forEach((row: any) => {
-        if (row.category_id) {
-          catMap[row.category_id] = (catMap[row.category_id] || 0) + Number(row.total);
-        }
-      });
-    } else {
-      const { data: expData } = await supabase.from('expenses')
-        .select('date, amount, category_id').eq('user_id', user.id)
-        .gte('date', pStart).lte('date', pEnd).limit(10000);
-
-      (expData || []).forEach((e: any) => {
-        const mo = e.date.slice(0, 7);
-        monthMap[mo] = (monthMap[mo] || 0) + Number(e.amount);
-        if (e.category_id) {
-          catMap[e.category_id] = (catMap[e.category_id] || 0) + Number(e.amount);
-        }
-      });
-    }
-
-    return { monthMap, catMap };
-  }
-
+  // Load a non-current year on demand (year navigation). Cached in memory per
+  // year, so re-visiting a year never refetches.
   async function loadYear(yr: number, prevYr: number | null, cm?: string) {
     if (yearDataRef.current[yr]) return;
-
     const activeMonth = cm || currentMonth;
-    const yearStart = format(startOfYear(new Date(yr, 0, 1)), 'yyyy-MM-dd');
-    const yearEnd = format(endOfYear(new Date(yr, 0, 1)), 'yyyy-MM-dd');
-
-    const [{ data: rpcResult, error: rpcError }, catsMap] = await Promise.all([
-      supabase.rpc('get_reflect_data', { p_user_id: user.id, p_year_start: yearStart, p_year_end: yearEnd }),
-      getCategories(user.id),
-    ]);
-
-    const cats = Array.from(catsMap.values());
-    const tree = buildTree(cats);
-
-    let monthMap: Record<string, number> = {};
-    let catMonthMap: Record<string, Record<string, number>> = {};
-
-    if (!rpcError && rpcResult) {
-      (rpcResult.monthly_totals || []).forEach((row: any) => {
-        monthMap[row.month] = Number(row.total);
-      });
-      (rpcResult.category_totals || []).forEach((row: any) => {
-        if (!catMonthMap[row.category_id]) catMonthMap[row.category_id] = {};
-        catMonthMap[row.category_id][row.month] = Number(row.total);
-      });
-    } else {
-      const { data: expData } = await supabase.from('expenses')
-        .select('date, amount, category_id').eq('user_id', user.id)
-        .gte('date', yearStart).lte('date', yearEnd).limit(10000);
-      (expData || []).forEach((e: any) => {
-        const mo = e.date.slice(0, 7);
-        monthMap[mo] = (monthMap[mo] || 0) + Number(e.amount);
-        if (e.category_id) {
-          if (!catMonthMap[e.category_id]) catMonthMap[e.category_id] = {};
-          catMonthMap[e.category_id][mo] = (catMonthMap[e.category_id][mo] || 0) + Number(e.amount);
-        }
-      });
-    }
-
-    // Build months array
-    const months: MonthData[] = [];
-    for (let m = 0; m < 12; m++) {
-      const mo = format(new Date(yr, m, 1), 'yyyy-MM');
-      if (mo > activeMonth) break;
-      const label = format(new Date(yr, m, 1), 'MMM', { locale: es });
-      const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-      months.push({ label: cap(label), amount: monthMap[mo] || 0, isCurrent: mo === activeMonth });
-    }
-
-    const closedMonths = months.filter(m => !m.isCurrent);
-    const numClosed = Math.max(closedMonths.length, 1);
-
-    // Build spend map from closed months only
-    const closedKeys = new Set<string>();
-    for (let m = 0; m < 12; m++) {
-      const mo = format(new Date(yr, m, 1), 'yyyy-MM');
-      if (mo < activeMonth) closedKeys.add(mo);
-    }
-
-    const spendMap: Record<string, number> = {};
-    Object.entries(catMonthMap).forEach(([catId, monthTotals]) => {
-      Object.entries(monthTotals).forEach(([mo, total]) => {
-        if (closedKeys.has(mo)) {
-          spendMap[catId] = (spendMap[catId] || 0) + total;
-        }
-      });
-    });
-
-    const catData: CatData[] = tree
-      .map(node => {
-        const d = buildCatData(node, spendMap);
-        return { ...d, amount: d.amount / numClosed, children: d.children.map(c => ({ ...c, amount: c.amount / numClosed })) };
-      })
-      .filter(c => c.amount > 0)
-      .sort((a, b) => b.amount - a.amount);
-
-    // Previous year — load separately with fallback, always divide by 12
-    let prevYearCats: Record<string, number> | null = null;
-    let prevYearAvg: number | null = null;
-
-    if (prevYr != null) {
-      const prev = await loadPrevYearData(prevYr);
-
-      let prevTotal = 0;
-      Object.values(prev.monthMap).forEach(v => { prevTotal += v; });
-
-      if (prevTotal > 0) {
-        prevYearAvg = prevTotal / 12;
-        prevYearCats = {};
-
-        // Por cada categoría padre e hija: total / 12
-        tree.forEach(node => {
-          const parentTotal = sumNode(node, prev.catMap);
-          if (parentTotal > 0) prevYearCats![node.id] = parentTotal / 12;
-          // Hijas: cada subcategoría con su propio total / 12
-          node.children.forEach(child => {
-            const childTotal = sumNode(child, prev.catMap);
-            if (childTotal > 0) prevYearCats![child.id] = childTotal / 12;
-          });
-        });
-      }
-    }
-
+    const yd = await fetchYearData(user.id, yr, prevYr, activeMonth);
     setYearData(prev => {
-      const next = { ...prev, [yr]: { months, cats: catData, tree, prevYearCats, prevYearAvg } };
+      const next = { ...prev, [yr]: yd };
       yearDataRef.current = next;
       return next;
     });

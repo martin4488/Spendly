@@ -10,6 +10,7 @@ import {
   CheckCircle, AlertCircle, X, Check,
 } from 'lucide-react';
 import { clearDashboardCache } from '@/lib/dashboardCache';
+import { clearViewCaches } from '@/lib/viewCache';
 import { invalidateCategories } from '@/lib/categoryCache';
 import { confirmDialog } from '@/lib/confirm';
 
@@ -315,6 +316,7 @@ export default function SettingsView({ user, defaultCurrency, onCurrencyChange, 
     if (!(await confirmDialog({ message: '¿Cerrar sesión?', confirmLabel: 'Cerrar sesión', danger: false }))) return;
     // Wipe local caches before sign-out so the next user can't see any leaked snapshot
     clearDashboardCache();
+    clearViewCaches();
     invalidateCategories();
     await supabase.auth.signOut();
   }

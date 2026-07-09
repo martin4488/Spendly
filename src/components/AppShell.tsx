@@ -104,7 +104,19 @@ export default function AppShell({ user, initialCurrency }: AppShellProps) {
     const warm = () => {
       if (done) return;
       done = true;
-      Object.values(imports).forEach((load) => { load().catch(() => {}); });
+      // Warm every chunk (so all views work offline) and, for the heaviest tabs,
+      // prime their data snapshot too so even the first visit is instant.
+      const prefetchers: Record<string, string> = {
+        recurring: 'prefetchRecurring',
+        reflect: 'prefetchReflect',
+        budgets: 'prefetchBudgets',
+      };
+      Object.entries(imports).forEach(([name, load]) => {
+        load().then((m: Record<string, unknown>) => {
+          const fn = prefetchers[name];
+          if (fn && typeof m[fn] === 'function') (m[fn] as (id: string) => void)(user.id);
+        }).catch(() => {});
+      });
     };
     const w = window as unknown as {
       requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;

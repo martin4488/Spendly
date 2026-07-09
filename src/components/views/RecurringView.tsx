@@ -1,12 +1,13 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { CATEGORY_ICONS, CATEGORY_COLORS } from '@/lib/utils';
 import { Category, RecurringExpense } from '@/types';
 import { CatNode, FlatEntry, buildTree, flattenTree } from '@/lib/categoryTree';
-import { getCategories, invalidateCategories } from '@/lib/categoryCache';
+import { getCategories, getCategoriesSync, invalidateCategories } from '@/lib/categoryCache';
+import { readViewCache, writeViewCache } from '@/lib/viewCache';
 import { Plus, X, CalendarOff, Delete, Search, Settings, ArrowLeft, Check } from 'lucide-react';
 import CategoryIcon from '@/components/ui/CategoryIcon';
 import { getIconComponent } from '@/lib/iconMap';
@@ -16,12 +17,27 @@ import SwipeableRow from '@/components/SwipeableRow';
 import Amount from '@/components/ui/Amount';
 import OfflineState from '@/components/ui/OfflineState';
 
+// Warm the Recurring snapshot during boot idle so the first visit is instant.
+// Called from AppShell once the chunk is loaded; safe to fail silently.
+export async function prefetchRecurring(userId: string): Promise<void> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+  const { data: rec, error } = await supabase
+    .from('recurring_expenses').select('*').eq('user_id', userId).eq('is_active', true).order('description');
+  if (error) return;
+  writeViewCache('recurring', userId, { items: rec || [] });
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 export default function RecurringView({ user }: { user: User }) {
-  const [items, setItems] = useState<RecurringExpense[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [categoriesMap, setCategoriesMap] = useState<Map<string, Category>>(new Map());
-  const [loading, setLoading] = useState(true);
+  // Stale-while-revalidate: hydrate from the last snapshot so repeat visits (and
+  // first visits warmed by the boot prefetch) render instantly, no spinner.
+  const cached = useMemo(() => readViewCache<{ items: RecurringExpense[] }>('recurring', user.id), [user.id]);
+  const cachedCats = useMemo(() => getCategoriesSync(user.id), [user.id]);
+
+  const [items, setItems] = useState<RecurringExpense[]>(cached?.items || []);
+  const [categories, setCategories] = useState<Category[]>(cachedCats ? Array.from(cachedCats.values()) : []);
+  const [categoriesMap, setCategoriesMap] = useState<Map<string, Category>>(cachedCats || new Map());
+  const [loading, setLoading] = useState(!cached);
   const [offline, setOffline] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -47,23 +63,28 @@ export default function RecurringView({ user }: { user: User }) {
   const [newCatParentId, setNewCatParentId] = useState<string | null>(null);
   const [savingCat, setSavingCat] = useState(false);
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => { loadData(!!cached); }, []);
 
-  async function loadData() {
+  // `silent` skips the full-screen spinner when we already have a snapshot to
+  // show — the refresh then swaps in fresh data without a flash.
+  async function loadData(silent = false) {
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      setOffline(true); setLoading(false); return;
+      if (!silent) { setOffline(true); setLoading(false); }
+      return;
     }
     setOffline(false);
-    setLoading(true);
+    if (!silent) setLoading(true);
     const [{ data: rec, error }, catsMap] = await Promise.all([
       supabase.from('recurring_expenses').select('*').eq('user_id', user.id).eq('is_active', true).order('description'),
       getCategories(user.id),
     ]);
-    if (error) { setOffline(true); setLoading(false); return; }
-    setItems(rec || []);
+    if (error) { if (!silent) { setOffline(true); setLoading(false); } return; }
+    const list = rec || [];
+    setItems(list);
     setCategoriesMap(catsMap);
     setCategories(Array.from(catsMap.values()));
     setLoading(false);
+    writeViewCache('recurring', user.id, { items: list });
   }
 
   function openForm(item?: RecurringExpense) {
