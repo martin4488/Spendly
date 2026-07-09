@@ -13,6 +13,7 @@ import { readDashboardCache, writeDashboardCache, buildCategoriesMapFromCache } 
 import { useSyncOnForeground } from '@/lib/useSyncOnForeground';
 import { toast } from '@/lib/toast';
 import { confirmDialog } from '@/lib/confirm';
+import { getPendingExpenses, onQueueChange, flushQueue, startAutoFlush, dequeueExpense, type PendingExpense } from '@/lib/offlineQueue';
 import Amount from '@/components/ui/Amount';
 
 const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
@@ -125,12 +126,14 @@ const ExpenseRow = memo(function ExpenseRow({
   expense,
   categoriesMap,
   defaultCurrency,
+  pending,
   onEdit,
   onDelete,
 }: {
   expense: Expense;
   categoriesMap: Map<string, Category>;
   defaultCurrency: CurrencyCode;
+  pending?: boolean;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -154,6 +157,12 @@ const ExpenseRow = memo(function ExpenseRow({
               <span className="text-dark-400 font-normal"> · {subLabel}</span>
             )}
             {expense.is_recurring && ' 🔄'}
+            {pending && (
+              <span className="ml-1.5 inline-flex items-center gap-0.5 align-middle text-[9px] font-medium text-amber-400/90">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                pendiente
+              </span>
+            )}
           </p>
           {showDescription && (
             <p className="text-[10px] text-dark-500 mt-0.5 leading-tight truncate">{expense.description}</p>
@@ -186,6 +195,14 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const searchRef = useRef<HTMLInputElement>(null);
+
+  // Offline write queue: expenses added without a connection, shown optimistically
+  // until they sync. Start auto-flush (on reconnect) and track queue changes.
+  const [pending, setPending] = useState<PendingExpense[]>(() => getPendingExpenses(user.id));
+  useEffect(() => {
+    startAutoFlush();
+    return onQueueChange(() => setPending(getPendingExpenses(user.id)));
+  }, [user.id]);
 
   const [selectedBarIndex, setSelectedBarIndex] = useState<number>(5);
 
@@ -376,6 +393,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
   // Only refresh the current period + non-search view so we never clobber a
   // historical month/year the user is inspecting.
   const syncNow = useCallback(() => {
+    flushQueue();
     if (searchQuery || !selectedPeriod.isCurrentPeriod) return;
     if (viewMode === 'months') loadDashboard();
     else loadExtended();
@@ -383,14 +401,23 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
 
   useSyncOnForeground(user.id, syncNow);
 
+  // Whether to overlay queued (offline) expenses — only on the live current month.
+  const showPending = selectedPeriod.isCurrentPeriod && viewMode === 'months';
+
   // ── Header total from selected bar ───────────────────────────────────────
   const accumulatedTotal = useMemo(() => {
     if (viewMode === 'months') {
       const key = `${selectedPeriod.year}-${String(selectedPeriod.month + 1).padStart(2, '0')}`;
-      return chartTotals[key] || 0;
+      const base = chartTotals[key] || 0;
+      // Include pending (offline) expenses for the current month so the headline
+      // figure matches the rows shown below.
+      const pendingSum = showPending
+        ? pending.reduce((s, p) => (p.date.slice(0, 7) === key ? s + Number(p.amount) : s), 0)
+        : 0;
+      return base + pendingSum;
     }
     return yearTotals[selectedPeriod.year] || 0;
-  }, [viewMode, chartTotals, yearTotals, selectedPeriod]);
+  }, [viewMode, chartTotals, yearTotals, selectedPeriod, showPending, pending]);
 
   const chartData = useMemo(() => {
     const data: { name: string; year: string; total: number; isCurrent: boolean }[] = [];
@@ -423,9 +450,22 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     return toDateStr(d);
   }, []);
 
+  // Merge queued (offline) expenses into the live current-month view. Historical
+  // months/years keep only their fetched rows. Dedup by id against server rows so
+  // a just-synced expense never shows twice.
+  const pendingIds = useMemo(() => new Set(pending.map(p => p.id)), [pending]);
+  const displayExpenses = useMemo(() => {
+    if (!showPending || pending.length === 0) return expenses;
+    const serverIds = new Set(expenses.map(e => e.id));
+    const extra = pending
+      .filter(p => !serverIds.has(p.id))
+      .map(p => ({ ...p, is_recurring: false, recurring_id: null, created_at: '', updated_at: '' } as Expense));
+    return [...extra, ...expenses];
+  }, [expenses, pending, showPending]);
+
   const groupedByDay = useMemo(() => {
     const filtered = searchQuery
-      ? expenses.filter(e => {
+      ? displayExpenses.filter(e => {
           const cat = e.category_id ? categoriesMap.get(e.category_id) : null;
           const parentCat = cat?.parent_id ? categoriesMap.get(cat.parent_id) : null;
           const q = searchQuery.toLowerCase();
@@ -435,7 +475,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
             (parentCat?.name || '').toLowerCase().includes(q)
           );
         })
-      : expenses;
+      : displayExpenses;
 
     const dayMap = new Map<string, Expense[]>();
     for (const exp of filtered) {
@@ -452,9 +492,15 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
         expenses: exps,
       }))
       .sort((a, b) => b.date.localeCompare(a.date));
-  }, [expenses, searchQuery, todayStr, yesterdayStr, categoriesMap]);
+  }, [displayExpenses, searchQuery, todayStr, yesterdayStr, categoriesMap]);
 
   const openEdit = useCallback((expense: Expense) => {
+    // A still-unsynced (pending) expense can't be edited yet — editing hits the DB
+    // by id and the row doesn't exist there. Let it sync first.
+    if (pendingIds.has(expense.id)) {
+      toast('Este gasto todavía se está sincronizando. Esperá un momento.', 'info');
+      return;
+    }
     setEditingExpense({
       id: expense.id,
       amount: Number(expense.amount),
@@ -463,10 +509,15 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       date: expense.date,
     });
     setShowAddExpense(true);
-  }, []);
+  }, [pendingIds]);
 
   const handleDelete = useCallback(async (id: string) => {
     if (!(await confirmDialog('¿Eliminar este gasto?'))) return;
+    // Pending (offline) expense: just drop it from the queue — it's not in the DB.
+    if (pendingIds.has(id)) {
+      dequeueExpense(id);
+      return;
+    }
     // Optimistic update — remove instantly, no round-trip wait
     setExpenses(prev => prev.filter(e => e.id !== id));
     const { error } = await supabase.from('expenses').delete().eq('id', id);
@@ -476,7 +527,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     // Refresh either way: on success to update chart totals, on failure to
     // restore the row we optimistically removed.
     loadDashboard();
-  }, [loadDashboard]);
+  }, [loadDashboard, pendingIds]);
 
   // ── Header subtitle from selected period ─────────────────────────────────
   const headerSubtitle = useMemo(() => {
@@ -627,6 +678,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
                   expense={expense}
                   categoriesMap={categoriesMap}
                   defaultCurrency={defaultCurrency}
+                  pending={pendingIds.has(expense.id)}
                   onEdit={() => openEdit(expense)}
                   onDelete={() => handleDelete(expense.id)}
                 />

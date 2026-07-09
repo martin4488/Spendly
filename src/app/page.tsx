@@ -8,7 +8,7 @@ import { getCategories, seedCategories } from '@/lib/categoryCache';
 import { User } from '@supabase/supabase-js';
 import AppShell from '@/components/AppShell';
 import type { CurrencyCode } from '@/lib/currency';
-import { writeDashboardCache } from '@/lib/dashboardCache';
+import { writeDashboardCache, readDashboardCache, buildCategoriesMapFromCache } from '@/lib/dashboardCache';
 import type { Category } from '@/types';
 
 // Lazy-load AuthPage — it's only shown when not logged in, which is rare.
@@ -117,6 +117,13 @@ export default function Home() {
         cats.forEach(c => categoriesMap.set(c.id, c));
         writeDashboardCache(user.id, boot.recent_expenses || [], chartTotals, categoriesMap);
       } else {
+        // Boot RPC failed (e.g. offline). Seed categories from the localStorage
+        // snapshot so the add-expense modal still works offline; only hit the
+        // network for categories if we have no cache to fall back on.
+        const snap = readDashboardCache(user.id);
+        if (snap && snap.categories.length) {
+          seedCategories(user.id, Array.from(buildCategoriesMapFromCache(snap.categories).values()));
+        }
         await Promise.all([
           supabase.from('user_settings').select('default_currency').eq('user_id', user.id).single()
             .then(({ data: settings }) => {
@@ -125,8 +132,9 @@ export default function Home() {
                 setDefaultCurrency(currency);
                 setBootData(prev => prev ? { ...prev, currency } : null);
               }
-            }),
-          getCategories(user.id),
+            })
+            .then(undefined, () => {}),
+          (snap && snap.categories.length) ? Promise.resolve() : getCategories(user.id),
         ]);
       }
     }

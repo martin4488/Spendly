@@ -32,6 +32,7 @@ interface Props {
 import { CatNode, buildTree, flattenTree } from '@/lib/categoryTree';
 import { getCategories, invalidateCategories } from '@/lib/categoryCache';
 import { toast } from '@/lib/toast';
+import { enqueueExpense, newExpenseId } from '@/lib/offlineQueue';
 
 // ── Frecuentes: exponential decay scoring in localStorage ────────────────────
 const FREQ_KEY = 'spendly_cat_freq';
@@ -246,17 +247,47 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
       if (converted !== null) { finalAmount = converted; originalCurrency = currency; originalAmount = amtLocal; }
     }
     const data = { user_id: user.id, amount: finalAmount, description: description || null, notes: null, category_id: categoryId, date, original_currency: originalCurrency, original_amount: originalAmount };
+
+    // Editing stays online-only (offline scope covers new expenses only).
+    if (editingExpense) {
+      try {
+        const { error } = await supabase.from('expenses').update(data).eq('id', editingExpense.id);
+        if (error) throw error;
+        onSaved(); onClose();
+      } catch (err) {
+        console.error(err);
+        toast('No se pudo guardar el gasto. Revisá tu conexión y reintentá.');
+      } finally { setSaving(false); }
+      return;
+    }
+
+    // New expense: client-generated id so it can be queued offline and dedup on sync.
+    const row = { id: newExpenseId(), ...data };
+    const queueOffline = () => {
+      enqueueExpense({ ...row, queued_at: Date.now() });
+      toast('Sin conexión: el gasto se guardó y se sincronizará al reconectar.', 'info');
+      onSaved(); onClose();
+    };
+
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      queueOffline();
+      setSaving(false);
+      return;
+    }
+
     try {
-      // Supabase returns { error } instead of throwing on a DB/validation error;
-      // a network failure (e.g. offline) rejects and is caught below.
-      const { error } = editingExpense
-        ? await supabase.from('expenses').update(data).eq('id', editingExpense.id)
-        : await supabase.from('expenses').insert(data);
+      // { error } means the request reached the server and was rejected (permanent);
+      // a rejected promise means the network failed (transient → queue it).
+      const { error } = await supabase.from('expenses').insert(row);
       if (error) throw error;
       onSaved(); onClose();
     } catch (err) {
-      console.error(err);
-      toast('No se pudo guardar el gasto. Revisá tu conexión y reintentá.');
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        queueOffline();
+      } else {
+        console.error(err);
+        toast('No se pudo guardar el gasto. Revisá tu conexión y reintentá.');
+      }
     }
     finally { setSaving(false); }
   }
