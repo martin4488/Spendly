@@ -232,12 +232,16 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       let freshTotals: Record<string, number> = {};
 
       if (rpcError || !rpcResult) {
-        const [{ data: exp }, { data: chartExp }] = await Promise.all([
+        const [expRes, chartRes] = await Promise.all([
           supabase.from('expenses').select('*').eq('user_id', user.id).gte('date', startStr).order('date', { ascending: false }).limit(500),
           supabase.from('expenses').select('date, amount').eq('user_id', user.id).gte('date', chartStart).limit(10000),
         ]);
-        freshExpenses = exp || [];
-        (chartExp || []).forEach((e: any) => {
+        // Offline / fetch failed: Supabase resolves with { error } instead of
+        // throwing. Bail without clobbering the current list or the cache — otherwise
+        // an offline refresh wipes every expense and overwrites the snapshot with [].
+        if (expRes.error || chartRes.error) return;
+        freshExpenses = expRes.data || [];
+        (chartRes.data || []).forEach((e: any) => {
           const month = e.date.slice(0, 7);
           freshTotals[month] = (freshTotals[month] || 0) + Number(e.amount);
         });
