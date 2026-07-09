@@ -17,6 +17,8 @@ import { getCategories } from '@/lib/categoryCache';
 import Amount from '@/components/ui/Amount';
 import { CatNode, buildTree } from '@/lib/categoryTree';
 import SwipeableRow from '@/components/SwipeableRow';
+import { toast } from '@/lib/toast';
+import { confirmDialog } from '@/lib/confirm';
 const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
 
 type ViewMode = 'months' | 'years';
@@ -514,8 +516,9 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMonth, now
   }
 
   async function deleteExpense(id: string) {
-    if (!confirm('¿Eliminar este gasto?')) return;
-    await supabase.from('expenses').delete().eq('id', id);
+    if (!(await confirmDialog('¿Eliminar este gasto?'))) return;
+    const { error } = await supabase.from('expenses').delete().eq('id', id);
+    if (error) { toast('No se pudo eliminar el gasto. Reintentá.'); return; }
     const updated = allExpenses.filter(e => e.id !== id);
     setAllExpenses(updated);
     setBarData(buildBarData(updated, year, catsById));

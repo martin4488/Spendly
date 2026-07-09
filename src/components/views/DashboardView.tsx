@@ -11,6 +11,8 @@ import { getCategories } from '@/lib/categoryCache';
 import SwipeableRow from '@/components/SwipeableRow';
 import { readDashboardCache, writeDashboardCache, buildCategoriesMapFromCache } from '@/lib/dashboardCache';
 import { useSyncOnForeground } from '@/lib/useSyncOnForeground';
+import { toast } from '@/lib/toast';
+import { confirmDialog } from '@/lib/confirm';
 import Amount from '@/components/ui/Amount';
 
 const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
@@ -464,18 +466,16 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
   }, []);
 
   const handleDelete = useCallback(async (id: string) => {
-    if (confirm('¿Eliminar este gasto?')) {
-      // Optimistic update — remove instantly, no round-trip wait
-      setExpenses(prev => prev.filter(e => e.id !== id));
-      const { error } = await supabase.from('expenses').delete().eq('id', id);
-      if (error) {
-        // Rollback on failure
-        loadDashboard();
-      } else {
-        // Refresh to update chart totals (totals depend on the deleted row)
-        loadDashboard();
-      }
+    if (!(await confirmDialog('¿Eliminar este gasto?'))) return;
+    // Optimistic update — remove instantly, no round-trip wait
+    setExpenses(prev => prev.filter(e => e.id !== id));
+    const { error } = await supabase.from('expenses').delete().eq('id', id);
+    if (error) {
+      toast('No se pudo eliminar el gasto. Reintentá.');
     }
+    // Refresh either way: on success to update chart totals, on failure to
+    // restore the row we optimistically removed.
+    loadDashboard();
   }, [loadDashboard]);
 
   // ── Header subtitle from selected period ─────────────────────────────────

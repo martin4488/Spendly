@@ -13,6 +13,8 @@ import Amount from '@/components/ui/Amount';
 import CategoryIcon from '@/components/ui/CategoryIcon';
 import { CatNode, buildTree, flattenTree, allDescendantIds } from '@/lib/categoryTree';
 import { getCategories } from '@/lib/categoryCache';
+import { toast } from '@/lib/toast';
+import { confirmDialog } from '@/lib/confirm';
 
 const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
 
@@ -381,11 +383,15 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
   }
 
   async function handleDelete() {
-    if (!confirm('¿Eliminar este presupuesto? Esta acción no se puede deshacer.')) return;
+    if (!(await confirmDialog('¿Eliminar este presupuesto? Esta acción no se puede deshacer.'))) return;
     try {
-      await supabase.from('budgets').delete().eq('id', budget.id);
+      const { error } = await supabase.from('budgets').delete().eq('id', budget.id);
+      if (error) throw error;
       onBack();
-    } catch (err) { console.error(err); }
+    } catch (err) {
+      console.error(err);
+      toast('No se pudo eliminar el presupuesto. Reintentá.');
+    }
   }
 
   function openExpenseEdit(exp: ExpenseRow) {

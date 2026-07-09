@@ -13,6 +13,8 @@ import { getIconComponent } from '@/lib/iconMap';
 import { CatNode, buildTree } from '@/lib/categoryTree';
 import { invalidateCategories } from '@/lib/categoryCache';
 import { deriveChildColor } from '@/lib/colorUtils';
+import { toast } from '@/lib/toast';
+import { confirmDialog } from '@/lib/confirm';
 
 interface DragState {
   type: 'root';
@@ -201,11 +203,11 @@ export default function CategoriesView({ user, onBack }: { user: User; onBack?: 
   }
 
   async function handleDelete(id: string) {
-    if (confirm('¿Eliminar esta categoría? Los gastos asociados se conservan.')) {
-      await supabase.from('categories').update({ deleted: true }).eq('id', id);
-      invalidateCategories();
-      loadData();
-    }
+    if (!(await confirmDialog('¿Eliminar esta categoría? Los gastos asociados se conservan.'))) return;
+    const { error } = await supabase.from('categories').update({ deleted: true }).eq('id', id);
+    if (error) { toast('No se pudo eliminar la categoría. Reintentá.'); return; }
+    invalidateCategories();
+    loadData();
   }
 
   function totalSpend(node: CatNode): number {

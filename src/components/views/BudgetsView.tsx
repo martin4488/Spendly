@@ -32,6 +32,8 @@ export interface BudgetPeriod {
 import { CatNode, buildTree, flattenTree, allDescendantIds } from '@/lib/categoryTree';
 import { getCategories } from '@/lib/categoryCache';
 import { useSyncOnForeground } from '@/lib/useSyncOnForeground';
+import { toast } from '@/lib/toast';
+import { confirmDialog } from '@/lib/confirm';
 
 // ── Period generation ─────────────────────────────────────────────────────────
 function getPeriodBounds(startDate: string, recurrence: 'monthly' | 'yearly', offset: number = 0): { start: string; end: string } {
@@ -413,15 +415,18 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
       }
       setShowForm(false);
       loadData();
-    } catch (err) { console.error(err); }
+    } catch (err) {
+      console.error(err);
+      toast('No se pudo guardar el presupuesto. Reintentá.');
+    }
     finally { setSaving(false); }
   }
 
   async function handleDelete(id: string) {
-    if (confirm('¿Eliminar este presupuesto?')) {
-      await supabase.from('budgets').delete().eq('id', id);
-      loadData();
-    }
+    if (!(await confirmDialog('¿Eliminar este presupuesto?'))) return;
+    const { error } = await supabase.from('budgets').delete().eq('id', id);
+    if (error) { toast('No se pudo eliminar el presupuesto. Reintentá.'); return; }
+    loadData();
   }
 
   // O(1) per toggle now that selectedCatIds is a Set
@@ -471,7 +476,8 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
       m = format(d, 'yyyy-MM');
     }
     const upserts = months.map(mo => ({ user_id: user.id, month: mo, amount: val }));
-    await supabase.from('global_budget_periods').upsert(upserts, { onConflict: 'user_id,month' });
+    const { error } = await supabase.from('global_budget_periods').upsert(upserts, { onConflict: 'user_id,month' });
+    if (error) { toast('No se pudo guardar el presupuesto mensual. Reintentá.'); return; }
     setMonthlyBudget(val);
     setShowBudgetModal(false);
   }

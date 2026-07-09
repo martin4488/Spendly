@@ -31,6 +31,7 @@ interface Props {
 
 import { CatNode, buildTree, flattenTree } from '@/lib/categoryTree';
 import { getCategories, invalidateCategories } from '@/lib/categoryCache';
+import { toast } from '@/lib/toast';
 
 // ── Frecuentes: exponential decay scoring in localStorage ────────────────────
 const FREQ_KEY = 'spendly_cat_freq';
@@ -221,13 +222,17 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
     if (!newCatName) return;
     setSavingCat(true);
     try {
-      const { data } = await supabase.from('categories')
+      const { data, error } = await supabase.from('categories')
         .insert({ user_id: user.id, name: newCatName, icon: newCatIcon, color: newCatColor, parent_id: newCatParentId })
         .select().single();
+      if (error) throw error;
       invalidateCategories();
       await loadCategories();
       if (data) { setCategoryId(data.id); bumpCatFrequency(data.id); setShowCreateCategory(false); setShowCategoryPicker(false); setSearchQuery(''); }
-    } catch (err) { console.error(err); }
+    } catch (err) {
+      console.error(err);
+      toast('No se pudo crear la categoría. Reintentá.');
+    }
     finally { setSavingCat(false); }
   }
 
@@ -242,10 +247,17 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
     }
     const data = { user_id: user.id, amount: finalAmount, description: description || null, notes: null, category_id: categoryId, date, original_currency: originalCurrency, original_amount: originalAmount };
     try {
-      if (editingExpense) await supabase.from('expenses').update(data).eq('id', editingExpense.id);
-      else await supabase.from('expenses').insert(data);
+      // Supabase returns { error } instead of throwing on a DB/validation error;
+      // a network failure (e.g. offline) rejects and is caught below.
+      const { error } = editingExpense
+        ? await supabase.from('expenses').update(data).eq('id', editingExpense.id)
+        : await supabase.from('expenses').insert(data);
+      if (error) throw error;
       onSaved(); onClose();
-    } catch (err) { console.error(err); }
+    } catch (err) {
+      console.error(err);
+      toast('No se pudo guardar el gasto. Revisá tu conexión y reintentá.');
+    }
     finally { setSaving(false); }
   }
 

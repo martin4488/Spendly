@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { clearDashboardCache } from '@/lib/dashboardCache';
 import { invalidateCategories } from '@/lib/categoryCache';
+import { confirmDialog } from '@/lib/confirm';
 
 interface Props {
   user: User;
@@ -311,12 +312,11 @@ export default function SettingsView({ user, defaultCurrency, onCurrencyChange, 
   }
 
   async function handleLogout() {
-    if (confirm('¿Cerrar sesión?')) {
-      // Wipe local caches before sign-out so the next user can't see any leaked snapshot
-      clearDashboardCache();
-      invalidateCategories();
-      await supabase.auth.signOut();
-    }
+    if (!(await confirmDialog({ message: '¿Cerrar sesión?', confirmLabel: 'Cerrar sesión', danger: false }))) return;
+    // Wipe local caches before sign-out so the next user can't see any leaked snapshot
+    clearDashboardCache();
+    invalidateCategories();
+    await supabase.auth.signOut();
   }
 
   return (
