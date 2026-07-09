@@ -46,6 +46,11 @@ export default function RootLayout({
     <html lang="es" className={`${inter.variable} ${jetbrains.variable}`}>
       <head>
         <link rel="apple-touch-icon" href="/icon-192.png" />
+        {/* Warm the TLS connection to Supabase in parallel with JS parse so the
+            boot RPC on first load doesn't pay DNS + TCP + TLS before firing. */}
+        {process.env.NEXT_PUBLIC_SUPABASE_URL && (
+          <link rel="preconnect" href={process.env.NEXT_PUBLIC_SUPABASE_URL} crossOrigin="" />
+        )}
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, interactive-widget=resizes-content" />
       </head>
       <body className={`${inter.className} antialiased`}>

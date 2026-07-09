@@ -7,10 +7,13 @@ import { setDefaultCurrency } from '@/lib/utils';
 import { Budget } from '@/types';
 import type { CurrencyCode } from '@/lib/currency';
 import ChunkErrorBoundary from '@/components/ChunkErrorBoundary';
+// Dashboard is the first view rendered on every cold start, so it ships in the
+// main bundle (not lazy) — lazy-loading it would add a chunk round-trip on the
+// critical path before the first paint.
+import DashboardView from '@/components/views/DashboardView';
 
 // Shared import factories so we can both lazy-render and prefetch the same chunks.
 const imports = {
-  dashboard: () => import('@/components/views/DashboardView'),
   categories: () => import('@/components/views/CategoriesView'),
   budgets: () => import('@/components/views/BudgetsView'),
   budgetDetail: () => import('@/components/views/BudgetDetailView'),
@@ -22,7 +25,6 @@ const imports = {
   addExpense: () => import('@/components/AddExpenseModal'),
 };
 
-const DashboardView = lazy(imports.dashboard);
 const CategoriesView = lazy(imports.categories);
 const BudgetsView = lazy(imports.budgets);
 const BudgetDetailView = lazy(imports.budgetDetail);
