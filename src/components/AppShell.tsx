@@ -1,21 +1,36 @@
 'use client';
 
-import { useState, lazy, Suspense, useCallback } from 'react';
+import { useState, lazy, Suspense, useCallback, useEffect } from 'react';
 import { User } from '@supabase/supabase-js';
 import { LayoutDashboard, Wallet, RefreshCcw, Settings, BarChart2 } from 'lucide-react';
 import { setDefaultCurrency } from '@/lib/utils';
 import { Budget } from '@/types';
 import type { CurrencyCode } from '@/lib/currency';
+import ChunkErrorBoundary from '@/components/ChunkErrorBoundary';
 
-const DashboardView = lazy(() => import('@/components/views/DashboardView'));
-const CategoriesView = lazy(() => import('@/components/views/CategoriesView'));
-const BudgetsView = lazy(() => import('@/components/views/BudgetsView'));
-const BudgetDetailView = lazy(() => import('@/components/views/BudgetDetailView'));
-const GlobalBudgetDetailView = lazy(() => import('@/components/views/GlobalBudgetDetailView'));
-const RecurringView = lazy(() => import('@/components/views/RecurringView'));
-const ReflectView = lazy(() => import('@/components/views/ReflectView'));
-const SettingsView = lazy(() => import('@/components/views/SettingsView'));
-const SpendingOverview = lazy(() => import('@/components/views/SpendingOverview'));
+// Shared import factories so we can both lazy-render and prefetch the same chunks.
+const imports = {
+  dashboard: () => import('@/components/views/DashboardView'),
+  categories: () => import('@/components/views/CategoriesView'),
+  budgets: () => import('@/components/views/BudgetsView'),
+  budgetDetail: () => import('@/components/views/BudgetDetailView'),
+  globalBudgetDetail: () => import('@/components/views/GlobalBudgetDetailView'),
+  recurring: () => import('@/components/views/RecurringView'),
+  reflect: () => import('@/components/views/ReflectView'),
+  settings: () => import('@/components/views/SettingsView'),
+  overview: () => import('@/components/views/SpendingOverview'),
+  addExpense: () => import('@/components/AddExpenseModal'),
+};
+
+const DashboardView = lazy(imports.dashboard);
+const CategoriesView = lazy(imports.categories);
+const BudgetsView = lazy(imports.budgets);
+const BudgetDetailView = lazy(imports.budgetDetail);
+const GlobalBudgetDetailView = lazy(imports.globalBudgetDetail);
+const RecurringView = lazy(imports.recurring);
+const ReflectView = lazy(imports.reflect);
+const SettingsView = lazy(imports.settings);
+const SpendingOverview = lazy(imports.overview);
 
 type Tab = 'dashboard' | 'categories' | 'budgets' | 'recurring' | 'settings' | 'overview' | 'budget-detail' | 'global-budget-detail' | 'reflect';
 
@@ -80,6 +95,24 @@ export default function AppShell({ user, initialCurrency }: AppShellProps) {
     setDefaultCurrency(c);
   }, []);
 
+  // Warm the lazy chunks while idle & online so every view — especially the
+  // add-expense modal — is cached by the service worker and works offline.
+  // Without this, opening a not-yet-visited view offline fails the dynamic
+  // import and crashes with a client-side error.
+  useEffect(() => {
+    let done = false;
+    const warm = () => {
+      if (done) return;
+      done = true;
+      Object.values(imports).forEach((load) => { load().catch(() => {}); });
+    };
+    const w = window as unknown as {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+    };
+    if (typeof w.requestIdleCallback === 'function') w.requestIdleCallback(warm, { timeout: 4000 });
+    else setTimeout(warm, 2000);
+  }, []);
+
   const openBudget = useCallback((budget: Budget, periodId: string = '') => {
     setSelectedBudget(budget);
     setSelectedPeriodId(periodId);
@@ -106,6 +139,7 @@ export default function AppShell({ user, initialCurrency }: AppShellProps) {
   return (
     <div className="min-h-screen pb-20">
       <main className="page-transition">
+        <ChunkErrorBoundary key={activeTab}>
         <Suspense fallback={activeTab === 'dashboard' ? <DashboardSkeleton /> : <ViewFallback />}>
           {activeTab === 'dashboard' && (
             <DashboardView user={user} onNavigate={handleNavigate} defaultCurrency={defaultCurrency} />
@@ -143,6 +177,7 @@ export default function AppShell({ user, initialCurrency }: AppShellProps) {
             />
           )}
         </Suspense>
+        </ChunkErrorBoundary>
       </main>
 
       {!hideNav && (
