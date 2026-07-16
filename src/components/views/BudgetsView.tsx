@@ -312,14 +312,15 @@ async function fetchBudgetsSnapshot(userId: string): Promise<BudgetsSnapshot | n
         prevAccumMonths = first === last ? first : `${first} - ${last}`;
       }
     }
-    return { ...b, category_ids: catIds, categories: bCats, spent, prevAccumulated, prevAccumMonths } as any;
+    const currentAmount = curPeriod?.amount ?? b.amount;
+    return { ...b, currentAmount, category_ids: catIds, categories: bCats, spent, prevAccumulated, prevAccumMonths } as any;
   });
 
   const sorted = enriched.slice().sort((a, b) => {
     if (a.recurrence !== b.recurrence)
       return a.recurrence === 'monthly' ? -1 : 1;
-    const pctA = a.amount > 0 ? (a.spent || 0) / a.amount : 0;
-    const pctB = b.amount > 0 ? (b.spent || 0) / b.amount : 0;
+    const pctA = (a as any).currentAmount > 0 ? (a.spent || 0) / (a as any).currentAmount : 0;
+    const pctB = (b as any).currentAmount > 0 ? (b.spent || 0) / (b as any).currentAmount : 0;
     return pctB - pctA;
   });
 
@@ -648,7 +649,7 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
         <div className="space-y-3">
           {budgets.map((budget) => {
             const spent = budget.spent || 0;
-            const budgetAmount = budget.amount;
+            const budgetAmount = (budget as any).currentAmount ?? budget.amount;
             const isOver = spent > budgetAmount;
             const left = isOver ? spent - budgetAmount : budgetAmount - spent;
             const pct = budgetAmount > 0 ? (spent / budgetAmount) * 100 : 0;
