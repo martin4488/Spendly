@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, lazy, Suspense } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, lazy, Suspense } from 'react';
 import { supabase } from '@/lib/supabase';
 import { prefetchRates } from '@/lib/currency';
 import { setDefaultCurrency, readCachedCurrency } from '@/lib/currencyState';
@@ -15,6 +15,20 @@ import type { Category } from '@/types';
 // Lazy-load AuthPage — it's only shown when not logged in, which is rare.
 // Keeps ~7 lucide icons + auth UI out of the critical bundle.
 const AuthPage = lazy(() => import('@/app/auth/AuthPage'));
+
+/**
+ * `useLayoutEffect` on the client, `useEffect` on the server.
+ *
+ * The session lives in localStorage, which the server can't see, so the first
+ * client render has to match the server's (the splash) or hydration fails. But
+ * waiting for a passive effect to restore it would show that splash for a frame.
+ * Layout effects run after hydration and *before* paint, so we get both: a
+ * matching first render and a session restored in time for the first frame.
+ *
+ * The server never runs effects at all; aliasing to useEffect there just keeps
+ * React from warning about useLayoutEffect during SSR.
+ */
+const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
 
 interface BootData {
   user: User;
@@ -64,18 +78,24 @@ function initialCurrency(): CurrencyCode {
 }
 
 export default function Home() {
-  const [bootData, setBootData] = useState<BootData | null>(() => {
-    if (typeof window === 'undefined') return null;
+  // Starts null so the first client render matches the server-rendered splash;
+  // the layout effect below fills it in before the browser paints.
+  const [bootData, setBootData] = useState<BootData | null>(null);
+  const [unauthenticated, setUnauthenticated] = useState(false);
+  // A ref, not `!!bootData`: the auth effect below runs once on mount and would
+  // otherwise capture the pre-restore value.
+  const bootedRef = useRef(false);
+
+  useIsomorphicLayoutEffect(() => {
     const cached = getCachedSession();
-    if (!cached) return null;
+    if (!cached) return;
     const currency = initialCurrency();
     setDefaultCurrency(currency);
-    return { user: cached, currency };
-  });
-  const [unauthenticated, setUnauthenticated] = useState(false);
+    setBootData({ user: cached, currency });
+    bootedRef.current = true;
+  }, []);
 
   useEffect(() => {
-    let booted = !!bootData;
     // A restored session makes auth emit *two* events back to back — SIGNED_IN
     // then INITIAL_SESSION, both carrying the same session (pinned by
     // tests/supabase-contract.test.mjs). Without this guard every cold start
@@ -89,11 +109,11 @@ export default function Home() {
     }
 
     async function bootWithSession(user: User) {
-      if (booted) {
+      if (bootedRef.current) {
         runUnifiedBootOnce(user);
         return;
       }
-      booted = true;
+      bootedRef.current = true;
 
       const defaultCurr: CurrencyCode = initialCurrency();
       setDefaultCurrency(defaultCurr);
@@ -173,7 +193,7 @@ export default function Home() {
           setUnauthenticated(true);
         }
       } else if (event === 'SIGNED_OUT') {
-        booted = false;
+        bootedRef.current = false;
         bootRunForUser = null;
         setBootData(null);
         setUnauthenticated(true);
