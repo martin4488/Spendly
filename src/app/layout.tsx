@@ -11,11 +11,14 @@ const inter = Inter({
   preload: true,
 });
 
+// Every amount in the app renders in `font-mono` (see components/ui/Amount), and
+// the biggest one is the dashboard header total — the first thing painted. With
+// preload off that headline number was guaranteed a swap repaint on cold start.
 const jetbrains = JetBrains_Mono({
   subsets: ['latin'],
   display: 'swap',
   variable: '--font-mono',
-  preload: false,
+  preload: true,
 });
 
 export const metadata: Metadata = {

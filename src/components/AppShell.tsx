@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, lazy, Suspense, useCallback, useEffect } from 'react';
-import { User } from '@supabase/supabase-js';
+import type { User } from '@supabase/auth-js';
 import { LayoutDashboard, Wallet, RefreshCcw, Settings, BarChart2 } from 'lucide-react';
-import { setDefaultCurrency } from '@/lib/utils';
+import { setDefaultCurrency } from '@/lib/currencyState';
 import { Budget } from '@/types';
 import type { CurrencyCode } from '@/lib/currency';
 import ChunkErrorBoundary from '@/components/ChunkErrorBoundary';

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { User } from '@supabase/supabase-js';
+import type { User } from '@supabase/auth-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/utils';
 import Amount from '@/components/ui/Amount';
@@ -13,7 +13,8 @@ import { CatNode, buildTree } from '@/lib/categoryTree';
 import { format, startOfYear, endOfYear } from 'date-fns';
 import { es } from 'date-fns/locale';
 import OfflineState from '@/components/ui/OfflineState';
-import { readViewCache, writeViewCache } from '@/lib/viewCache';
+import { readViewCache, writeViewCache, isViewCacheFresh } from '@/lib/viewCache';
+import { reportRpcFallback } from '@/lib/rpcFallback';
 
 interface Props { user: User; }
 
@@ -96,6 +97,9 @@ async function fetchPrevYearData(userId: string, prevYr: number): Promise<{
       }
     });
   } else {
+    // Note: an empty previous year is a legitimate reason to land here, so only
+    // report when the RPC actually errored.
+    if (rpcError) reportRpcFallback('get_reflect_data', rpcError, 'ReflectView (año anterior)');
     const { data: expData } = await supabase.from('expenses')
       .select('date, amount, category_id').eq('user_id', userId)
       .gte('date', pStart).lte('date', pEnd).limit(10000);
@@ -137,6 +141,7 @@ async function fetchYearData(userId: string, yr: number, prevYr: number | null, 
       catMonthMap[row.category_id][row.month] = Number(row.total);
     });
   } else {
+    reportRpcFallback('get_reflect_data', rpcError, 'ReflectView');
     const { data: expData } = await supabase.from('expenses')
       .select('date, amount, category_id').eq('user_id', userId)
       .gte('date', yearStart).lte('date', yearEnd).limit(10000);
@@ -253,6 +258,9 @@ export default function ReflectView({ user }: Props) {
     const cy = now.getFullYear();
     const cm = format(now, 'yyyy-MM');
     if (!cached) { setYear(cy); setCurrentMonth(cm); }
+    // The boot warm-up usually fetched this exact snapshot seconds ago; doing it
+    // again on first open was a duplicate round-trip (and the heaviest one here).
+    if (cached && isViewCacheFresh(REFLECT_CACHE, user.id)) return;
     // Silent when we already have a snapshot: refresh in the background, no spinner.
     init(cy, cm, !!cached);
   }, []);

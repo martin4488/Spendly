@@ -1,16 +1,16 @@
 'use client';
 
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { User } from '@supabase/supabase-js';
+import type { User } from '@supabase/auth-js';
 import { supabase } from '@/lib/supabase';
 import { CATEGORY_ICONS, CATEGORY_COLORS } from '@/lib/utils';
 import { Category, RecurringExpense } from '@/types';
 import { CatNode, FlatEntry, buildTree, flattenTree } from '@/lib/categoryTree';
 import { getCategories, getCategoriesSync, invalidateCategories } from '@/lib/categoryCache';
-import { readViewCache, writeViewCache } from '@/lib/viewCache';
+import { readViewCache, writeViewCache, isViewCacheFresh } from '@/lib/viewCache';
 import { Plus, X, CalendarOff, Delete, Search, Settings, ArrowLeft, Check } from 'lucide-react';
 import CategoryIcon from '@/components/ui/CategoryIcon';
-import { getIconComponent } from '@/lib/iconMap';
+import { getIconComponent } from '@/lib/iconComponents';
 import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 import SwipeableRow from '@/components/SwipeableRow';
@@ -63,7 +63,11 @@ export default function RecurringView({ user }: { user: User }) {
   const [newCatParentId, setNewCatParentId] = useState<string | null>(null);
   const [savingCat, setSavingCat] = useState(false);
 
-  useEffect(() => { loadData(!!cached); }, []);
+  // Skip the mount refetch when the boot warm-up already primed this snapshot.
+  useEffect(() => {
+    if (cached && isViewCacheFresh('recurring', user.id)) return;
+    loadData(!!cached);
+  }, []);
 
   // `silent` skips the full-screen spinner when we already have a snapshot to
   // show — the refresh then swaps in fresh data without a flash.

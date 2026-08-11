@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
-import { User } from '@supabase/supabase-js';
+import type { User } from '@supabase/auth-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/utils';
 import { Budget, Category } from '@/types';

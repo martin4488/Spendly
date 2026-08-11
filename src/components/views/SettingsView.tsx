@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, ReactNode } from 'react';
-import { User } from '@supabase/supabase-js';
+import type { User } from '@supabase/auth-js';
 import { supabase } from '@/lib/supabase';
 import { exportToCSV } from '@/lib/utils';
 import { CURRENCIES, CurrencyCode } from '@/lib/currency';

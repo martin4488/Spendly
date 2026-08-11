@@ -1,5 +1,5 @@
 import { CURRENCIES, CurrencyCode } from '@/lib/currency';
-import { getDefaultCurrency } from '@/lib/utils';
+import { getDefaultCurrency } from '@/lib/currencyState';
 
 type Props = {
   /** The numeric value to display */
@@ -32,6 +32,11 @@ const weightMap = {
   extrabold: 'font-extrabold',
 };
 
+// `toLocaleString` builds a fresh Intl.NumberFormat on every call, and this
+// component renders once per expense row (plus once per day header). Two cached
+// instances cover every call site.
+const groupFmt = new Intl.NumberFormat('es-AR', { maximumFractionDigits: 0 });
+
 export default function Amount({
   value,
   currency,
@@ -45,9 +50,7 @@ export default function Amount({
   const resolvedCurrency = (currency || getDefaultCurrency() || 'USD') as CurrencyCode;
   const abs = Math.abs(value);
 
-  const intFmt = decimals
-    ? Number(Math.floor(abs)).toLocaleString('es-AR')
-    : Math.round(abs).toLocaleString('es-AR');
+  const intFmt = groupFmt.format(decimals ? Math.floor(abs) : Math.round(abs));
 
   const dec = decimals ? abs.toFixed(2).split('.')[1] : null;
 

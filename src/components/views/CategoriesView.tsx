@@ -1,14 +1,14 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { User } from '@supabase/supabase-js';
+import type { User } from '@supabase/auth-js';
 import { supabase } from '@/lib/supabase';
 import { getMonthRange, CATEGORY_ICONS, CATEGORY_COLORS } from '@/lib/utils';
 import { Category } from '@/types';
 import { Plus, X, FolderPlus, GripVertical, ArrowLeft } from 'lucide-react';
 import SwipeableRow from '@/components/SwipeableRow';
 import CategoryIcon from '@/components/ui/CategoryIcon';
-import { getIconComponent } from '@/lib/iconMap';
+import { getIconComponent } from '@/lib/iconComponents';
 
 import { CatNode, buildTree } from '@/lib/categoryTree';
 import { invalidateCategories } from '@/lib/categoryCache';
@@ -73,11 +73,24 @@ export default function CategoriesView({ user, onBack }: { user: User; onBack?: 
   function scheduleSaveOrder(newRoots: CatNode[]) {
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     saveTimeoutRef.current = setTimeout(() => {
-      const updates: { id: string; position: number }[] = [];
-      function walk(nodes: CatNode[]) { nodes.forEach((n, i) => { updates.push({ id: n.id, position: i }); walk(n.children); }); }
+      // One upsert instead of one UPDATE per category — reordering a list of 40
+      // categories used to fire 40 requests. `user_id` and `name` ride along
+      // because the statement is an INSERT ... ON CONFLICT under the hood and
+      // those columns are NOT NULL; every other column is left untouched.
+      const updates: { id: string; user_id: string; name: string; position: number }[] = [];
+      function walk(nodes: CatNode[]) {
+        nodes.forEach((n, i) => {
+          updates.push({ id: n.id, user_id: n.user_id, name: n.name, position: i });
+          walk(n.children);
+        });
+      }
       walk(newRoots);
-      Promise.all(updates.map(u => supabase.from('categories').update({ position: u.position }).eq('id', u.id)))
-        .then(() => invalidateCategories());
+      if (updates.length === 0) return;
+      Promise.resolve(supabase.from('categories').upsert(updates, { onConflict: 'id' }))
+        .then(({ error }) => {
+          if (error) { console.error('No se pudo guardar el orden de categorías', error); return; }
+          invalidateCategories();
+        });
     }, 600);
   }
 

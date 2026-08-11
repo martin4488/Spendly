@@ -28,6 +28,17 @@ export interface Expense {
   category?: Category;
 }
 
+/**
+ * The subset of `Expense` the lists actually render. Querying these columns
+ * instead of `select('*')` roughly halves the payload (and the JSON we push
+ * through localStorage), since `notes`, `user_id` and the timestamps are never
+ * displayed there.
+ */
+export type ExpenseListItem = Pick<
+  Expense,
+  'id' | 'amount' | 'description' | 'date' | 'category_id' | 'is_recurring'
+>;
+
 export interface RecurringExpense {
   id: string;
   user_id: string;

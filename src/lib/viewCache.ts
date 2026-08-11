@@ -36,6 +36,32 @@ export function readViewCache<T>(key: string, userId: string): T | null {
   }
 }
 
+/**
+ * Age of a snapshot in ms, or null if there isn't one for this user.
+ *
+ * Used to skip the mount-time refetch when the boot warm-up already fetched this
+ * exact data seconds ago — otherwise Budgets, Reflect and Recurring each loaded
+ * twice per session (once prefetched, once on first open). Foreground/realtime
+ * syncs still refresh these views, so the staleness window stays small.
+ */
+export function readViewCacheAge(key: string, userId: string): number | null {
+  try {
+    const raw = localStorage.getItem(PREFIX + key);
+    if (!raw) return null;
+    const parsed: Envelope<unknown> = JSON.parse(raw);
+    if (parsed.userId !== userId || typeof parsed.timestamp !== 'number') return null;
+    return Date.now() - parsed.timestamp;
+  } catch {
+    return null;
+  }
+}
+
+/** True when a snapshot exists and is younger than `maxAgeMs`. */
+export function isViewCacheFresh(key: string, userId: string, maxAgeMs = 60_000): boolean {
+  const age = readViewCacheAge(key, userId);
+  return age !== null && age < maxAgeMs;
+}
+
 /** Write a view snapshot. Silently ignores quota/serialization errors. */
 export function writeViewCache<T>(key: string, userId: string, data: T): void {
   try {

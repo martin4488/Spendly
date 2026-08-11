@@ -11,14 +11,14 @@
  * 3. When fresh data arrives, it replaces the stale data and updates the cache
  */
 
-import { Expense, Category } from '@/types';
+import { ExpenseListItem, Category } from '@/types';
 
 const CACHE_KEY = 'spendly_dashboard_cache';
 // No expiration — cache is overwritten with fresh data every time the app opens.
 // Stale data (even weeks old) is always better than a spinner for half a second.
 
 export interface DashboardSnapshot {
-  expenses: Expense[];
+  expenses: ExpenseListItem[];
   chartTotals: Record<string, number>;
   categories: Array<{ id: string; name: string; icon: string; color: string; parent_id: string | null }>;
   timestamp: number;
@@ -41,7 +41,7 @@ export function readDashboardCache(userId: string): DashboardSnapshot | null {
 /** Write dashboard data to cache. */
 export function writeDashboardCache(
   userId: string,
-  expenses: Expense[],
+  expenses: ExpenseListItem[],
   chartTotals: Record<string, number>,
   categoriesMap: Map<string, Category>,
 ): void {
@@ -66,6 +66,41 @@ export function writeDashboardCache(
   } catch {
     // localStorage full or unavailable — silently ignore
   }
+}
+
+// ── Fresh-snapshot subscribers ───────────────────────────────────────────────
+// The boot RPC in `page.tsx` finishes *after* DashboardView has already mounted
+// and seeded itself from the cache, so without this the freshly fetched data sat
+// in localStorage until the next launch and the user stared at last session's
+// numbers. Boot publishes through `publishDashboardCache`; the view subscribes
+// and adopts the snapshot when it's safe to (see DashboardView).
+
+type SnapshotListener = (snapshot: DashboardSnapshot) => void;
+const listeners = new Set<SnapshotListener>();
+
+/** Subscribe to snapshots published by a *different* writer. Returns unsubscribe. */
+export function onDashboardSnapshot(fn: SnapshotListener): () => void {
+  listeners.add(fn);
+  return () => { listeners.delete(fn); };
+}
+
+/**
+ * Write the cache and notify subscribers. Used by the boot path; ordinary view
+ * refreshes call `writeDashboardCache` instead, since they already hold the data
+ * in state and re-broadcasting it would just cause a redundant render.
+ */
+export function publishDashboardCache(
+  userId: string,
+  expenses: ExpenseListItem[],
+  chartTotals: Record<string, number>,
+  categoriesMap: Map<string, Category>,
+): void {
+  writeDashboardCache(userId, expenses, chartTotals, categoriesMap);
+  const snapshot = readDashboardCache(userId);
+  if (!snapshot) return;
+  listeners.forEach(fn => {
+    try { fn(snapshot); } catch { /* a bad subscriber must not break the boot */ }
+  });
 }
 
 /** Clear cache (e.g. on sign out). */

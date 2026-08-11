@@ -1,5 +1,51 @@
-import { memo, useMemo } from 'react';
-import { getIconComponent } from '@/lib/iconMap';
+import { memo, useEffect, useMemo, useState } from 'react';
+import type { LucideIcon } from '@/lib/iconComponents';
+
+// ── Deferred icon components ─────────────────────────────────────────────────
+// The lucide registry is ~47 kB of ESM and this component renders on the
+// dashboard, so importing it statically put all of it in front of first paint.
+// We kick the chunk off at module load — parallel with boot, not on first render
+// — and paint the coloured tile immediately, fading the glyph in when it lands.
+// After the first visit the service worker serves it from cache.
+
+let registry: { getIconComponent: (key: string) => LucideIcon } | null = null;
+let pending: Promise<void> | null = null;
+const waiters = new Set<() => void>();
+
+function loadRegistry(): Promise<void> {
+  if (registry) return Promise.resolve();
+  if (!pending) {
+    pending = import('@/lib/iconComponents')
+      .then(mod => {
+        registry = mod;
+        // One notify for every mounted icon; React 18 batches these into a
+        // single render pass.
+        waiters.forEach(fn => fn());
+        waiters.clear();
+      })
+      .catch(() => {
+        // Offline before the chunk was ever cached — tiles stay glyph-less
+        // rather than breaking the list.
+        pending = null;
+      });
+  }
+  return pending;
+}
+
+if (typeof window !== 'undefined') loadRegistry();
+
+/** Re-render once the icon registry is available. No-op if it already is. */
+function useIconRegistry(): typeof registry {
+  const [, bump] = useState(0);
+  useEffect(() => {
+    if (registry) return;
+    const notify = () => bump(n => n + 1);
+    waiters.add(notify);
+    loadRegistry();
+    return () => { waiters.delete(notify); };
+  }, []);
+  return registry;
+}
 
 // ── Lighten a hex color for gradient end ─────────────────────────────────────
 function lightenHex(hex: string, amount: number = 30): string {
@@ -27,7 +73,8 @@ const roundedMap = {
 };
 
 function CategoryIconInner({ icon, color, size = 36, iconSize, className = '', rounded = 'lg' }: CategoryIconProps) {
-  const Icon = getIconComponent(icon);
+  const icons = useIconRegistry();
+  const Icon = icons?.getIconComponent(icon);
   const iSize = iconSize ?? Math.round(size * 0.5);
   const gradientEnd = useMemo(() => lightenHex(color, 40), [color]);
 
@@ -40,7 +87,9 @@ function CategoryIconInner({ icon, color, size = 36, iconSize, className = '', r
         background: `linear-gradient(135deg, ${color}, ${gradientEnd})`,
       }}
     >
-      <Icon size={iSize} color="white" strokeWidth={1.8} />
+      {Icon && (
+        <Icon size={iSize} color="white" strokeWidth={1.8} style={{ animation: 'iconFadeIn 0.15s ease-out' }} />
+      )}
     </div>
   );
 }

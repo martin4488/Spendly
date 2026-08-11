@@ -1,17 +1,12 @@
 import { format, startOfMonth, endOfMonth, startOfYear, endOfYear, addMonths, addYears, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { ICON_KEYS } from '@/lib/iconMap';
+import { getDefaultCurrency } from '@/lib/currencyState';
 
-// Global default currency — set once at boot via setDefaultCurrency()
-let _defaultCurrency: string = 'USD';
-
-export function setDefaultCurrency(code: string) {
-  _defaultCurrency = code;
-}
-
-export function getDefaultCurrency(): string {
-  return _defaultCurrency;
-}
+// The currency global lives in `currencyState.ts` — importing it from here would
+// pull date-fns + the icon registry into the boot chunk. Re-exported for the few
+// call sites that still reach for it via utils.
+export { setDefaultCurrency, getDefaultCurrency } from '@/lib/currencyState';
 
 // Cache Intl.NumberFormat instances — avoids re-instantiation on every render
 const _fmtCache = new Map<string, Intl.NumberFormat>();
@@ -44,7 +39,7 @@ function getCurrencyFormatter(code: string, round?: boolean): Intl.NumberFormat 
 }
 
 export function formatCurrency(amount: number, currency?: string, round?: boolean): string {
-  const code = currency || _defaultCurrency;
+  const code = currency || getDefaultCurrency();
   return getCurrencyFormatter(code, round).format(round ? Math.round(amount) : amount);
 }
 

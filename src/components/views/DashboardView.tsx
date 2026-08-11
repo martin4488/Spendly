@@ -1,19 +1,20 @@
 'use client';
 
 import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense, memo } from 'react';
-import { User } from '@supabase/supabase-js';
+import type { User } from '@supabase/auth-js';
 import { supabase } from '@/lib/supabase';
-import { Expense, Category } from '@/types';
+import { ExpenseListItem, Category } from '@/types';
 import { Plus, Search, X } from 'lucide-react';
 import CategoryIcon from '@/components/ui/CategoryIcon';
 import type { CurrencyCode } from '@/lib/currency';
-import { getCategories } from '@/lib/categoryCache';
+import { getCategories, getCategoriesSync } from '@/lib/categoryCache';
 import SwipeableRow from '@/components/SwipeableRow';
-import { readDashboardCache, writeDashboardCache, buildCategoriesMapFromCache } from '@/lib/dashboardCache';
+import { readDashboardCache, writeDashboardCache, buildCategoriesMapFromCache, onDashboardSnapshot } from '@/lib/dashboardCache';
 import { useSyncOnForeground } from '@/lib/useSyncOnForeground';
 import { toast } from '@/lib/toast';
 import { confirmDialog } from '@/lib/confirm';
 import { getPendingExpenses, onQueueChange, flushQueue, startAutoFlush, dequeueExpense, type PendingExpense } from '@/lib/offlineQueue';
+import { reportRpcFallback } from '@/lib/rpcFallback';
 import Amount from '@/components/ui/Amount';
 import DashboardSkeleton from '@/components/ui/DashboardSkeleton';
 
@@ -23,6 +24,15 @@ type ViewMode = 'months' | 'years';
 
 const MONTHS_ES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
 const MONTHS_SHORT_ES = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+
+// Exactly the columns the list renders — `select('*')` also shipped notes,
+// user_id and three timestamps that nothing here reads.
+const EXPENSE_COLUMNS = 'id, amount, description, date, category_id, is_recurring';
+
+// Rows are rendered a screenful of days at a time. A year of history is a few
+// thousand rows, and each one is a swipeable row + icon + amount (~20 DOM nodes),
+// which is enough to make scrolling stutter on a phone if it's all mounted.
+const DAYS_PER_PAGE = 30;
 
 function toDateStr(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -131,7 +141,7 @@ const ExpenseRow = memo(function ExpenseRow({
   onEdit,
   onDelete,
 }: {
-  expense: Expense;
+  expense: ExpenseListItem;
   categoriesMap: Map<string, Category>;
   defaultCurrency: CurrencyCode;
   pending?: boolean;
@@ -182,9 +192,11 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
   const cached = useMemo(() => readDashboardCache(user.id), [user.id]);
   const hasCachedData = !!cached;
 
-  const [expenses, setExpenses] = useState<Expense[]>(cached?.expenses || []);
+  const [expenses, setExpenses] = useState<ExpenseListItem[]>(cached?.expenses || []);
+  // Prefer the shared category cache's Map: it's the same object across reloads,
+  // so `ExpenseRow`'s memo holds instead of every row re-rendering on each sync.
   const [categoriesMap, setCategoriesMap] = useState<Map<string, Category>>(
-    cached ? buildCategoriesMapFromCache(cached.categories) : new Map()
+    () => getCategoriesSync(user.id) || (cached ? buildCategoriesMapFromCache(cached.categories) : new Map())
   );
   const [loading, setLoading] = useState(!hasCachedData);
   const [chartTotals, setChartTotals] = useState<Record<string, number>>(cached?.chartTotals || {});
@@ -210,6 +222,19 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
   const currentMonth = useMemo(() => new Date().getMonth(), []);
   const currentYear = useMemo(() => new Date().getFullYear(), []);
 
+  // Last known rows for the live period, in each view mode. Tapping back onto the
+  // current bar restores these instantly instead of waiting on a refetch.
+  const livePeriodRef = useRef<{ months: ExpenseListItem[] | null; years: ExpenseListItem[] | null }>({
+    months: cached?.expenses || null,
+    years: null,
+  });
+
+  // Only swap the map when it's actually a different one — a fresh Map with the
+  // same contents would invalidate every memoized row for nothing.
+  const adoptCategories = useCallback((map: Map<string, Category>) => {
+    setCategoriesMap(prev => (prev === map ? prev : map));
+  }, []);
+
   const loadDashboard = useCallback(async () => {
     try {
       const now = new Date();
@@ -229,12 +254,13 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
         getCategories(user.id),
       ]);
 
-      let freshExpenses: Expense[] = [];
+      let freshExpenses: ExpenseListItem[] = [];
       let freshTotals: Record<string, number> = {};
 
       if (rpcError || !rpcResult) {
+        reportRpcFallback('get_dashboard_data', rpcError, 'DashboardView');
         const [expRes, chartRes] = await Promise.all([
-          supabase.from('expenses').select('*').eq('user_id', user.id).gte('date', startStr).order('date', { ascending: false }).limit(500),
+          supabase.from('expenses').select(EXPENSE_COLUMNS).eq('user_id', user.id).gte('date', startStr).order('date', { ascending: false }).limit(500),
           supabase.from('expenses').select('date, amount').eq('user_id', user.id).gte('date', chartStart).limit(10000),
         ]);
         // Offline / fetch failed: Supabase resolves with { error } instead of
@@ -253,16 +279,17 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
         });
       }
 
+      livePeriodRef.current.months = freshExpenses;
       setExpenses(freshExpenses);
       setChartTotals(freshTotals);
-      setCategoriesMap(map);
+      adoptCategories(map);
       writeDashboardCache(user.id, freshExpenses, freshTotals, map);
     } catch (err) {
       console.error(err);
     } finally {
       setLoading(false);
     }
-  }, [user.id]);
+  }, [user.id, adoptCategories]);
 
   // Mount logic: skip the redundant fetch when boot RPC already populated the cache
   // (which is the common case — see `page.tsx`'s `runUnifiedBoot`).
@@ -282,6 +309,27 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     if (showSearch && searchRef.current) searchRef.current.focus();
   }, [showSearch]);
 
+  // ── Adopt the boot snapshot ──────────────────────────────────────────────
+  // We mount off the localStorage cache, which is last session's data; the boot
+  // RPC lands a moment later. Take it, but only while we're showing the live
+  // current month — never clobber a historical period or a search the user is
+  // looking at.
+  const canAdoptSnapshot = viewMode === 'months' && selectedBarIndex === 5 && !searchQuery;
+  const canAdoptRef = useRef(canAdoptSnapshot);
+  canAdoptRef.current = canAdoptSnapshot;
+
+  useEffect(() => {
+    return onDashboardSnapshot(snapshot => {
+      if (snapshot.userId !== user.id) return;
+      livePeriodRef.current.months = snapshot.expenses;
+      if (!canAdoptRef.current) return;
+      setExpenses(snapshot.expenses);
+      setChartTotals(snapshot.chartTotals);
+      adoptCategories(getCategoriesSync(user.id) || buildCategoriesMapFromCache(snapshot.categories));
+      setLoading(false);
+    });
+  }, [user.id, adoptCategories]);
+
   // ── Load expenses for a specific past month ───────────────────────────────
   const loadMonthExpenses = useCallback(async (year: number, month: number) => {
     try {
@@ -290,7 +338,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       const end = `${year}-${String(month + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
       const { data } = await supabase
         .from('expenses')
-        .select('*')
+        .select(EXPENSE_COLUMNS)
         .eq('user_id', user.id)
         .gte('date', start)
         .lte('date', end)
@@ -307,17 +355,18 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     try {
       const { data } = await supabase
         .from('expenses')
-        .select('*')
+        .select(EXPENSE_COLUMNS)
         .eq('user_id', user.id)
         .gte('date', `${year}-01-01`)
         .lte('date', `${year}-12-31`)
         .order('date', { ascending: false })
         .limit(2000);
+      if (year === currentYear) livePeriodRef.current.years = data || [];
       setExpenses(data || []);
     } catch (err) {
       console.error(err);
     }
-  }, [user.id]);
+  }, [user.id, currentYear]);
 
   const loadExtended = useCallback(async () => {
     try {
@@ -325,7 +374,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       const yearStart = `${yr}-01-01`;
       const yearEnd = `${yr}-12-31`;
 
-      const [{ data: rpcData }, { data: currentYearExpData }] = await Promise.all([
+      const [{ data: rpcData, error: rpcError }, { data: currentYearExpData }] = await Promise.all([
         supabase.rpc('get_yearly_totals', {
           p_user_id: user.id,
           p_start_year: yr - 5,
@@ -333,18 +382,26 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
         }),
         supabase
           .from('expenses')
-          .select('*')
+          .select(EXPENSE_COLUMNS)
           .eq('user_id', user.id)
           .gte('date', yearStart)
           .lte('date', yearEnd)
-          .order('date', { ascending: false }),
+          .order('date', { ascending: false })
+          .limit(2000),
       ]);
+
+      // No client-side fallback here: the year chart just comes back empty.
+      // Worth shouting about for exactly that reason.
+      if (rpcError || !rpcData) {
+        reportRpcFallback('get_yearly_totals', rpcError, 'DashboardView (vista por año)');
+      }
 
       const totals: Record<number, number> = {};
       (rpcData || []).forEach((row: { year: number; total: number }) => {
         totals[row.year] = Number(row.total);
       });
       setYearTotals(totals);
+      livePeriodRef.current.years = currentYearExpData || [];
       setExpenses(currentYearExpData || []);
       setExtendedLoaded(true);
     } catch (err) {
@@ -367,6 +424,11 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
   const handleBarSelect = useCallback(async (index: number) => {
     setSelectedBarIndex(index);
     if (index === 5) {
+      // Back to the live period: paint the rows we already have, then refresh in
+      // the background. Waiting on a round-trip here made the most common tap on
+      // the chart the slowest one.
+      const cachedRows = viewMode === 'months' ? livePeriodRef.current.months : livePeriodRef.current.years;
+      if (cachedRows) setExpenses(cachedRows);
       if (viewMode === 'months') loadDashboard();
       else loadYearExpenses(currentYear);
       return;
@@ -462,9 +524,16 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
   const displayExpenses = useMemo(() => {
     if (!showPending || pending.length === 0) return expenses;
     const serverIds = new Set(expenses.map(e => e.id));
-    const extra = pending
+    const extra: ExpenseListItem[] = pending
       .filter(p => !serverIds.has(p.id))
-      .map(p => ({ ...p, is_recurring: false, recurring_id: null, created_at: '', updated_at: '' } as Expense));
+      .map(p => ({
+        id: p.id,
+        amount: p.amount,
+        description: p.description ?? '',
+        date: p.date,
+        category_id: p.category_id,
+        is_recurring: false,
+      }));
     return [...extra, ...expenses];
   }, [expenses, pending, showPending]);
 
@@ -482,7 +551,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
         })
       : displayExpenses;
 
-    const dayMap = new Map<string, Expense[]>();
+    const dayMap = new Map<string, ExpenseListItem[]>();
     for (const exp of filtered) {
       const arr = dayMap.get(exp.date);
       if (arr) arr.push(exp);
@@ -499,7 +568,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       .sort((a, b) => b.date.localeCompare(a.date));
   }, [displayExpenses, searchQuery, todayStr, yesterdayStr, categoriesMap]);
 
-  const openEdit = useCallback((expense: Expense) => {
+  const openEdit = useCallback((expense: ExpenseListItem) => {
     // A still-unsynced (pending) expense can't be edited yet — editing hits the DB
     // by id and the row doesn't exist there. Let it sync first.
     if (pendingIds.has(expense.id)) {
@@ -549,6 +618,44 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     for (const g of groupedByDay) n += g.expenses.length;
     return n;
   }, [groupedByDay, searchQuery]);
+
+  // ── Progressive rendering ────────────────────────────────────────────────
+  // Mount a screenful of days at a time and extend as the sentinel scrolls into
+  // view. Grouping/filtering above still runs over everything (it's cheap); this
+  // only caps how many rows exist in the DOM.
+  const [visibleDays, setVisibleDays] = useState(DAYS_PER_PAGE);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+
+  // Any change of period, mode or query is a different list — start over.
+  useEffect(() => {
+    setVisibleDays(DAYS_PER_PAGE);
+  }, [selectedBarIndex, viewMode, searchQuery]);
+
+  const visibleGroups = useMemo(
+    () => (groupedByDay.length <= visibleDays ? groupedByDay : groupedByDay.slice(0, visibleDays)),
+    [groupedByDay, visibleDays],
+  );
+  const hasMoreDays = groupedByDay.length > visibleGroups.length;
+
+  useEffect(() => {
+    if (!hasMoreDays) return;
+    const el = sentinelRef.current;
+    if (!el) return;
+    if (typeof IntersectionObserver === 'undefined') {
+      setVisibleDays(groupedByDay.length);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      entries => {
+        if (entries.some(e => e.isIntersecting)) {
+          setVisibleDays(v => v + DAYS_PER_PAGE);
+        }
+      },
+      { rootMargin: '600px 0px' },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [hasMoreDays, groupedByDay.length]);
 
   if (loading) {
     // Show the page skeleton (not a bare spinner) so a cold start with no cache
@@ -668,7 +775,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
             )}
           </div>
         ) : (
-          groupedByDay.map((group) => (
+          visibleGroups.map((group) => (
             <div key={group.date}>
               <div className="flex items-center justify-between px-3 py-1 bg-dark-800/60">
                 <span className="text-[10px] font-semibold text-dark-500 uppercase tracking-wider capitalize">{group.label}</span>
@@ -689,6 +796,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
             </div>
           ))
         )}
+        {hasMoreDays && <div ref={sentinelRef} className="h-8" aria-hidden />}
       </div>
 
       {/* FAB — only show for current period */}

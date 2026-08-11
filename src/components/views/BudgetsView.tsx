@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { User } from '@supabase/supabase-js';
+import type { User } from '@supabase/auth-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/utils';
 import { Budget, Category } from '@/types';
@@ -35,7 +35,7 @@ import { useSyncOnForeground } from '@/lib/useSyncOnForeground';
 import { toast } from '@/lib/toast';
 import { confirmDialog } from '@/lib/confirm';
 import OfflineState from '@/components/ui/OfflineState';
-import { readViewCache, writeViewCache } from '@/lib/viewCache';
+import { readViewCache, writeViewCache, isViewCacheFresh } from '@/lib/viewCache';
 
 // ── Period generation ─────────────────────────────────────────────────────────
 function getPeriodBounds(startDate: string, recurrence: 'monthly' | 'yearly', offset: number = 0): { start: string; end: string } {
@@ -186,9 +186,30 @@ async function fetchBudgetsSnapshot(userId: string): Promise<BudgetsSnapshot | n
   let globalAccumulated: number | null = null;
   let globalAccumMonths = '';
 
-  const [{ data: expRows }, { data: periods }] = await Promise.all([
+  // Per-budget spend needs the same round-trip depth as the global stats above —
+  // both only depend on `budgetCatSetMap`, which is already built. Issuing them
+  // in one wave instead of two saves a full round-trip on every Budgets load.
+  // (They stay separate queries: the per-budget one reaches back to the earliest
+  // budget start date but is category-filtered, while the global one is a
+  // year-to-date scan. Merging them would widen one or the other.)
+  const allExpandedCatIds = new Set<string>();
+  for (const set of budgetCatSetMap.values()) {
+    for (const id of set) allExpandedCatIds.add(id);
+  }
+  const globalMinDate = allBudgets.reduce((min, b) => b.start_date < min ? b.start_date : min, today);
+
+  const [{ data: expRows }, { data: periods }, { data: budgetExpData }] = await Promise.all([
     supabase.from('expenses').select('amount, date').eq('user_id', userId).gte('date', yearStart).lte('date', curMonthEnd),
     supabase.from('global_budget_periods').select('month, amount').eq('user_id', userId),
+    allExpandedCatIds.size > 0
+      ? supabase
+          .from('expenses')
+          .select('category_id, amount, date')
+          .eq('user_id', userId)
+          .in('category_id', Array.from(allExpandedCatIds))
+          .gte('date', globalMinDate)
+          .lte('date', today)
+      : Promise.resolve({ data: [] as any[] }),
   ]);
   {
     const rows = expRows || [];
@@ -245,26 +266,12 @@ async function fetchBudgetsSnapshot(userId: string): Promise<BudgetsSnapshot | n
   }
 
   // ── Budget expenses → spent per budget ──
-  const allExpandedCatIds = new Set<string>();
-  for (const set of budgetCatSetMap.values()) {
-    for (const id of set) allExpandedCatIds.add(id);
-  }
-  const globalMinDate = allBudgets.reduce((min, b) => b.start_date < min ? b.start_date : min, today);
-
+  // (fetched above, in the same wave as the global stats)
   const expByCat = new Map<string, { amount: number; date: string }[]>();
-  if (allExpandedCatIds.size > 0) {
-    const { data: expData } = await supabase
-      .from('expenses')
-      .select('category_id, amount, date')
-      .eq('user_id', userId)
-      .in('category_id', Array.from(allExpandedCatIds))
-      .gte('date', globalMinDate)
-      .lte('date', today);
-    for (const e of (expData || []) as any[]) {
-      let arr = expByCat.get(e.category_id);
-      if (!arr) { arr = []; expByCat.set(e.category_id, arr); }
-      arr.push({ amount: Number(e.amount), date: e.date });
-    }
+  for (const e of (budgetExpData || []) as any[]) {
+    let arr = expByCat.get(e.category_id);
+    if (!arr) { arr = []; expByCat.set(e.category_id, arr); }
+    arr.push({ amount: Number(e.amount), date: e.date });
   }
 
   const enriched: Budget[] = allBudgets.map(b => {
@@ -377,7 +384,12 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
     }
   }
 
-  useEffect(() => { loadData(!!cached); }, []);
+  // The boot warm-up (AppShell) usually prefetched this snapshot moments ago —
+  // refetching it again on first open just doubled the request count for nothing.
+  useEffect(() => {
+    if (cached && isViewCacheFresh(BUDGETS_CACHE, user.id)) return;
+    loadData(!!cached);
+  }, []);
 
   // Refresh budget spend across devices when the app returns to the foreground
   // or a realtime expense change lands. Silent (no spinner) so the list doesn't flash.

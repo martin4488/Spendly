@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, lazy, Suspense, useCallback, useMemo } from 'react';
-import { User } from '@supabase/supabase-js';
+import type { User } from '@supabase/auth-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/utils';
 import {
@@ -20,6 +20,7 @@ import SwipeableRow from '@/components/SwipeableRow';
 import { toast } from '@/lib/toast';
 import { confirmDialog } from '@/lib/confirm';
 import OfflineState from '@/components/ui/OfflineState';
+import { reportRpcFallback } from '@/lib/rpcFallback';
 const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
 
 type ViewMode = 'months' | 'years';
@@ -269,6 +270,7 @@ export default function SpendingOverview({ user, onBack, initialDate, initialVie
           if (row.category_id) { spendMap[row.category_id] = Number(row.total); txMap[row.category_id] = Number(row.tx_count); }
         }
       } else {
+        reportRpcFallback('get_spending_overview', rpcError, 'SpendingOverview');
         const { data: expenses, error: expErr } = await supabase.from('expenses').select('id, amount, category_id, description, date').eq('user_id', user.id).gte('date', range.start).lte('date', range.end).order('date', { ascending: false }).limit(10000);
         if (expErr) { setOffline(true); setLoading(false); return; }
         const allExp = expenses || [];

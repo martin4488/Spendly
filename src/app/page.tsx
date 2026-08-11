@@ -3,12 +3,13 @@
 import { useEffect, useState, lazy, Suspense } from 'react';
 import { supabase } from '@/lib/supabase';
 import { prefetchRates } from '@/lib/currency';
-import { setDefaultCurrency } from '@/lib/utils';
+import { setDefaultCurrency, readCachedCurrency } from '@/lib/currencyState';
 import { getCategories, seedCategories } from '@/lib/categoryCache';
-import { User } from '@supabase/supabase-js';
+import type { User } from '@supabase/auth-js';
 import AppShell from '@/components/AppShell';
 import type { CurrencyCode } from '@/lib/currency';
-import { writeDashboardCache, readDashboardCache, buildCategoriesMapFromCache } from '@/lib/dashboardCache';
+import { publishDashboardCache, readDashboardCache, buildCategoriesMapFromCache } from '@/lib/dashboardCache';
+import { reportRpcFallback } from '@/lib/rpcFallback';
 import type { Category } from '@/types';
 
 // Lazy-load AuthPage — it's only shown when not logged in, which is rare.
@@ -52,32 +53,54 @@ function toDateStr(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+/**
+ * The currency to render with before the boot RPC answers. Using the value from
+ * the last session avoids a cold start where every amount shows in a hardcoded
+ * default and then flips once settings load.
+ */
+function initialCurrency(): CurrencyCode {
+  const cached = readCachedCurrency();
+  return (cached as CurrencyCode) || 'EUR';
+}
+
 export default function Home() {
   const [bootData, setBootData] = useState<BootData | null>(() => {
     if (typeof window === 'undefined') return null;
     const cached = getCachedSession();
     if (!cached) return null;
-    setDefaultCurrency('EUR');
-    return { user: cached, currency: 'EUR' };
+    const currency = initialCurrency();
+    setDefaultCurrency(currency);
+    return { user: cached, currency };
   });
   const [unauthenticated, setUnauthenticated] = useState(false);
 
   useEffect(() => {
     let booted = !!bootData;
+    // A restored session makes auth emit *two* events back to back — SIGNED_IN
+    // then INITIAL_SESSION, both carrying the same session (pinned by
+    // tests/supabase-contract.test.mjs). Without this guard every cold start
+    // fired `get_boot_data` twice. Reset on sign-out so the next sign-in boots.
+    let bootRunForUser: string | null = null;
+
+    function runUnifiedBootOnce(user: User) {
+      if (bootRunForUser === user.id) return;
+      bootRunForUser = user.id;
+      runUnifiedBoot(user).catch(console.error);
+    }
 
     async function bootWithSession(user: User) {
       if (booted) {
-        runUnifiedBoot(user).catch(console.error);
+        runUnifiedBootOnce(user);
         return;
       }
       booted = true;
 
-      const defaultCurr: CurrencyCode = 'EUR';
+      const defaultCurr: CurrencyCode = initialCurrency();
       setDefaultCurrency(defaultCurr);
       setUnauthenticated(false);
       setBootData({ user, currency: defaultCurr });
 
-      runUnifiedBoot(user).catch(console.error);
+      runUnifiedBootOnce(user);
 
       prefetchRates().catch(console.error);
 
@@ -115,8 +138,11 @@ export default function Home() {
         });
         const categoriesMap = new Map<string, Category>();
         cats.forEach(c => categoriesMap.set(c.id, c));
-        writeDashboardCache(user.id, boot.recent_expenses || [], chartTotals, categoriesMap);
+        // Publish (not just write): DashboardView has already mounted off the old
+        // cache by now, so it needs to be told the fresh data landed.
+        publishDashboardCache(user.id, boot.recent_expenses || [], chartTotals, categoriesMap);
       } else {
+        reportRpcFallback('get_boot_data', error, 'boot');
         // Boot RPC failed (e.g. offline). Seed categories from the localStorage
         // snapshot so the add-expense modal still works offline; only hit the
         // network for categories if we have no cache to fall back on.
@@ -148,6 +174,7 @@ export default function Home() {
         }
       } else if (event === 'SIGNED_OUT') {
         booted = false;
+        bootRunForUser = null;
         setBootData(null);
         setUnauthenticated(true);
       }

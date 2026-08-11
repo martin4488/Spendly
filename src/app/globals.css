@@ -61,6 +61,12 @@ body {
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* Category glyphs arrive with their (deferred) icon chunk — fade instead of pop. */
+@keyframes iconFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
 @keyframes slideUp {
   from { opacity: 0; transform: translateY(100%); }
   to { opacity: 1; transform: translateY(0); }

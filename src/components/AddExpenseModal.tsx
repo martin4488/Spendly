@@ -1,14 +1,14 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { User } from '@supabase/supabase-js';
+import type { User } from '@supabase/auth-js';
 import { supabase } from '@/lib/supabase';
 import { Category } from '@/types';
 import { CURRENCIES, convertCurrency, formatWithCurrency, CurrencyCode } from '@/lib/currency';
 import { CATEGORY_ICONS, CATEGORY_COLORS } from '@/lib/utils';
 import { X, Calendar, Delete, ChevronDown, Search, Settings, ArrowLeft, Check } from 'lucide-react';
 import CategoryIcon from '@/components/ui/CategoryIcon';
-import { getIconComponent } from '@/lib/iconMap';
+import { getIconComponent } from '@/lib/iconComponents';
 import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { deriveChildColor } from '@/lib/colorUtils';
