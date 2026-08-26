@@ -73,13 +73,18 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=...
 
 **Supabase client** ([src/lib/supabaseClient.ts](src/lib/supabaseClient.ts)): assembled from `@supabase/auth-js` + `@supabase/postgrest-js` rather than `createClient()`, because the umbrella package also bundles storage-js and functions-js (never used) and realtime-js, together ~63 kB gz in the boot chunk. Realtime is dynamically imported by [useSyncOnForeground](src/lib/useSyncOnForeground.ts) after first paint. Behaviour is pinned by the contract test — see "Tests". [src/lib/supabase.ts](src/lib/supabase.ts) is just the env-configured singleton.
 
-**Database (Supabase):** Nine tables, all with Row Level Security. [supabase/schema.sql](supabase/schema.sql) is a complete dump (tables, constraints, indexes, RLS, RPCs); [supabase/README.md](supabase/README.md) has the query to regenerate it and the list of pending migrations in [supabase/migrations/](supabase/migrations/).
+**Database (Supabase):** Nine tables, all with Row Level Security. [supabase/schema.sql](supabase/schema.sql) is a complete dump (tables, constraints, indexes, RLS, RPCs); [supabase/README.md](supabase/README.md) has the query to regenerate it, and tracks which of [supabase/migrations/](supabase/migrations/) are applied and which are still pending.
 
-Two things to know before touching the database:
-- **The RPCs are `SECURITY DEFINER` and filter on the `p_user_id` argument, not `auth.uid()`** — so they bypass RLS and currently let any caller read another user's data. `migrations/002_rpc_hardening.sql` fixes it; until that's applied, don't add new RPCs on this pattern.
+Three things to know before touching the database:
+- **Every RPC is `SECURITY DEFINER` and filters on the `p_user_id` argument, not `auth.uid()`** — which bypasses RLS, so each one needs the identity guard `migrations/002_rpc_hardening.sql` added (`if auth.uid() is null or p_user_id <> auth.uid() then raise`). A new RPC without it lets any caller read another user's data with the public anon key. `spendly_health()` counts the guarded ones, and `npm test` asserts the count.
+- **Every RPC also takes the date from the client, never `current_date`.** The server runs in UTC; at 21:00 in Buenos Aires it's already tomorrow there. See "Dates are local, never UTC".
 - **`generate_recurring_expenses` in the database is much richer than a naive reading suggests** (handles `start_date`, `end_date`, `day_of_month`, month-end clamping). Always dump the live definition before rewriting it. `migrations/001_performance.sql` holds the current source of truth.
 
 `budget_categories` is a legacy table superseded by `budget_category_periods`; nothing in the app reads it.
+
+**Budgets math** ([src/lib/budgetsSnapshot.ts](src/lib/budgetsSnapshot.ts)): `buildSnapshot()` turns budgets + periods-with-spend into what the screen renders, and it is deliberately outside the view. Two paths feed it — the `get_budgets_data` RPC, which sums each period's spend in Postgres, and the client fallback, which sums it by hand. They must agree: if they drift, a broken RPC changes the numbers silently rather than failing. `tests/budgets-snapshot.test.mjs` pins the math with fixtures; the live suite checks the RPC against the raw tables.
+
+`get_budgets_data` is the only `get_*` that writes — it materializes any missing budget periods before aggregating, because on the first day of a new month the current period doesn't exist yet and the budget would render empty. It's idempotent, and the live test calls it twice to prove it.
 
 **Auth:** Email/password only. `detectSessionInUrl: false` on the Supabase client to skip URL-token parsing on every load. Auth state drives the `unauthenticated` flag in `page.tsx`; `AuthPage` is lazy-loaded since it's rarely needed. Note that restoring a persisted session emits **two** events (`SIGNED_IN` then `INITIAL_SESSION`), so `page.tsx` dedupes the boot RPC via `runUnifiedBootOnce`.
 

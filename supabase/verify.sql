@@ -64,6 +64,7 @@ select
   json_typeof(public.get_reflect_data(auth.uid(), '2020-01-01', '2020-12-31'))      as reflect,
   json_typeof(public.get_spending_overview(auth.uid(), '2020-01-01', '2020-12-31')) as overview,
   (select count(*) from public.get_yearly_totals(auth.uid(), 2019, 2026))           as yearly_filas,
+  json_typeof(public.get_budgets_data(auth.uid(), current_date::text))              as budgets,
   json_array_length(public.get_boot_data(auth.uid(), '2020-01-01', '2020-01-01') -> 'categories')     as categorias,
   json_array_length(public.get_boot_data(auth.uid(), '2020-01-01', '2020-01-01') -> 'monthly_totals') as meses_con_datos;
 
@@ -125,3 +126,44 @@ select
 -- from cron.job
 -- where command ilike '%generate_recurring%'
 --    or command ilike '%get_boot_data%';
+
+
+-- ═══ BLOQUE F — 006: períodos duplicados ═════════════════════════════════════
+-- `get_budgets_data` materializa los períodos que faltan. El índice único hace
+-- que dos dispositivos abriendo Budgets a la vez no generen el mismo período
+-- dos veces — pero 006 no lo puede crear si ya hay duplicados de antes.
+--
+-- Si `indice_unico` da false y `duplicados` da más de 0, esta consulta te
+-- muestra cuáles son. NO borra nada: mirá el resultado y decidís vos.
+select
+  (select exists (select 1 from pg_indexes
+     where schemaname = 'public' and indexname = 'idx_budget_periods_unique'))  as indice_unico,   -- espera true
+  (select count(*) from (
+     select 1 from public.budget_periods
+     group by budget_id, period_start having count(*) > 1
+   ) d)                                                                          as duplicados;    -- espera 0
+
+
+-- ═══ BLOQUE F2 — solo si F dijo duplicados > 0 ═══════════════════════════════
+-- Los duplicados en sí. El que conviene conservar es el que tiene `amount`
+-- (los otros son el mismo período generado dos veces por la carrera).
+--
+-- select bp.budget_id, b.name, bp.period_start, count(*) as veces,
+--        json_agg(json_build_object('id', bp.id, 'amount', bp.amount) order by bp.created_at)
+-- from public.budget_periods bp
+-- join public.budgets b on b.id = bp.budget_id
+-- group by bp.budget_id, b.name, bp.period_start
+-- having count(*) > 1
+-- order by b.name, bp.period_start;
+--
+-- Para limpiarlos (conserva el más viejo con amount, si hay; si no, el más
+-- viejo a secas) y recién ahí crear el índice:
+--
+-- delete from public.budget_periods bp
+-- where bp.id not in (
+--   select distinct on (budget_id, period_start) id
+--   from public.budget_periods
+--   order by budget_id, period_start, (amount is null), created_at
+-- );
+-- create unique index if not exists idx_budget_periods_unique
+--   on public.budget_periods (budget_id, period_start);

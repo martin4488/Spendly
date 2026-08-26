@@ -6,24 +6,48 @@ constraints, índices, políticas RLS y las 6 funciones RPC.
 Ojo con una cosa que sigue vigente: **cada vista tiene un fallback silencioso**
 que rearma el resultado con queries del lado del cliente si su RPC falla. Si una
 RPC se rompe o se borra, la app sigue andando pero mucho más lenta y sin ningún
-error visible. Por eso `tests/supabase-live.test.mjs` verifica que las cinco
-existan y respondan.
+error visible. Por eso `tests/supabase-live.test.mjs` verifica que existan y
+respondan todas.
 
-## Migraciones pendientes
+## Migraciones
 
 Correr en orden, desde el SQL Editor. Todas idempotentes.
 
+### Pendiente
+
 | Archivo | Qué hace | Riesgo |
 |---|---|---|
-| `001_performance.sql` | Índice `idx_expenses_recurring` + un solo UPDATE por recurrente en `generate_recurring_expenses()` | Bajo — solo performance |
-| `002_rpc_hardening.sql` | **Cierra un agujero de autorización** en las RPCs, saca la sobrecarga duplicada de `get_reflect_data`, arregla el `LIMIT` sin `ORDER BY` de `get_boot_data` | **Revisar antes** — cambia comportamiento |
-| `004_fix_date_casts.sql` | **Obligatoria si corriste 002.** `get_reflect_data` y `get_spending_overview` comparaban `date >= text`, que no existe como operador. Castea a `date`. | Bajo — arregla funciones rotas |
-| `003_redundant_indexes.sql` | Borra 5 índices duplicados | Bajo — solo índices |
+| `006_budgets_rpc.sql` | **`get_budgets_data`**: BudgetsView pasa de 6 consultas en 3 tandas encadenadas a una sola llamada, con el gasto por período ya sumado en Postgres. Más el índice único de `budget_periods`. | Bajo — función nueva, con respaldo en el cliente |
 
-> **004 va antes que 003.** `002` dejó `get_reflect_data` en su versión rota (la
-> sobrecarga que andaba era la que borró por "duplicada"), y de paso destapó que
-> `get_spending_overview` viene fallando desde siempre — SpendingOverview corría
-> el fallback lento del cliente sin avisar. `004` arregla las dos.
+> **Es la única `get_*` que escribe.** Materializa los períodos de presupuesto
+> que falten hasta hoy, igual que venía haciendo el cliente. Tiene que pasar
+> adentro de la función: si no, el primer día de un mes nuevo el período actual
+> todavía no existe y el presupuesto aparece vacío. Es idempotente, y
+> `tests/supabase-live.test.mjs` la llama dos veces para comprobarlo.
+>
+> Si el SQL Editor avisa `budget_periods tiene períodos duplicados`, el índice
+> único no se creó. No es grave — la función igual filtra por `not exists`, que
+> es lo que hacía el cliente. Para limpiarlos, BLOQUE F de
+> [`verify.sql`](verify.sql).
+
+### Aplicadas
+
+`npm test` las verifica en cada corrida vía `spendly_health()` — si alguna se
+revierte, el test lo dice.
+
+| Archivo | Qué hizo |
+|---|---|
+| `001_performance.sql` | Índice `idx_expenses_recurring` + un solo UPDATE por recurrente en `generate_recurring_expenses()` |
+| `002_rpc_hardening.sql` | **Cerró un agujero de autorización** en las RPCs, sacó la sobrecarga duplicada de `get_reflect_data`, arregló el `LIMIT` sin `ORDER BY` de `get_boot_data` |
+| `004_fix_date_casts.sql` | `get_reflect_data` y `get_spending_overview` comparaban `date >= text`, que no existe como operador. Castea a `date`. Va **antes** que 003. |
+| `003_redundant_indexes.sql` | Borró 5 índices duplicados |
+| `005_health_check.sql` | Expone `spendly_health()`, que es lo que hace que esta tabla no se desactualice sola |
+
+> **Por qué 004 iba antes que 003.** `002` dejó `get_reflect_data` en su versión
+> rota (la sobrecarga que andaba era la que borró por "duplicada"), y de paso
+> destapó que `get_spending_overview` venía fallando desde siempre —
+> SpendingOverview corría el fallback lento del cliente sin avisar. `004` arregló
+> las dos.
 
 Después de aplicar cualquiera de ellas, correr [`verify.sql`](verify.sql): chequea
 que quedó lo que esperábamos y — lo importante — prueba las RPCs con un JWT

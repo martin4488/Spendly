@@ -97,6 +97,16 @@ describe('live Supabase', { skip }, () => {
       `only ${data.rpcs_with_guard}/${data.rpcs_expected} RPCs carry the auth guard — migration 002 not fully applied`);
     assert.deepEqual(data.redundant_indexes, [],
       `redundant indexes still present: ${JSON.stringify(data.redundant_indexes)} — run migration 003`);
+    if (data.has_budgets_rpc === undefined) {
+      // spendly_health() es de 005; 006 le agrega estos campos.
+      console.warn('[spendly] spendly_health() sin los campos de 006 — aplicá supabase/migrations/006_budgets_rpc.sql');
+    } else if (data.has_budgets_rpc) {
+      assert.equal(Number(data.budget_period_duplicates), 0,
+        'budget_periods tiene períodos duplicados — el índice único de 006 no se pudo crear (ver BLOQUE F de verify.sql)');
+      assert.equal(data.idx_budget_periods_unique, true,
+        'idx_budget_periods_unique falta — migration 006 no aplicada del todo');
+    }
+
     assert.equal(Number(data.recurring_triggers), 0,
       'a trigger calls generate_recurring_expenses — the 002 auth guard will break it (auth.uid() is null there)');
     assert.equal(data.pg_cron_installed, false,
@@ -293,6 +303,88 @@ describe('live Supabase', { skip }, () => {
     ]);
     assert.equal(bcError, null, `budget_category_periods failed: ${bcError?.message}`);
     assert.equal(periodsError, null, `budget_periods failed: ${periodsError?.message}`);
+  });
+
+  test('get_budgets_data returns the shape BudgetsView reads', async (t) => {
+    // Migración 006. Mientras no esté aplicada, BudgetsView usa el camino de
+    // respaldo y anda igual — por eso esto se saltea en vez de fallar.
+    const today = toDateStr(new Date());
+    const { data, error } = await client.rpc('get_budgets_data', {
+      p_user_id: userId,
+      p_today: today,
+    });
+
+    if (error && (error.code === 'PGRST202' || /does not exist/i.test(error.message || ''))) {
+      t.skip('get_budgets_data no existe todavía — aplicá supabase/migrations/006_budgets_rpc.sql');
+      return;
+    }
+    assert.equal(error, null, `get_budgets_data failed: ${error?.message}`);
+
+    for (const k of ['budgets', 'periods', 'global_periods', 'monthly_totals']) {
+      assert.ok(Array.isArray(data[k]), `${k} should be an array, got ${typeof data[k]}`);
+    }
+
+    // Los totales por mes tienen que coincidir con la tabla. Si esta suma se
+    // separa, el widget global miente y nada más se entera.
+    const yearStart = `${today.slice(0, 4)}-01-01`;
+    const { data: rows, error: rowsError } = await client
+      .from('expenses').select('amount, date')
+      .eq('user_id', userId).gte('date', yearStart).lte('date', today);
+    assert.equal(rowsError, null, `expenses select failed: ${rowsError?.message}`);
+
+    const expected = new Map();
+    for (const e of rows) {
+      const mo = e.date.slice(0, 7);
+      expected.set(mo, (expected.get(mo) || 0) + Number(e.amount));
+    }
+    for (const row of data.monthly_totals) {
+      // El RPC llega hasta fin de mes; la consulta de arriba hasta hoy. Sólo se
+      // comparan los meses completos.
+      if (row.month === today.slice(0, 7)) continue;
+      assert.ok(
+        Math.abs(Number(row.total) - (expected.get(row.month) || 0)) < 0.01,
+        `monthly_totals[${row.month}] = ${row.total}, la tabla dice ${expected.get(row.month)}`,
+      );
+    }
+
+    for (const p of data.periods) {
+      assert.ok(Number.isFinite(Number(p.spent)), `period ${p.id} sin spent numérico`);
+      assert.ok(p.period_start <= p.period_end, `period ${p.id} termina antes de empezar`);
+    }
+
+    // Todo presupuesto ya arrancado tiene que tener un período que contenga hoy:
+    // es el que abre BudgetDetailView al tocar la fila.
+    for (const b of data.budgets) {
+      if (b.start_date > today) continue;
+      const cur = data.periods.find(
+        p => p.budget_id === b.id && p.period_start <= today && p.period_end >= today,
+      );
+      assert.ok(cur, `el presupuesto "${b.name}" no tiene período vigente`);
+      assert.ok(Array.isArray(b.category_ids), `"${b.name}" sin category_ids`);
+    }
+  });
+
+  test('get_budgets_data no duplica períodos si se la llama dos veces', async (t) => {
+    // Materializa los períodos que faltan, así que la idempotencia no es un
+    // detalle: la vista se refresca al volver del segundo plano y en cada sync.
+    const today = toDateStr(new Date());
+    const args = { p_user_id: userId, p_today: today };
+
+    const first = await client.rpc('get_budgets_data', args);
+    if (first.error && (first.error.code === 'PGRST202' || /does not exist/i.test(first.error.message || ''))) {
+      t.skip('get_budgets_data no existe todavía — aplicá supabase/migrations/006_budgets_rpc.sql');
+      return;
+    }
+    assert.equal(first.error, null, `get_budgets_data failed: ${first.error?.message}`);
+
+    const second = await client.rpc('get_budgets_data', args);
+    assert.equal(second.error, null, `segunda llamada falló: ${second.error?.message}`);
+
+    const key = p => `${p.budget_id}|${p.period_start}`;
+    const ids = second.data.periods.map(key);
+    assert.equal(new Set(ids).size, ids.length, 'la segunda llamada generó períodos duplicados');
+    assert.equal(second.data.periods.length, first.data.periods.length,
+      'la segunda llamada cambió la cantidad de períodos');
   });
 
   // ── Realtime ──────────────────────────────────────────────────────────────
