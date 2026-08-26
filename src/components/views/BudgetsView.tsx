@@ -9,11 +9,12 @@ import { Plus, X, ChevronRight, Delete, ArrowLeft, Search, Check } from 'lucide-
 import CategoryIcon from '@/components/ui/CategoryIcon';
 import { getIconEmoji } from '@/lib/iconMap';
 import Amount from '@/components/ui/Amount';
-import {
-  format, addMonths, addYears, startOfMonth, endOfMonth,
-  startOfYear, endOfYear, parseISO,
-} from 'date-fns';
+import { format, startOfMonth } from 'date-fns';
 import { es } from 'date-fns/locale';
+import {
+  addMonthsStr, currentMonthStr, monthEndStr, monthRange,
+  parseLocalDate, todayStr, toMonthStr,
+} from '@/lib/dateUtils';
 
 interface Props {
   user: User;
@@ -38,25 +39,19 @@ import OfflineState from '@/components/ui/OfflineState';
 import { readViewCache, writeViewCache, isViewCacheFresh } from '@/lib/viewCache';
 
 // ── Period generation ─────────────────────────────────────────────────────────
+// Aritmética de strings, no de Date: 'yyyy-MM-dd' parseado como ISO es UTC, y en
+// UTC-3 caía siempre en el mes anterior (ver src/lib/dateUtils.ts).
 function getPeriodBounds(startDate: string, recurrence: 'monthly' | 'yearly', offset: number = 0): { start: string; end: string } {
-  const base = parseISO(startDate);
-  let periodStart: Date;
-  let periodEnd: Date;
   if (recurrence === 'monthly') {
-    periodStart = startOfMonth(addMonths(base, offset));
-    periodEnd = endOfMonth(addMonths(base, offset));
-  } else {
-    periodStart = startOfYear(addYears(base, offset));
-    periodEnd = endOfYear(addYears(base, offset));
+    const month = addMonthsStr(startDate.slice(0, 7), offset);
+    return { start: `${month}-01`, end: monthEndStr(month) };
   }
-  return {
-    start: format(periodStart, 'yyyy-MM-dd'),
-    end: format(periodEnd, 'yyyy-MM-dd'),
-  };
+  const year = Number(startDate.slice(0, 4)) + offset;
+  return { start: `${year}-01-01`, end: `${year}-12-31` };
 }
 
 function generateMissingPeriods(budget: Budget, existingPeriods: BudgetPeriod[]): { start: string; end: string }[] {
-  const today = format(new Date(), 'yyyy-MM-dd');
+  const today = todayStr();
   // O(1) lookups instead of .some() per iteration
   const existingStarts = new Set(existingPeriods.filter(p => p.budget_id === budget.id).map(p => p.period_start));
   const missing: { start: string; end: string }[] = [];
@@ -89,7 +84,7 @@ interface BudgetsSnapshot {
  */
 async function fetchBudgetsSnapshot(userId: string): Promise<BudgetsSnapshot | null> {
   if (typeof navigator !== 'undefined' && !navigator.onLine) return null;
-  const today = format(new Date(), 'yyyy-MM-dd');
+  const today = todayStr();
 
   const [{ data: budgetsData, error: budgetsError }, catsMap] = await Promise.all([
     supabase.from('budgets').select('*').eq('user_id', userId).order('name'),
@@ -108,7 +103,28 @@ async function fetchBudgetsSnapshot(userId: string): Promise<BudgetsSnapshot | n
 
   const allBudgets = budgetsData || [];
   const allPeriods = periodsData || [];
-  const tree = buildTree(Array.from(catsMap.values()));
+
+  // Índice padre → hijos, construido una sola vez. Antes cada presupuesto
+  // recorría el árbol entero y por cada nodo que le pertenecía volvía a recorrer
+  // su subárbol completo (O(presupuestos × categorías²)); ahora es un BFS por
+  // presupuesto que toca cada descendiente una vez.
+  const childrenByParent = new Map<string, string[]>();
+  for (const c of catsMap.values()) {
+    if (!c.parent_id) continue;
+    let arr = childrenByParent.get(c.parent_id);
+    if (!arr) { arr = []; childrenByParent.set(c.parent_id, arr); }
+    arr.push(c.id);
+  }
+  const expandWithDescendants = (seedIds: string[]): Set<string> => {
+    const out = new Set<string>(seedIds);
+    const stack = seedIds.slice();
+    while (stack.length > 0) {
+      const kids = childrenByParent.get(stack.pop()!);
+      if (!kids) continue;
+      for (const k of kids) if (!out.has(k)) { out.add(k); stack.push(k); }
+    }
+    return out;
+  };
 
   // Group budget→categories and budget→periods in single passes
   const bcByBudget = new Map<string, string[]>();
@@ -127,8 +143,13 @@ async function fetchBudgetsSnapshot(userId: string): Promise<BudgetsSnapshot | n
   // Build missing-period inserts (auto-generate up to today)
   const missingInserts: { budget_id: string; period_start: string; period_end: string; amount?: number }[] = [];
   for (const b of allBudgets) {
-    const existing = (periodsByBudget.get(b.id) || []).slice().sort((a, b2) => b2.period_start.localeCompare(a.period_start));
-    const lastAmount = existing.find(p => p.amount != null)?.amount ?? null;
+    // El monto del período más reciente que tenga uno — un solo barrido en vez
+    // de copiar y ordenar el array entero por presupuesto.
+    let lastAmount: number | null = null;
+    let lastStart = '';
+    for (const p of periodsByBudget.get(b.id) || []) {
+      if (p.amount != null && p.period_start > lastStart) { lastStart = p.period_start; lastAmount = p.amount; }
+    }
     for (const m of generateMissingPeriods(b as Budget, periodsByBudget.get(b.id) || [])) {
       const insert: { budget_id: string; period_start: string; period_end: string; amount?: number } = {
         budget_id: b.id, period_start: m.start, period_end: m.end,
@@ -144,7 +165,6 @@ async function fetchBudgetsSnapshot(userId: string): Promise<BudgetsSnapshot | n
         let arr = periodsByBudget.get(p.budget_id);
         if (!arr) { arr = []; periodsByBudget.set(p.budget_id, arr); }
         arr.push(p);
-        allPeriods.push(p);
       }
     }
   }
@@ -157,29 +177,18 @@ async function fetchBudgetsSnapshot(userId: string): Promise<BudgetsSnapshot | n
     if (cur) curPeriods[b.id] = cur;
   }
 
-  // Pre-build expanded-cat sets for each budget — single tree walk per budget
+  // Pre-build expanded-cat sets for each budget — un BFS por presupuesto
   const budgetCatSetMap = new Map<string, Set<string>>();
   for (const b of allBudgets) {
-    const seedIds = bcByBudget.get(b.id) || [];
-    const expandedSet = new Set<string>(seedIds);
-    function addDesc(nodes: CatNode[]) {
-      for (const n of nodes) {
-        if (expandedSet.has(n.id)) {
-          for (const id of allDescendantIds(n)) expandedSet.add(id);
-        }
-        if (n.children.length) addDesc(n.children);
-      }
-    }
-    addDesc(tree);
-    budgetCatSetMap.set(b.id, expandedSet);
+    budgetCatSetMap.set(b.id, expandWithDescendants(bcByBudget.get(b.id) || []));
   }
 
   // ── Global stats + accumulated ──
   const now2 = new Date();
-  const curMonth2 = format(now2, 'yyyy-MM');
+  const curMonth2 = toMonthStr(now2);
   const yearStart = `${now2.getFullYear()}-01-01`;
-  const curMonthStart = format(startOfMonth(now2), 'yyyy-MM-dd');
-  const curMonthEnd = format(endOfMonth(now2), 'yyyy-MM-dd');
+  const curMonthStart = `${curMonth2}-01`;
+  const curMonthEnd = monthEndStr(curMonth2);
 
   let globalStats: { spent: number; prevSpent: number } | null = null;
   let monthlyBudget: number | null = null;
@@ -220,16 +229,25 @@ async function fetchBudgetsSnapshot(userId: string): Promise<BudgetsSnapshot | n
     globalStats = { spent: curSpent, prevSpent: 0 };
 
     if (periods && periods.length > 0) {
-      const sortedDesc = (periods as any[]).slice().sort((a, b) => b.month.localeCompare(a.month));
-      const curPeriod = sortedDesc.find(p => p.month === curMonth2);
-      const effectivePeriod = curPeriod || sortedDesc[0];
-      if (effectivePeriod) monthlyBudget = Number(effectivePeriod.amount);
+      // Un solo sort ascendente sirve para todo: el monto vigente de cada mes es
+      // el último período con month <= mes. Antes cada consulta hacía
+      // find + filter + sort sobre el array completo.
+      const sortedAsc = (periods as any[])
+        .map(p => ({ month: p.month as string, amount: Number(p.amount) }))
+        .sort((a, b) => a.month.localeCompare(b.month));
+      const curPeriod = sortedAsc.find(p => p.month === curMonth2);
+      const effectivePeriod = curPeriod || sortedAsc[sortedAsc.length - 1];
+      if (effectivePeriod) monthlyBudget = effectivePeriod.amount;
 
-      const getMonthAmount = (mo: string): number | null => {
-        const exact = (periods as any[]).find(p => p.month === mo);
-        if (exact) return Number(exact.amount);
-        const prior = (periods as any[]).filter(p => p.month < mo).sort((a, b) => b.month.localeCompare(a.month));
-        return prior.length > 0 ? Number(prior[0].amount) : null;
+      let cursor = 0;
+      let carried: number | null = null;
+      /** Sólo válido si se llama con meses en orden ascendente. */
+      const nextMonthAmount = (mo: string): number | null => {
+        while (cursor < sortedAsc.length && sortedAsc[cursor].month <= mo) {
+          carried = sortedAsc[cursor].amount;
+          cursor++;
+        }
+        return carried;
       };
 
       const yearStr = String(now2.getFullYear());
@@ -249,7 +267,7 @@ async function fetchBudgetsSnapshot(userId: string): Promise<BudgetsSnapshot | n
         let acc = 0;
         let countedMonths: string[] = [];
         for (const mo of closedMonthsList) {
-          const amt = getMonthAmount(mo);
+          const amt = nextMonthAmount(mo);
           if (amt == null) continue;
           acc += amt - (spentByMonth.get(mo) || 0);
           countedMonths.push(mo);
@@ -257,8 +275,8 @@ async function fetchBudgetsSnapshot(userId: string): Promise<BudgetsSnapshot | n
         if (acc < 0 && countedMonths.length > 0) {
           globalAccumulated = acc;
           const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-          const first = cap(format(new Date(`${countedMonths[0]}-01`), 'MMM', { locale: es }));
-          const last = cap(format(new Date(`${countedMonths[countedMonths.length - 1]}-01`), 'MMM', { locale: es }));
+          const first = cap(format(parseLocalDate(countedMonths[0]), 'MMM', { locale: es }));
+          const last = cap(format(parseLocalDate(countedMonths[countedMonths.length - 1]), 'MMM', { locale: es }));
           globalAccumMonths = first === last ? first : `${first} - ${last}`;
         }
       }
@@ -274,51 +292,67 @@ async function fetchBudgetsSnapshot(userId: string): Promise<BudgetsSnapshot | n
     arr.push({ amount: Number(e.amount), date: e.date });
   }
 
+  const capitalize = (str: string) => str.charAt(0).toUpperCase() + str.slice(1);
+  const yearStartStr = `${now2.getFullYear()}-01-01`;
+
   const enriched: Budget[] = allBudgets.map(b => {
     const catIds = bcByBudget.get(b.id) || [];
     const bCats = catIds.map(id => catsMap.get(id)).filter((c): c is Category => !!c);
     const expandedSet = budgetCatSetMap.get(b.id) || new Set<string>();
     const curPeriod = curPeriods[b.id];
-    let spent = 0;
-    if (curPeriod && expandedSet.size > 0) {
+
+    // Períodos a sumar: el actual + (si es mensual) los ya cerrados del año, que
+    // alimentan el acumulado. Ordenados por inicio para poder ubicar cada gasto
+    // con una búsqueda binaria.
+    //
+    // Antes esto recorría *todos* los gastos de *cada* categoría una vez por
+    // período — O(períodos × categorías × gastos). Ahora cada gasto del
+    // presupuesto se toca una sola vez: O(gastos × log períodos).
+    const buckets: { start: string; end: string; amount: number; spent: number }[] = [];
+    if (curPeriod) {
+      if (b.recurrence === 'monthly') {
+        for (const p of periodsByBudget.get(b.id) || []) {
+          if (p.period_end < curPeriod.period_start && p.period_start >= yearStartStr) {
+            buckets.push({ start: p.period_start, end: p.period_end, amount: p.amount ?? b.amount, spent: 0 });
+          }
+        }
+      }
+      buckets.push({ start: curPeriod.period_start, end: curPeriod.period_end, amount: curPeriod.amount ?? b.amount, spent: 0 });
+      buckets.sort((x, y) => x.start.localeCompare(y.start));
+    }
+    const curIndex = buckets.length - 1; // el actual es siempre el más reciente
+
+    if (buckets.length > 0 && expandedSet.size > 0) {
       for (const catId of expandedSet) {
         const list = expByCat.get(catId);
         if (!list) continue;
         for (const e of list) {
-          if (e.date >= curPeriod.period_start && e.date <= curPeriod.period_end) spent += e.amount;
+          // Último bucket cuyo inicio es <= la fecha del gasto.
+          let lo = 0, hi = buckets.length - 1, found = -1;
+          while (lo <= hi) {
+            const mid = (lo + hi) >> 1;
+            if (buckets[mid].start <= e.date) { found = mid; lo = mid + 1; }
+            else hi = mid - 1;
+          }
+          if (found >= 0 && e.date <= buckets[found].end) buckets[found].spent += e.amount;
         }
       }
     }
+
+    const spent = curIndex >= 0 ? buckets[curIndex].spent : 0;
+
     let prevAccumulated: number | null = null;
     let prevAccumMonths = '';
-    if (b.recurrence === 'monthly' && curPeriod) {
-      const curYear = new Date().getFullYear();
-      const bPeriods = allPeriods.filter(p =>
-        p.budget_id === b.id &&
-        p.period_end < curPeriod.period_start &&
-        p.period_start >= `${curYear}-01-01`
-      );
-      if (bPeriods.length > 0 && expandedSet.size > 0) {
-        prevAccumulated = bPeriods.reduce((acc, p) => {
-          const pAmt = (p as any).amount ?? b.amount;
-          let pSpent = 0;
-          for (const catId of expandedSet) {
-            const list = expByCat.get(catId);
-            if (!list) continue;
-            for (const e of list) {
-              if (e.date >= p.period_start && e.date <= p.period_end) pSpent += e.amount;
-            }
-          }
-          return acc + (pAmt - pSpent);
-        }, 0);
-        const sorted = bPeriods.slice().sort((a, b2) => a.period_start.localeCompare(b2.period_start));
-        const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-        const fmt = (d: string) => cap(format(parseISO(d), 'MMM', { locale: es }));
-        const first = fmt(sorted[0].period_start);
-        const last = fmt(sorted[sorted.length - 1].period_start);
-        prevAccumMonths = first === last ? first : `${first} - ${last}`;
-      }
+    if (b.recurrence === 'monthly' && curIndex > 0 && expandedSet.size > 0) {
+      let acc = 0;
+      for (let i = 0; i < curIndex; i++) acc += buckets[i].amount - buckets[i].spent;
+      prevAccumulated = acc;
+      const fmt = (d: string) => capitalize(format(parseLocalDate(d), 'MMM', { locale: es }));
+      const first = fmt(buckets[0].start);
+      const last = fmt(buckets[curIndex - 1].start);
+      prevAccumMonths = first === last ? first : `${first} - ${last}`;
     }
+
     const currentAmount = curPeriod?.amount ?? b.amount;
     return { ...b, currentAmount, category_ids: catIds, categories: bCats, spent, prevAccumulated, prevAccumMonths } as any;
   });
@@ -516,14 +550,10 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
   async function saveMonthlyBudget() {
     const val = parseFloat(budgetInput);
     if (isNaN(val) || val <= 0) return;
-    const curMonth = format(new Date(), 'yyyy-MM');
-    const months: string[] = [];
-    let m = budgetStartMonth;
-    while (m <= curMonth) {
-      months.push(m);
-      const d = addMonths(new Date(`${m}-01`), 1);
-      m = format(d, 'yyyy-MM');
-    }
+    // Ojo: esto era `format(addMonths(new Date(`${m}-01`), 1), 'yyyy-MM')`. Con
+    // offset UTC negativo el string se parseaba como el mes anterior y volvía al
+    // mismo mes al formatear → `m` nunca avanzaba y el while colgaba la pestaña.
+    const months = monthRange(budgetStartMonth, currentMonthStr());
     const upserts = months.map(mo => ({ user_id: user.id, month: mo, amount: val }));
     const { error } = await supabase.from('global_budget_periods').upsert(upserts, { onConflict: 'user_id,month' });
     if (error) { toast('No se pudo guardar el presupuesto mensual. Reintentá.'); return; }

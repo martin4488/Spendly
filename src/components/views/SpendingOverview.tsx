@@ -27,13 +27,6 @@ type ViewMode = 'months' | 'years';
 
 interface RawCat { id: string; name: string; icon: string; color: string; parent_id: string | null; }
 
-function allIds(node: CatNode): string[] {
-  const out: string[] = [];
-  function walk(n: CatNode) { out.push(n.id); for (const c of n.children) walk(c); }
-  walk(node);
-  return out;
-}
-
 interface CatSpend {
   id: string; name: string; icon: string; color: string;
   spent: number; percentage: number; transactions: number;
@@ -41,17 +34,31 @@ interface CatSpend {
   allIds: string[];
 }
 
+/**
+ * Una sola pasada por el árbol: totales, transacciones y `allIds` salen de los
+ * hijos ya resueltos. Antes cada nodo volvía a recorrer su subárbol entero para
+ * armar `allIds`, y las hijas sin gasto se filtraban y ordenaban de nuevo en
+ * cada render de la lista.
+ *
+ * `allIds` incluye a las hijas sin gasto a propósito: es la lista de categorías
+ * que consulta el drill-down, no lo que se muestra.
+ */
 function buildSpend(node: CatNode, spendMap: Record<string, number>, txMap: Record<string, number>, total: number): CatSpend {
   const childSpends = node.children.map(c => buildSpend(c, spendMap, txMap, total));
-  const directSpent = spendMap[node.id] || 0;
-  const spent = directSpent + childSpends.reduce((s, c) => s + c.spent, 0);
-  const transactions = (txMap[node.id] || 0) + childSpends.reduce((s, c) => s + c.transactions, 0);
+  let spent = spendMap[node.id] || 0;
+  let transactions = txMap[node.id] || 0;
+  const ids: string[] = [node.id];
+  for (const c of childSpends) {
+    spent += c.spent;
+    transactions += c.transactions;
+    for (const id of c.allIds) ids.push(id);
+  }
   return {
     id: node.id, name: node.name, icon: node.icon, color: node.color, spent,
     percentage: total > 0 ? (spent / total) * 100 : 0,
     transactions,
-    children: childSpends.sort((a, b) => b.spent - a.spent),
-    allIds: allIds(node),
+    children: childSpends.filter(c => c.spent > 0).sort((a, b) => b.spent - a.spent),
+    allIds: ids,
   };
 }
 
@@ -264,10 +271,21 @@ export default function SpendingOverview({ user, onBack, initialDate, initialVie
       let total = 0;
       const spendMap: Record<string, number> = {};
       const txMap: Record<string, number> = {};
+      // Gasto sin categoría (o con una categoría borrada). El camino de respaldo
+      // no lo contabilizaba: el gasto entraba en el total pero no aparecía en la
+      // lista ni en la dona, así que los porcentajes no cerraban en 100%.
+      let uncatSpent = 0, uncatTx = 0;
+      const knownCatIds = new Set(activeCats.map((c: any) => c.id));
       if (!rpcError && rpcResult) {
         total = Number(rpcResult.total) || 0;
         for (const row of (rpcResult.category_totals || [])) {
-          if (row.category_id) { spendMap[row.category_id] = Number(row.total); txMap[row.category_id] = Number(row.tx_count); }
+          if (row.category_id && knownCatIds.has(row.category_id)) {
+            spendMap[row.category_id] = Number(row.total);
+            txMap[row.category_id] = Number(row.tx_count);
+          } else {
+            uncatSpent += Number(row.total);
+            uncatTx += Number(row.tx_count);
+          }
         }
       } else {
         reportRpcFallback('get_spending_overview', rpcError, 'SpendingOverview');
@@ -276,22 +294,17 @@ export default function SpendingOverview({ user, onBack, initialDate, initialVie
         const allExp = expenses || [];
         for (const e of allExp as any[]) {
           total += Number(e.amount);
-          if (e.category_id) {
+          if (e.category_id && knownCatIds.has(e.category_id)) {
             spendMap[e.category_id] = (spendMap[e.category_id] || 0) + Number(e.amount);
             txMap[e.category_id] = (txMap[e.category_id] || 0) + 1;
+          } else {
+            uncatSpent += Number(e.amount);
+            uncatTx += 1;
           }
         }
       }
       setTotalSpent(total);
       const spending: CatSpend[] = tree.map(node => buildSpend(node, spendMap, txMap, total)).filter(c => c.spent > 0).sort((a, b) => b.spent - a.spent);
-      const allCatIds = new Set(activeCats.map((c: any) => c.id));
-      let uncatSpent = 0, uncatTx = 0;
-      for (const row of (rpcResult?.category_totals || []) as any[]) {
-        if (!row.category_id || !allCatIds.has(row.category_id)) {
-          uncatSpent += Number(row.total);
-          uncatTx += Number(row.tx_count);
-        }
-      }
       if (uncatSpent > 0) spending.push({ id: 'uncategorized', name: 'Sin categoría', icon: 'package', color: '#95A5A6', spent: uncatSpent, percentage: total > 0 ? (uncatSpent / total) * 100 : 0, transactions: uncatTx, children: [], allIds: ['uncategorized'] });
       setCatSpending(spending);
     } catch (err) { console.error(err); setOffline(true); }
@@ -328,7 +341,7 @@ export default function SpendingOverview({ user, onBack, initialDate, initialVie
 
   function renderCatList(cats: CatSpend[], depth = 0): React.ReactNode {
     return cats.map(cat => {
-      const activeChildren = cat.children.filter(c => c.spent > 0).sort((a, b) => b.spent - a.spent);
+      const activeChildren = cat.children; // ya vienen filtradas y ordenadas
       const hasChildren = activeChildren.length > 0;
       const isExpanded = expanded.has(cat.id);
       const indent = depth * 16;

@@ -16,6 +16,7 @@ import { es } from 'date-fns/locale';
 import SwipeableRow from '@/components/SwipeableRow';
 import Amount from '@/components/ui/Amount';
 import OfflineState from '@/components/ui/OfflineState';
+import { todayStr } from '@/lib/dateUtils';
 
 // Warm the Recurring snapshot during boot idle so the first visit is instant.
 // Called from AppShell once the chunk is loaded; safe to fail silently.
@@ -110,7 +111,7 @@ export default function RecurringView({ user }: { user: User }) {
       setCategoryId('');
       setFrequency('monthly');
       setDayOfMonth('1');
-      setStartDate(new Date().toISOString().split('T')[0]);
+      setStartDate(todayStr());
       setEndDate('');
     }
     setShowForm(true);
@@ -119,7 +120,8 @@ export default function RecurringView({ user }: { user: User }) {
   async function handleSave() {
     if (!amount) return;
     setSaving(true);
-    const today = new Date().toISOString().split('T')[0];
+    // Calendario local, no UTC: de noche `toISOString()` adelanta un día.
+    const today = todayStr();
     const effectiveStart = startDate || today;
     const data = {
       user_id: user.id,
@@ -137,7 +139,6 @@ export default function RecurringView({ user }: { user: User }) {
     try {
       if (editingId) {
         await supabase.from('recurring_expenses').update(data).eq('id', editingId);
-        const today = new Date().toISOString().split('T')[0];
         await supabase
           .from('expenses')
           .delete()
@@ -156,7 +157,7 @@ export default function RecurringView({ user }: { user: User }) {
 
   // Soft delete: deactivate only
   async function handleDelete(id: string) {
-    const today = new Date().toISOString().split('T')[0];
+    const today = todayStr();
     await supabase
       .from('recurring_expenses')
       .update({ is_active: false, end_date: today })
@@ -178,16 +179,33 @@ export default function RecurringView({ user }: { user: User }) {
     }
   }
 
-  const parentCats = categories.filter(c => !c.parent_id);
-  const getSubcats = (pid: string) => categories.filter(c => c.parent_id === pid);
-  const grouped = parentCats.map(p => ({ parent: p, subcats: getSubcats(p.id) }));
+  // Estas tres se recalculaban en cada render — incluyendo cada tecla del
+  // buscador y cada dígito del teclado numérico — y `grouped` era O(padres ×
+  // categorías) porque hacía un filter completo por cada padre.
+  const grouped = useMemo(() => {
+    const subcatsByParent = new Map<string, Category[]>();
+    const parents: Category[] = [];
+    for (const c of categories) {
+      if (!c.parent_id) { parents.push(c); continue; }
+      let arr = subcatsByParent.get(c.parent_id);
+      if (!arr) { arr = []; subcatsByParent.set(c.parent_id, arr); }
+      arr.push(c);
+    }
+    return parents.map(p => ({ parent: p, subcats: subcatsByParent.get(p.id) || [] }));
+  }, [categories]);
+
+  const parentCats = useMemo(() => grouped.map(g => g.parent), [grouped]);
+
   const q = searchQuery.trim().toLowerCase();
-  const searchResults: Array<{ cat: Category; parent?: Category }> = q
-    ? categories.filter(c => c.name.toLowerCase().includes(q)).map(c => ({
-        cat: c,
-        parent: c.parent_id ? categoriesMap.get(c.parent_id) : undefined,
-      }))
-    : [];
+  const searchResults: Array<{ cat: Category; parent?: Category }> = useMemo(
+    () => q
+      ? categories.filter(c => c.name.toLowerCase().includes(q)).map(c => ({
+          cat: c,
+          parent: c.parent_id ? categoriesMap.get(c.parent_id) : undefined,
+        }))
+      : [],
+    [q, categories, categoriesMap],
+  );
 
   function handleSelectCategory(id: string) {
     setCategoryId(id);
@@ -289,7 +307,7 @@ export default function RecurringView({ user }: { user: User }) {
                       {item.frequency !== 'weekly' && ` · Día ${item.day_of_month}`}
                       {cat && ` · ${cat.name}`}
                     </p>
-                    {(item as any).start_date && (item as any).start_date < new Date().toISOString().split('T')[0] && (
+                    {(item as any).start_date && (item as any).start_date < todayStr() && (
                       <p className="text-[10px] text-dark-500 mt-0.5">
                         Desde {format(parseISO((item as any).start_date), "d MMM yyyy", { locale: es })}
                       </p>
@@ -384,7 +402,7 @@ export default function RecurringView({ user }: { user: User }) {
                 onChange={(e) => setStartDate(e.target.value)}
                 className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors"
               />
-              {startDate && startDate < new Date().toISOString().split('T')[0] && (
+              {startDate && startDate < todayStr() && (
                 <p className="text-[10px] text-brand-400 mt-1">⚡ Se generarán automáticamente los gastos desde esta fecha</p>
               )}
             </div>

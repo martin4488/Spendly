@@ -12,6 +12,7 @@ import { getIconComponent } from '@/lib/iconComponents';
 import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { deriveChildColor } from '@/lib/colorUtils';
+import { todayStr, yesterdayStr } from '@/lib/dateUtils';
 
 interface Props {
   user: User;
@@ -104,7 +105,9 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
   );
   const [description, setDescription] = useState(editingExpense?.description || '');
   const [categoryId, setCategoryId] = useState(editingExpense?.category_id || '');
-  const [date, setDate] = useState(editingExpense?.date || new Date().toISOString().split('T')[0]);
+  // `toISOString()` da la fecha en UTC: en UTC-3, a partir de las 21:00 un gasto
+  // nuevo nacía fechado al día siguiente. La fecha es del calendario local.
+  const [date, setDate] = useState(editingExpense?.date || todayStr());
   const [currency, setCurrency] = useState<CurrencyCode>((editingExpense?.original_currency as CurrencyCode) || defaultCurrency);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showCategoryPicker, setShowCategoryPicker] = useState(!editingExpense);
@@ -137,11 +140,10 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
   const headerIcon = selectedCat?.icon || 'banknote';
   const headerName = selectedCat?.name || 'Categoría';
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = todayStr();
   const dateLabel = (() => {
     if (date === today) return 'Hoy';
-    const yest = new Date(Date.now() - 86400000).toISOString().split('T')[0];
-    if (date === yest) return 'Ayer';
+    if (date === yesterdayStr()) return 'Ayer';
     try { return format(parseISO(date), "d MMM", { locale: es }); }
     catch { return date; }
   })();

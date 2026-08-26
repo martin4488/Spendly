@@ -1,17 +1,15 @@
 'use client';
 
-import { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import type { User } from '@supabase/auth-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/utils';
 import { Category } from '@/types';
 import { ArrowLeft, ChevronLeft, ChevronRight, ChevronDown, Edit3, X, Delete, History } from 'lucide-react';
 import CategoryIcon from '@/components/ui/CategoryIcon';
-import {
-  format, parseISO, endOfMonth, addMonths,
-  differenceInDays, isWithinInterval
-} from 'date-fns';
+import { format, parseISO, endOfMonth, differenceInDays, isWithinInterval } from 'date-fns';
 import { es } from 'date-fns/locale';
+import { addMonthsStr, monthEndStr, parseLocalDate, toMonthStr, yesterdayStr } from '@/lib/dateUtils';
 import { getCategories } from '@/lib/categoryCache';
 import { CatNode, buildTree } from '@/lib/categoryTree';
 import Amount from '@/components/ui/Amount';
@@ -107,8 +105,10 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
   const swipeStartX = useRef<number | null>(null);
   const now = new Date();
   const todayStr = format(now, 'yyyy-MM-dd');
-  const yestStr = format(new Date(now.getTime() - 86400000), 'yyyy-MM-dd');
-  const nowMonth = format(now, 'yyyy-MM');
+  // Un día de calendario, no 24 h: restar milisegundos se corre en los cambios
+  // de horario de verano.
+  const yestStr = yesterdayStr();
+  const nowMonth = toMonthStr(now);
 
   useEffect(() => { init(); }, [user.id]);
 
@@ -152,7 +152,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
     setLoading(true);
     try {
       const mStart = `${month}-01`;
-      const mEnd = format(endOfMonth(new Date(`${month}-01`)), 'yyyy-MM-dd');
+      const mEnd = monthEndStr(month);
 
       const { data: expData } = await supabase
         .from('expenses')
@@ -195,12 +195,22 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
     }
   }
 
-  function getMonthAmount(month: string): number | null {
-    const exact = periods.find(p => p.month === month);
-    if (exact) return exact.amount;
-    const prior = periods.filter(p => p.month < month).sort((a, b) => b.month.localeCompare(a.month));
-    return prior.length > 0 ? prior[0].amount : null;
-  }
+  // Ordenar una vez y buscar por corte: el monto vigente de un mes es el del
+  // último período con month <= mes. Antes cada consulta hacía un filter + sort
+  // del array completo, y `loadHistorySummaries` la llama doce veces.
+  const periodsAsc = useMemo(
+    () => periods.slice().sort((a, b) => a.month.localeCompare(b.month)),
+    [periods],
+  );
+
+  const getMonthAmount = useCallback((month: string): number | null => {
+    let amount: number | null = null;
+    for (const p of periodsAsc) {
+      if (p.month > month) break;
+      amount = p.amount;
+    }
+    return amount;
+  }, [periodsAsc]);
 
   const monthAmount = getMonthAmount(currentMonth);
 
@@ -227,10 +237,16 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
         months.push(mo);
       }
 
+      // Un solo pase agrupando por mes; antes era un .filter() sobre todos los
+      // gastos del año por cada uno de los 12 meses.
+      const spentByMonth = new Map<string, number>();
+      for (const e of expList) {
+        const mo = e.date.slice(0, 7);
+        spentByMonth.set(mo, (spentByMonth.get(mo) || 0) + e.amount);
+      }
+
       const summaries: MonthSummary[] = months.map(mo => {
-        const mStart = `${mo}-01`;
-        const mEnd = format(endOfMonth(new Date(`${mo}-01`)), 'yyyy-MM-dd');
-        const spent = expList.filter(e => e.date >= mStart && e.date <= mEnd).reduce((s, e) => s + e.amount, 0);
+        const spent = spentByMonth.get(mo) || 0;
         const amt = getMonthAmount(mo);
         return { month: mo, amount: amt, spent, isCurrent: mo === nowMonth };
       });
@@ -254,8 +270,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
   }
 
   function navigateMonth(dir: -1 | 1) {
-    const d = addMonths(new Date(`${currentMonth}-01`), dir);
-    const next = format(d, 'yyyy-MM');
+    const next = addMonthsStr(currentMonth, dir);
     if (next > nowMonth) return;
     setCurrentMonth(next);
   }
@@ -352,7 +367,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
     if (closedItems.length > 0) {
       const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
       const sorted = [...closedItems].sort((a, b) => a.month.localeCompare(b.month));
-      const fmt = (m: string) => cap(format(new Date(`${m}-01`), 'MMM', { locale: es }));
+      const fmt = (m: string) => cap(format(parseLocalDate(m), 'MMM', { locale: es }));
       const first = fmt(sorted[0].month);
       const last = fmt(sorted[sorted.length - 1].month);
       accumMonths = first === last ? first : `${first} - ${last}`;
@@ -624,7 +639,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
                   const pAmt = s.amount;
                   const sPct = pAmt && pAmt > 0 ? (s.spent / pAmt) * 100 : 0;
                   const sLeft = pAmt ? Math.max(pAmt - s.spent, 0) : 0;
-                  const label = format(new Date(`${s.month}-01`), 'MMMM', { locale: es });
+                  const label = format(parseLocalDate(s.month), 'MMMM', { locale: es });
                   const isOver = pAmt ? s.spent > pAmt : false;
                   const dotColor = isOver ? '#ef4444' : (s.isCurrent && sPct >= 80) ? '#f59e0b' : '#22c55e';
                   const availPct = Math.max(100 - sPct, 0);
@@ -691,7 +706,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
             <div className="w-8" />
           </div>
           <div className="px-5 py-6 flex-shrink-0 border-b border-dark-800 text-center">
-            <p className="text-xs text-dark-400 mb-1 capitalize">Monto para {format(new Date(`${currentMonth}-01`), 'MMMM yyyy', { locale: es })}</p>
+            <p className="text-xs text-dark-400 mb-1 capitalize">Monto para {format(parseLocalDate(currentMonth), 'MMMM yyyy', { locale: es })}</p>
             <p className="text-4xl font-extrabold">{editAmount || '0'}</p>
           </div>
           <div className="flex-1" />

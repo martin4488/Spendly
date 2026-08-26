@@ -14,7 +14,7 @@ npm test           # node:test — see below
 
 ## Tests
 
-`npm test` runs two suites out of `tests/`:
+`npm test` runs three suites out of `tests/`:
 
 - **`supabase-contract.test.mjs`** — always runs, no network or credentials
   needed. The app does *not* use `createClient()` from `@supabase/supabase-js`
@@ -36,6 +36,9 @@ npm test           # node:test — see below
   way (see the comments in the file). Structural checks that PostgREST can't
   reach (indexes, function source, cron jobs) live in
   [supabase/verify.sql](supabase/verify.sql) instead.
+- **`date-utils.test.mjs`** — always runs, no network. Re-runs the timezone-
+  sensitive assertions in subprocesses under four timezones, because every bug
+  it covers was invisible in UTC. See "Dates are local, never UTC" below.
 
 ## Environment
 
@@ -81,5 +84,20 @@ Two things to know before touching the database:
 **Auth:** Email/password only. `detectSessionInUrl: false` on the Supabase client to skip URL-token parsing on every load. Auth state drives the `unauthenticated` flag in `page.tsx`; `AuthPage` is lazy-loaded since it's rarely needed. Note that restoring a persisted session emits **two** events (`SIGNED_IN` then `INITIAL_SESSION`), so `page.tsx` dedupes the boot RPC via `runUnifiedBootOnce`.
 
 **Service worker** ([public/sw.js](public/sw.js)): hashed assets are cache-first; HTML navigations are stale-while-revalidate so launches don't block on the network. When revalidation finds a new shell it posts `shell-updated` and [ServiceWorkerRegistrar](src/components/ServiceWorkerRegistrar.tsx) reloads once the page goes to the background. Bump `CACHE_VERSION` to force a purge.
+
+**Dates are local, never UTC** ([src/lib/dateUtils.ts](src/lib/dateUtils.ts)): every
+`yyyy-MM-dd` / `yyyy-MM` in this app is a *calendar* date, so two patterns are
+banned and the helpers here replace them:
+
+- `new Date().toISOString().split('T')[0]` — that's the UTC day. In UTC-3 an
+  expense added after 21:00 got tomorrow's date.
+- `new Date('2026-03-01')` — date-only ISO strings parse as UTC, landing on
+  Feb 28 21:00 local, so `format(…, 'yyyy-MM')` returned the *previous* month.
+  That's what made `saveMonthlyBudget`'s `while (m <= curMonth)` never advance.
+
+Month arithmetic (`addMonthsStr`, `monthRange`, `monthEndStr`) is done on strings
+and touches no `Date` at all. `date-fns`' `parseISO` is fine — it parses
+date-only strings as local — but `new Date(str)` is not.
+`tests/date-utils.test.mjs` pins this by re-running under four timezones.
 
 **Supported currencies:** EUR, USD, ARS (see `CURRENCIES` in [src/lib/currency.ts](src/lib/currency.ts)).

@@ -15,6 +15,7 @@ import { CatNode, buildTree, flattenTree, allDescendantIds } from '@/lib/categor
 import { getCategories } from '@/lib/categoryCache';
 import { toast } from '@/lib/toast';
 import { confirmDialog } from '@/lib/confirm';
+import { todayStr as localToday, yesterdayStr } from '@/lib/dateUtils';
 
 const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
 
@@ -56,26 +57,41 @@ interface BcPeriodRow {
   valid_to: string | null;
 }
 
+// Índice padre → hijos. Se arma una vez por lista de categorías; antes cada
+// llamada a `expandCatIds` reconstruía el árbol completo y por cada nodo que
+// estuviera en el set volvía a recorrer su subárbol entero.
+type ChildIndex = Map<string, string[]>;
+
+function buildChildIndex(allCats: Category[]): ChildIndex {
+  const idx: ChildIndex = new Map();
+  for (const c of allCats) {
+    if (!c.parent_id) continue;
+    let arr = idx.get(c.parent_id);
+    if (!arr) { arr = []; idx.set(c.parent_id, arr); }
+    arr.push(c.id);
+  }
+  return idx;
+}
+
 // Expand top-level cat ids to include all descendants
-function expandCatIds(catIds: string[], allCats: Category[]): string[] {
-  const tree = buildTree(allCats);
+function expandCatIds(catIds: string[], childIndex: ChildIndex): Set<string> {
   const set = new Set<string>(catIds);
-  const addDesc = (nodes: CatNode[]) => {
-    nodes.forEach(n => {
-      if (set.has(n.id)) allDescendantIds(n).forEach(id => set.add(id));
-      addDesc(n.children);
-    });
-  };
-  addDesc(tree);
-  return Array.from(set);
+  const stack = catIds.slice();
+  while (stack.length > 0) {
+    const kids = childIndex.get(stack.pop()!);
+    if (!kids) continue;
+    for (const k of kids) if (!set.has(k)) { set.add(k); stack.push(k); }
+  }
+  return set;
 }
 
 // Given all bcp rows for a budget, return the expanded cat ids valid on a given date
-function getCatIdsForDate(bcpRows: BcPeriodRow[], date: string, allCats: Category[]): string[] {
-  const active = bcpRows
-    .filter(r => r.valid_from <= date && (r.valid_to === null || r.valid_to > date))
-    .map(r => r.category_id);
-  return expandCatIds(active, allCats);
+function getCatIdsForDate(bcpRows: BcPeriodRow[], date: string, childIndex: ChildIndex): Set<string> {
+  const active: string[] = [];
+  for (const r of bcpRows) {
+    if (r.valid_from <= date && (r.valid_to === null || r.valid_to > date)) active.push(r.category_id);
+  }
+  return expandCatIds(active, childIndex);
 }
 
 export default function BudgetDetailView({ user, budget, initialPeriodId, onBack, onRefresh }: Props) {
@@ -88,6 +104,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
     for (const c of allCats) m.set(c.id, c);
     return m;
   }, [allCats]);
+  const childIndex = useMemo(() => buildChildIndex(allCats), [allCats]);
   // All bcp rows for this budget — loaded once, used to derive per-period cat ids
   const [bcpRows, setBcpRows] = useState<BcPeriodRow[]>([]);
 
@@ -121,8 +138,9 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
 
   const swipeStartX = useRef<number | null>(null);
   const now = new Date();
-  const todayStr = format(now, 'yyyy-MM-dd');
-  const yestStr = format(new Date(now.getTime() - 86400000), 'yyyy-MM-dd');
+  const todayStr = localToday();
+  // Un día de calendario, no 24 h (los cambios de horario corren el resultado).
+  const yestStr = yesterdayStr();
 
   useEffect(() => { init(); }, [budget.id, user.id]);
 
@@ -188,7 +206,8 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
     }
 
     // Get the cat ids valid for this period's start date
-    const periodCatIds = getCatIdsForDate(bcpRows, period.period_start, allCats);
+    const periodCatSet = getCatIdsForDate(bcpRows, period.period_start, childIndex);
+    const periodCatIds = Array.from(periodCatSet);
     if (periodCatIds.length === 0) {
       setExpenses([]);
       setTotalSpent(0);
@@ -222,7 +241,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
         }
       });
       const catSpends: CatSpend[] = allCats
-        .filter(c => periodCatIds.includes(c.id) && (spendByCat[c.id] || 0) > 0)
+        .filter(c => periodCatSet.has(c.id) && (spendByCat[c.id] || 0) > 0)
         .map(c => ({ id: c.id, name: c.name, icon: c.icon, color: c.color, spent: spendByCat[c.id] || 0, transactions: txByCat[c.id] || 0 }))
         .sort((a, b) => b.spent - a.spent);
 
@@ -243,17 +262,23 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
     if (periods.length === 0) return;
     setHistoryLoading(true);
     try {
-      const yearPeriods = periods.filter(p => parseISO(p.period_start).getFullYear() === year);
+      const yearPeriods = periods.filter(p => Number(p.period_start.slice(0, 4)) === year);
       if (yearPeriods.length === 0) { setHistorySummaries([]); setHistoryLoading(false); return; }
 
       const oldest = yearPeriods[yearPeriods.length - 1]?.period_start;
       const newest = yearPeriods[0]?.period_end;
 
-      // Collect ALL cat ids ever used in this budget across all periods in range
-      // to do a single expenses query, then filter per period
-      const allEverCatIds = Array.from(new Set(
-        yearPeriods.flatMap(p => getCatIdsForDate(bcpRows, p.period_start, allCats))
-      ));
+      // Las categorías vigentes de cada período se calculan una sola vez y se
+      // reusan abajo; antes se recalculaban por período *dos* veces (acá y en el
+      // map de resúmenes), rearmando el árbol de categorías en cada llamada.
+      const catSetByPeriod = new Map<string, Set<string>>();
+      const everCatIds = new Set<string>();
+      for (const p of yearPeriods) {
+        const set = getCatIdsForDate(bcpRows, p.period_start, childIndex);
+        catSetByPeriod.set(p.id, set);
+        for (const id of set) everCatIds.add(id);
+      }
+      const allEverCatIds = Array.from(everCatIds);
       if (allEverCatIds.length === 0) {
         setHistorySummaries(yearPeriods.map(p => ({
           period: p, spent: 0, isCurrent: todayStr >= p.period_start && todayStr <= p.period_end
@@ -275,13 +300,12 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
       }));
 
       const summaries: PeriodSummary[] = periods.map(p => {
-        const pYear = parseISO(p.period_start).getFullYear();
-        if (pYear !== year) return { period: p, spent: 0, isCurrent: false };
-        // Use the cats valid for THIS period's start date
-        const pCatIds = new Set(getCatIdsForDate(bcpRows, p.period_start, allCats));
-        const spent = expList
-          .filter(e => e.date >= p.period_start && e.date <= p.period_end && pCatIds.has(e.category_id))
-          .reduce((s, e) => s + e.amount, 0);
+        const pCatIds = catSetByPeriod.get(p.id);
+        if (!pCatIds) return { period: p, spent: 0, isCurrent: false };
+        let spent = 0;
+        for (const e of expList) {
+          if (e.date >= p.period_start && e.date <= p.period_end && pCatIds.has(e.category_id)) spent += e.amount;
+        }
         const isCurrent = todayStr >= p.period_start && todayStr <= p.period_end;
         return { period: p, spent, isCurrent };
       });
@@ -439,7 +463,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
   const { historyByYear, historyYears } = useMemo(() => {
     const byYear: Record<number, { summary: PeriodSummary; originalIndex: number }[]> = {};
     historySummaries.forEach((s, i) => {
-      const y = parseISO(s.period.period_start).getFullYear();
+      const y = Number(s.period.period_start.slice(0, 4));
       if (!byYear[y]) byYear[y] = [];
       byYear[y].push({ summary: s, originalIndex: i });
     });

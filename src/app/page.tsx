@@ -11,6 +11,7 @@ import type { CurrencyCode } from '@/lib/currency';
 import { publishDashboardCache, readDashboardCache, buildCategoriesMapFromCache } from '@/lib/dashboardCache';
 import { reportRpcFallback } from '@/lib/rpcFallback';
 import type { Category } from '@/types';
+import { toDateStr } from '@/lib/dateUtils';
 
 // Lazy-load AuthPage — it's only shown when not logged in, which is rare.
 // Keeps ~7 lucide icons + auth UI out of the critical bundle.
@@ -53,18 +54,21 @@ function getCachedSession(): User | null {
 // Throttle generate_recurring_expenses to once per day
 function shouldRunRecurring(userId: string): boolean {
   try {
-    const key = `spendly_recurring_run_${userId}`;
-    const last = localStorage.getItem(key);
-    if (last && new Date(last).toDateString() === new Date().toDateString()) return false;
-    localStorage.setItem(key, new Date().toISOString());
-    return true;
+    const last = localStorage.getItem(`spendly_recurring_run_${userId}`);
+    return !(last && new Date(last).toDateString() === new Date().toDateString());
   } catch {
     return true;
   }
 }
 
-function toDateStr(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+/** Marca la corrida del día. Se llama recién cuando la RPC respondió bien: si
+ *  falla (offline, por ejemplo) el próximo arranque tiene que reintentarla. */
+function markRecurringRun(userId: string): void {
+  try {
+    localStorage.setItem(`spendly_recurring_run_${userId}`, new Date().toISOString());
+  } catch {
+    // Modo privado / sin cuota — corre de nuevo en el próximo arranque.
+  }
 }
 
 /**
@@ -125,7 +129,9 @@ export default function Home() {
       prefetchRates().catch(console.error);
 
       if (shouldRunRecurring(user.id)) {
-        Promise.resolve(supabase.rpc('generate_recurring_expenses', { p_user_id: user.id })).catch(console.error);
+        Promise.resolve(supabase.rpc('generate_recurring_expenses', { p_user_id: user.id }))
+          .then(({ error }) => { if (!error) markRecurringRun(user.id); })
+          .catch(console.error);
       }
     }
 

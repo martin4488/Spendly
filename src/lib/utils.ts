@@ -1,5 +1,8 @@
-import { format, startOfMonth, endOfMonth, startOfYear, endOfYear, addMonths, addYears, parseISO } from 'date-fns';
-import { es } from 'date-fns/locale';
+// Este módulo ya no necesita date-fns. `formatDate`, `getYearRange`,
+// `getMonthName` y `getBudgetPeriodRange` no tenían ningún llamador, y
+// `getMonthRange` sólo alimentaba una consulta muerta en CategoriesView; entre
+// todos arrastraban parseISO, addMonths/addYears y el locale `es` a cada chunk
+// que importa `formatCurrency`.
 import { ICON_KEYS } from '@/lib/iconMap';
 import { getDefaultCurrency } from '@/lib/currencyState';
 
@@ -41,28 +44,6 @@ function getCurrencyFormatter(code: string, round?: boolean): Intl.NumberFormat 
 export function formatCurrency(amount: number, currency?: string, round?: boolean): string {
   const code = currency || getDefaultCurrency();
   return getCurrencyFormatter(code, round).format(round ? Math.round(amount) : amount);
-}
-
-export function formatDate(date: string): string {
-  return format(parseISO(date), 'dd MMM yyyy', { locale: es });
-}
-
-export function getMonthRange(date: Date = new Date()) {
-  return {
-    start: format(startOfMonth(date), 'yyyy-MM-dd'),
-    end: format(endOfMonth(date), 'yyyy-MM-dd'),
-  };
-}
-
-export function getYearRange(date: Date = new Date()) {
-  return {
-    start: format(startOfYear(date), 'yyyy-MM-dd'),
-    end: format(endOfYear(date), 'yyyy-MM-dd'),
-  };
-}
-
-export function getMonthName(date: Date = new Date()): string {
-  return format(date, 'MMMM yyyy', { locale: es });
 }
 
 export function exportToCSV(data: any[], filename: string) {
@@ -111,30 +92,3 @@ export const CATEGORY_COLORS = [
   '#78716c', '#57534e', '#44403c',
   '#64748b', '#475569', '#334155',
 ];
-
-export function getBudgetPeriodRange(startDateStr: string, recurrence: 'monthly' | 'yearly') {
-  const startDate = parseISO(startDateStr);
-  const today = new Date();
-
-  let periodStart = startDate;
-  let periodEnd: Date;
-
-  if (recurrence === 'monthly') {
-    while (addMonths(periodStart, 1) <= today) {
-      periodStart = addMonths(periodStart, 1);
-    }
-    periodEnd = addMonths(periodStart, 1);
-    periodEnd = new Date(periodEnd.getTime() - 86400000);
-  } else {
-    while (addYears(periodStart, 1) <= today) {
-      periodStart = addYears(periodStart, 1);
-    }
-    periodEnd = addYears(periodStart, 1);
-    periodEnd = new Date(periodEnd.getTime() - 86400000);
-  }
-
-  return {
-    start: format(periodStart, 'yyyy-MM-dd'),
-    end: format(periodEnd, 'yyyy-MM-dd'),
-  };
-}

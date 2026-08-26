@@ -17,6 +17,7 @@ import { getPendingExpenses, onQueueChange, flushQueue, startAutoFlush, dequeueE
 import { reportRpcFallback } from '@/lib/rpcFallback';
 import Amount from '@/components/ui/Amount';
 import DashboardSkeleton from '@/components/ui/DashboardSkeleton';
+import { toDateStr, todayStr as localToday, yesterdayStr } from '@/lib/dateUtils';
 
 const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
 
@@ -33,10 +34,6 @@ const EXPENSE_COLUMNS = 'id, amount, description, date, category_id, is_recurrin
 // thousand rows, and each one is a swipeable row + icon + amount (~20 DOM nodes),
 // which is enough to make scrolling stutter on a phone if it's all mounted.
 const DAYS_PER_PAGE = 30;
-
-function toDateStr(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
 
 function formatDayLabel(dateStr: string, todayStr: string, yesterdayStr: string): string {
   if (dateStr === todayStr) return 'Hoy';
@@ -510,12 +507,8 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     return data;
   }, [viewMode, chartTotals, yearTotals, currentMonth, currentYear]);
 
-  const todayStr = useMemo(() => toDateStr(new Date()), []);
-  const yesterdayStr = useMemo(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 1);
-    return toDateStr(d);
-  }, []);
+  const todayStr = useMemo(() => localToday(), []);
+  const yesterdayLabelStr = useMemo(() => yesterdayStr(), []);
 
   // Merge queued (offline) expenses into the live current-month view. Historical
   // months/years keep only their fetched rows. Dedup by id against server rows so
@@ -537,19 +530,26 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     return [...extra, ...expenses];
   }, [expenses, pending, showPending]);
 
+  // Filtrado y agrupado van separados a propósito: sin búsqueda activa esto
+  // devuelve la misma referencia, así que un cambio de `categoriesMap` (cada
+  // sync) ya no rearma los grupos del día. Y `toLowerCase()` de la consulta sale
+  // del loop — se hacía una vez por gasto.
+  const filteredExpenses = useMemo(() => {
+    if (!searchQuery) return displayExpenses;
+    const q = searchQuery.toLowerCase();
+    return displayExpenses.filter(e => {
+      const cat = e.category_id ? categoriesMap.get(e.category_id) : null;
+      const parentCat = cat?.parent_id ? categoriesMap.get(cat.parent_id) : null;
+      return (
+        (e.description || '').toLowerCase().includes(q) ||
+        (cat?.name || '').toLowerCase().includes(q) ||
+        (parentCat?.name || '').toLowerCase().includes(q)
+      );
+    });
+  }, [displayExpenses, searchQuery, categoriesMap]);
+
   const groupedByDay = useMemo(() => {
-    const filtered = searchQuery
-      ? displayExpenses.filter(e => {
-          const cat = e.category_id ? categoriesMap.get(e.category_id) : null;
-          const parentCat = cat?.parent_id ? categoriesMap.get(cat.parent_id) : null;
-          const q = searchQuery.toLowerCase();
-          return (
-            (e.description || '').toLowerCase().includes(q) ||
-            (cat?.name || '').toLowerCase().includes(q) ||
-            (parentCat?.name || '').toLowerCase().includes(q)
-          );
-        })
-      : displayExpenses;
+    const filtered = filteredExpenses;
 
     const dayMap = new Map<string, ExpenseListItem[]>();
     for (const exp of filtered) {
@@ -561,12 +561,12 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     return Array.from(dayMap.entries())
       .map(([dateStr, exps]) => ({
         date: dateStr,
-        label: formatDayLabel(dateStr, todayStr, yesterdayStr),
+        label: formatDayLabel(dateStr, todayStr, yesterdayLabelStr),
         total: exps.reduce((sum, e) => sum + Number(e.amount), 0),
         expenses: exps,
       }))
       .sort((a, b) => b.date.localeCompare(a.date));
-  }, [displayExpenses, searchQuery, todayStr, yesterdayStr, categoriesMap]);
+  }, [filteredExpenses, todayStr, yesterdayLabelStr]);
 
   const openEdit = useCallback((expense: ExpenseListItem) => {
     // A still-unsynced (pending) expense can't be edited yet — editing hits the DB

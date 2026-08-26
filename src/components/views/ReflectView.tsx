@@ -39,14 +39,29 @@ function sumNode(node: CatNode, spendMap: Record<string, number>): number {
   return (spendMap[node.id] || 0) + node.children.reduce((s, c) => s + sumNode(c, spendMap), 0);
 }
 
+/**
+ * Igual que antes, pero el total del nodo sale de los hijos ya calculados en vez
+ * de volver a recorrer el subárbol con `sumNode` en cada nivel (era O(n·profundidad)).
+ * Ojo: el total incluye a los hijos con gasto 0, que sí se descartan de `children`.
+ */
 function buildCatData(node: CatNode, spendMap: Record<string, number>): CatData {
-  const children = node.children
-    .map(c => buildCatData(c, spendMap))
-    .filter(c => c.amount > 0);
+  const allChildren = node.children.map(c => buildCatData(c, spendMap));
+  let amount = spendMap[node.id] || 0;
+  for (const c of allChildren) amount += c.amount;
   return {
     id: node.id, name: node.name, icon: node.icon, color: node.color,
-    amount: sumNode(node, spendMap),
-    children,
+    amount,
+    // Ordenado acá y no en el render: el orden no depende de nada de la vista.
+    children: allChildren.filter(c => c.amount > 0).sort((a, b) => b.amount - a.amount),
+  };
+}
+
+/** Divide el árbol entero por los meses cerrados → promedio mensual. */
+function averageCatData(cat: CatData, divisor: number): CatData {
+  return {
+    ...cat,
+    amount: cat.amount / divisor,
+    children: cat.children.map(c => averageCatData(c, divisor)),
   };
 }
 
@@ -66,7 +81,8 @@ async function fetchAvailableYears(userId: string, cy: number): Promise<number[]
     .from('expenses').select('date').eq('user_id', userId)
     .order('date', { ascending: true }).limit(1);
   if (error) throw error;
-  const firstYear = first?.[0] ? new Date(first[0].date).getFullYear() : cy;
+  // `new Date('2020-01-01').getFullYear()` es UTC: en UTC-3 devolvía 2019.
+  const firstYear = first?.[0] ? Number(String(first[0].date).slice(0, 4)) : cy;
   return Array.from({ length: cy - firstYear + 1 }, (_, i) => cy - i);
 }
 
@@ -121,9 +137,13 @@ async function fetchYearData(userId: string, yr: number, prevYr: number | null, 
   const yearStart = format(startOfYear(new Date(yr, 0, 1)), 'yyyy-MM-dd');
   const yearEnd = format(endOfYear(new Date(yr, 0, 1)), 'yyyy-MM-dd');
 
-  const [{ data: rpcResult, error: rpcError }, catsMap] = await Promise.all([
+  // El año anterior sólo alimenta los insights comparativos y no depende en nada
+  // del año actual, pero se pedía *después* de resolver éste: dos viajes en
+  // serie. Van en la misma tanda.
+  const [{ data: rpcResult, error: rpcError }, catsMap, prev] = await Promise.all([
     supabase.rpc('get_reflect_data', { p_user_id: userId, p_year_start: yearStart, p_year_end: yearEnd }),
     getCategories(userId),
+    prevYr != null ? fetchPrevYearData(userId, prevYr) : Promise.resolve(null),
   ]);
 
   const cats = Array.from(catsMap.values());
@@ -184,11 +204,10 @@ async function fetchYearData(userId: string, yr: number, prevYr: number | null, 
     });
   });
 
+  // Antes sólo dividía la raíz y sus hijas directas; las nietas quedaban con el
+  // total anual crudo.
   const catData: CatData[] = tree
-    .map(node => {
-      const d = buildCatData(node, spendMap);
-      return { ...d, amount: d.amount / numClosed, children: d.children.map(c => ({ ...c, amount: c.amount / numClosed })) };
-    })
+    .map(node => averageCatData(buildCatData(node, spendMap), numClosed))
     .filter(c => c.amount > 0)
     .sort((a, b) => b.amount - a.amount);
 
@@ -196,9 +215,7 @@ async function fetchYearData(userId: string, yr: number, prevYr: number | null, 
   let prevYearCats: Record<string, number> | null = null;
   let prevYearAvg: number | null = null;
 
-  if (prevYr != null) {
-    const prev = await fetchPrevYearData(userId, prevYr);
-
+  if (prev) {
     let prevTotal = 0;
     Object.values(prev.monthMap).forEach(v => { prevTotal += v; });
 
@@ -489,15 +506,13 @@ export default function ReflectView({ user }: Props) {
     });
   }
 
+  // `avg` y `maxCat` son del año, no de la fila: se calculan una vez abajo
+  // (`avg`, `maxCat`) en vez de rehacer el filter/reduce/spread por cada
+  // categoría y subcategoría en cada render.
   function renderCatRow(cat: CatData, depth: number): React.ReactNode {
-    const d = year ? yearData[year] : null;
-    if (!d) return null;
-    const closed = d.months.filter(m => !m.isCurrent);
-    const avg = closed.length > 0 ? closed.reduce((s, m) => s + m.amount, 0) / closed.length : 0;
-    const maxCat = Math.max(...d.cats.map(c => c.amount), 1);
     const barPct = (cat.amount / maxCat) * 100;
     const totalPct = avg > 0 ? Math.round((cat.amount / avg) * 100) : 0;
-    const activeChildren = cat.children.filter(c => c.amount > 0).sort((a, b) => b.amount - a.amount);
+    const activeChildren = cat.children;
     const hasChildren = activeChildren.length > 0;
     const isExp = expanded.has(cat.id);
     const indent = depth * 20;
@@ -535,6 +550,7 @@ export default function ReflectView({ user }: Props) {
   const closed = d?.months.filter(m => !m.isCurrent) || [];
   const avg = closed.length > 0 ? closed.reduce((s, m) => s + m.amount, 0) / closed.length : 0;
   const maxAmt = d ? Math.max(...d.months.map(m => m.amount), 1) : 1;
+  const maxCat = d && d.cats.length > 0 ? Math.max(d.cats[0].amount, 1) : 1;
   const first = d?.months[0]?.label;
   const last = d?.months[d.months.length - 1]?.label;
 

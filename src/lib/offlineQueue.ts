@@ -88,10 +88,30 @@ export function newExpenseId(): string {
 export async function flushQueue(): Promise<void> {
   if (flushing) return;
   if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
-  if (read().length === 0) return;
+  const queued = read();
+  if (queued.length === 0) return;
 
   flushing = true;
   try {
+    // Camino feliz: un solo INSERT con todo. Volver de un vuelo con varios gastos
+    // encolados hacía un viaje por gasto (y una reescritura de localStorage por
+    // cada uno). Si el lote falla por lo que sea, se cae al bucle de a uno, que
+    // es el que sabe distinguir duplicado de rechazo real.
+    if (queued.length > 1) {
+      try {
+        const rows = queued.map(({ queued_at, ...row }) => row);
+        const { error } = await supabase.from('expenses').insert(rows);
+        if (!error) {
+          const done = new Set(queued.map(e => e.id));
+          write(read().filter(e => !done.has(e.id)));
+          return;
+        }
+      } catch {
+        // Red caída: sigue todo encolado, se reintenta después.
+        return;
+      }
+    }
+
     for (const item of read()) {
       const { queued_at, ...row } = item;
       try {

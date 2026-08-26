@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import type { User } from '@supabase/auth-js';
 import { supabase } from '@/lib/supabase';
-import { getMonthRange, CATEGORY_ICONS, CATEGORY_COLORS } from '@/lib/utils';
+import { CATEGORY_ICONS, CATEGORY_COLORS } from '@/lib/utils';
 import { Category } from '@/types';
 import { Plus, X, FolderPlus, GripVertical, ArrowLeft } from 'lucide-react';
 import SwipeableRow from '@/components/SwipeableRow';
@@ -30,7 +30,6 @@ export default function CategoriesView({ user, onBack }: { user: User; onBack?: 
   const [roots, setRoots] = useState<CatNode[]>([]);
   const [loading, setLoading] = useState(true);
   const [offline, setOffline] = useState(false);
-  const [spending, setSpending] = useState<Record<string, number>>({});
 
   // Form
   const [showForm, setShowForm] = useState(false);
@@ -54,15 +53,13 @@ export default function CategoriesView({ user, onBack }: { user: User; onBack?: 
     }
     setOffline(false);
     setLoading(true);
-    const monthRange = getMonthRange();
-    const [{ data: cats, error }, { data: expenses }] = await Promise.all([
-      supabase.from('categories').select('*').eq('user_id', user.id).neq('deleted', true).neq('hidden', true).order('position').order('created_at'),
-      supabase.from('expenses').select('amount, category_id').eq('user_id', user.id).gte('date', monthRange.start).lte('date', monthRange.end),
-    ]);
+    // Antes esto traía además *todos* los gastos del mes para armar un mapa de
+    // gasto por categoría que no se mostraba en ningún lado: el único lector era
+    // `totalSpend()`, que no tenía llamadores. Una consulta entera por apertura.
+    const { data: cats, error } = await supabase
+      .from('categories').select('*').eq('user_id', user.id)
+      .neq('deleted', true).neq('hidden', true).order('position').order('created_at');
     if (error) { setOffline(true); setLoading(false); return; }
-    const spendMap: Record<string, number> = {};
-    expenses?.forEach(e => { if (e.category_id) spendMap[e.category_id] = (spendMap[e.category_id] || 0) + Number(e.amount); });
-    setSpending(spendMap);
     const flat = cats || [];
     setFlatCats(flat);
     setRoots(buildTree(flat));
@@ -228,10 +225,6 @@ export default function CategoriesView({ user, onBack }: { user: User; onBack?: 
     if (error) { toast('No se pudo eliminar la categoría. Reintentá.'); return; }
     invalidateCategories();
     loadData();
-  }
-
-  function totalSpend(node: CatNode): number {
-    return (spending[node.id] || 0) + node.children.reduce((s, c) => s + totalSpend(c), 0);
   }
 
   function renderChildren(nodes: CatNode[], depth: number) {
