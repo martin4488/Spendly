@@ -454,6 +454,136 @@ describe('live Supabase', { skip }, () => {
     }
   });
 
+  test('get_budgets_data: períodos, expansión de subcategorías y monto heredado', {
+    skip: allowWrites ? false : 'set SPENDLY_TEST_ALLOW_WRITES=1 to enable writes',
+  }, async (t) => {
+    // El único test que ejercita de verdad la matemática de la RPC. Los de
+    // arriba comprueban la forma, pero la cuenta de prueba no tiene
+    // presupuestos, así que sin armar uno acá el gasto por período nunca se
+    // verifica contra nada — y es lo que decide lo que muestra la pantalla.
+    //
+    // Crea todo con el prefijo [spendly-test] y lo borra en el finally.
+    const now = new Date();
+    const today = toDateStr(now);
+    const mo = n => {
+      const d = new Date(now.getFullYear(), now.getMonth() - n, 1);
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+    };
+    const lastDay = m => {
+      const [y, mm] = m.split('-').map(Number);
+      return `${m}-${pad(new Date(y, mm, 0).getDate())}`;
+    };
+    const [M2, M1, M0] = [mo(2), mo(1), mo(0)];
+
+    const catIds = [];
+    let budgetId = null;
+    const expenseIds = [];
+
+    const newCat = async (name, parent_id) => {
+      const { data, error } = await client.from('categories')
+        .insert({ user_id: userId, name: `[spendly-test] ${name}`, icon: 'package', color: '#123456', parent_id })
+        .select().single();
+      assert.equal(error, null, `crear categoría ${name} falló: ${error?.message}`);
+      catIds.push(data.id);
+      return data.id;
+    };
+
+    try {
+      const padre = await newCat('Padre', null);
+      const hija = await newCat('Hija', padre);
+      // Fuera del presupuesto: su gasto no tiene que sumar en ningún período.
+      const ajena = await newCat('Ajena', null);
+
+      const { data: budget, error: bErr } = await client.from('budgets')
+        .insert({
+          user_id: userId, name: '[spendly-test] Presupuesto', amount: 100,
+          recurrence: 'monthly', start_date: `${M2}-01`,
+        })
+        .select().single();
+      assert.equal(bErr, null, `crear presupuesto falló: ${bErr?.message}`);
+      budgetId = budget.id;
+
+      // Apunta SÓLO al padre: la hija tiene que entrar por la expansión del CTE.
+      const { error: bcpErr } = await client.from('budget_category_periods')
+        .insert({ budget_id: budgetId, category_id: padre, valid_from: `${M2}-01`, valid_to: null });
+      assert.equal(bcpErr, null, `vincular categoría falló: ${bcpErr?.message}`);
+
+      for (const [month, category_id, amount] of [
+        [M2, padre, 30], [M2, hija, 20],   // → 50
+        [M1, hija, 140],                    // → 140
+        [M0, padre, 11], [M0, ajena, 999],  // → 11, la ajena queda afuera
+      ]) {
+        const id = crypto.randomUUID();
+        const { error } = await client.from('expenses').insert({
+          id, user_id: userId, amount, description: '[spendly-test]',
+          notes: null, category_id, date: `${month}-05`,
+        });
+        assert.equal(error, null, `insertar gasto falló: ${error?.message}`);
+        expenseIds.push(id);
+      }
+
+      // ── La llamada ────────────────────────────────────────────────────────
+      const { data, error } = await client.rpc('get_budgets_data', { p_user_id: userId, p_today: today });
+      if (error && (error.code === 'PGRST202' || /does not exist/i.test(error.message || ''))) {
+        t.skip('get_budgets_data no existe todavía — aplicá supabase/migrations/006_budgets_rpc.sql');
+        return;
+      }
+      assert.equal(error, null, `get_budgets_data failed: ${error?.message}`);
+
+      const b = data.budgets.find(x => x.id === budgetId);
+      assert.ok(b, 'el presupuesto no vino en la respuesta');
+      assert.deepEqual(b.category_ids, [padre], 'category_ids trae la semilla, no las expandidas');
+
+      const mine = data.periods.filter(p => p.budget_id === budgetId)
+        .sort((x, y) => x.period_start.localeCompare(y.period_start));
+      assert.deepEqual(mine.map(p => p.period_start.slice(0, 7)), [M2, M1, M0],
+        'tendría que haber materializado un período por mes desde start_date');
+
+      // Fin de mes: el bug de UTC que arregla dateUtils daba el mes anterior.
+      for (const p of mine) {
+        assert.equal(p.period_end, lastDay(p.period_start.slice(0, 7)),
+          `el período ${p.period_start} termina en ${p.period_end}`);
+      }
+
+      assert.equal(Number(mine[0].spent), 50, `${M2}: 30 del padre + 20 de la hija`);
+      assert.equal(Number(mine[1].spent), 140, `${M1}: la hija sola`);
+      assert.equal(Number(mine[2].spent), 11, `${M0}: 11 — si da 1010 se coló la categoría ajena`);
+
+      const cur = mine.find(p => p.period_start <= today && p.period_end >= today);
+      assert.ok(cur, 'no hay período que contenga a hoy — la fila del presupuesto no se podría abrir');
+
+      // ── Idempotencia ──────────────────────────────────────────────────────
+      const { error: e2 } = await client.rpc('get_budgets_data', { p_user_id: userId, p_today: today });
+      assert.equal(e2, null, `segunda llamada falló: ${e2?.message}`);
+      const { data: rows } = await client.from('budget_periods').select('id').eq('budget_id', budgetId);
+      assert.equal(rows.length, 3, `la tabla quedó con ${rows.length} períodos — se duplicaron`);
+
+      // ── Monto heredado ────────────────────────────────────────────────────
+      // Se le pone monto propio al mes del medio y se borra el actual: al
+      // regenerarlo tiene que heredar ese monto, como hacía el cliente.
+      await client.from('budget_periods').update({ amount: 777 }).eq('id', mine[1].id);
+      await client.from('budget_periods').delete().eq('id', mine[2].id);
+
+      const { data: third, error: e3 } = await client.rpc('get_budgets_data', { p_user_id: userId, p_today: today });
+      assert.equal(e3, null, `tercera llamada falló: ${e3?.message}`);
+      const regen = third.periods.filter(p => p.budget_id === budgetId)
+        .sort((x, y) => x.period_start.localeCompare(y.period_start));
+      assert.equal(regen.length, 3, 'no se regeneró el período borrado');
+      assert.equal(Number(regen[2].amount), 777, 'el mes nuevo tiene que heredar el último monto fijado');
+      assert.equal(Number(regen[2].spent), 11, 'el gasto del período regenerado se perdió');
+    } finally {
+      // Los gastos primero: referencian a las categorías.
+      for (const id of expenseIds) await client.from('expenses').delete().eq('id', id);
+      // Borrar el presupuesto cascadea períodos y budget_category_periods.
+      if (budgetId) await client.from('budgets').delete().eq('id', budgetId);
+      for (const id of catIds.slice().reverse()) await client.from('categories').delete().eq('id', id);
+
+      const { data: left } = await client.from('categories')
+        .select('id').eq('user_id', userId).like('name', '%spendly-test%');
+      assert.deepEqual(left, [], 'quedaron categorías de prueba sin borrar');
+    }
+  });
+
   test('generate_recurring_expenses is callable', { skip: allowWrites ? false : 'set SPENDLY_TEST_ALLOW_WRITES=1 to enable writes' }, async () => {
     // Called at boot from page.tsx with `.catch(console.error)`, so a failure
     // here is completely silent in the app. It's idempotent: it only inserts

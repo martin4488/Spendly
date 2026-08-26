@@ -1,7 +1,11 @@
 # Esquema de Spendly
 
 `schema.sql` está **completo** — volcado del proyecto real: las 9 tablas, sus
-constraints, índices, políticas RLS y las 6 funciones RPC.
+constraints, índices, políticas RLS y las funciones RPC.
+
+⚠ El volcado es anterior a `006_budgets_rpc.sql`: `get_budgets_data` y la
+versión nueva de `spendly_health()` están en la migración, no acá. Volver a
+volcarlo (ver abajo) cuando toque tocar el esquema.
 
 Ojo con una cosa que sigue vigente: **cada vista tiene un fallback silencioso**
 que rearma el resultado con queries del lado del cliente si su RPC falla. Si una
@@ -11,24 +15,8 @@ respondan todas.
 
 ## Migraciones
 
-Correr en orden, desde el SQL Editor. Todas idempotentes.
-
-### Pendiente
-
-| Archivo | Qué hace | Riesgo |
-|---|---|---|
-| `006_budgets_rpc.sql` | **`get_budgets_data`**: BudgetsView pasa de 6 consultas en 3 tandas encadenadas a una sola llamada, con el gasto por período ya sumado en Postgres. Más el índice único de `budget_periods`. | Bajo — función nueva, con respaldo en el cliente |
-
-> **Es la única `get_*` que escribe.** Materializa los períodos de presupuesto
-> que falten hasta hoy, igual que venía haciendo el cliente. Tiene que pasar
-> adentro de la función: si no, el primer día de un mes nuevo el período actual
-> todavía no existe y el presupuesto aparece vacío. Es idempotente, y
-> `tests/supabase-live.test.mjs` la llama dos veces para comprobarlo.
->
-> Si el SQL Editor avisa `budget_periods tiene períodos duplicados`, el índice
-> único no se creó. No es grave — la función igual filtra por `not exists`, que
-> es lo que hacía el cliente. Para limpiarlos, BLOQUE F de
-> [`verify.sql`](verify.sql).
+**No hay ninguna pendiente.** Las que vengan se corren desde el SQL Editor, en
+orden, y se escriben idempotentes.
 
 ### Aplicadas
 
@@ -42,6 +30,18 @@ revierte, el test lo dice.
 | `004_fix_date_casts.sql` | `get_reflect_data` y `get_spending_overview` comparaban `date >= text`, que no existe como operador. Castea a `date`. Va **antes** que 003. |
 | `003_redundant_indexes.sql` | Borró 5 índices duplicados |
 | `005_health_check.sql` | Expone `spendly_health()`, que es lo que hace que esta tabla no se desactualice sola |
+| `006_budgets_rpc.sql` | **`get_budgets_data`**: BudgetsView pasó de 6 consultas en 3 tandas encadenadas a una sola llamada, con el gasto por período ya sumado en Postgres. Más el índice único de `budget_periods`. |
+
+> **`get_budgets_data` es la única `get_*` que escribe.** Materializa los
+> períodos de presupuesto que falten hasta hoy, igual que venía haciendo el
+> cliente. Tiene que pasar adentro de la función: si no, el primer día de un mes
+> nuevo el período actual todavía no existe y el presupuesto aparece vacío. Es
+> idempotente, y el test live la llama dos veces para comprobarlo.
+>
+> Si alguna vez el SQL Editor avisa `budget_periods tiene períodos duplicados`,
+> el índice único no se pudo crear. No es grave — la función igual filtra por
+> `not exists`, que es lo que hacía el cliente. Para limpiarlos, BLOQUE F de
+> [`verify.sql`](verify.sql).
 
 > **Por qué 004 iba antes que 003.** `002` dejó `get_reflect_data` en su versión
 > rota (la sobrecarga que andaba era la que borró por "duplicada"), y de paso

@@ -14,7 +14,7 @@ npm test           # node:test — see below
 
 ## Tests
 
-`npm test` runs three suites out of `tests/`:
+`npm test` runs four suites out of `tests/`:
 
 - **`supabase-contract.test.mjs`** — always runs, no network or credentials
   needed. The app does *not* use `createClient()` from `@supabase/supabase-js`
@@ -36,6 +36,8 @@ npm test           # node:test — see below
   way (see the comments in the file). Structural checks that PostgREST can't
   reach (indexes, function source, cron jobs) live in
   [supabase/verify.sql](supabase/verify.sql) instead.
+- **`budgets-snapshot.test.mjs`** — always runs, no network. Fixtures over
+  `buildSnapshot()`, the math both Budgets paths share. See "Budgets math".
 - **`date-utils.test.mjs`** — always runs, no network. Re-runs the timezone-
   sensitive assertions in subprocesses under four timezones, because every bug
   it covers was invisible in UTC. See "Dates are local, never UTC" below.
@@ -82,7 +84,7 @@ Three things to know before touching the database:
 
 `budget_categories` is a legacy table superseded by `budget_category_periods`; nothing in the app reads it.
 
-**Budgets math** ([src/lib/budgetsSnapshot.ts](src/lib/budgetsSnapshot.ts)): `buildSnapshot()` turns budgets + periods-with-spend into what the screen renders, and it is deliberately outside the view. Two paths feed it — the `get_budgets_data` RPC, which sums each period's spend in Postgres, and the client fallback, which sums it by hand. They must agree: if they drift, a broken RPC changes the numbers silently rather than failing. `tests/budgets-snapshot.test.mjs` pins the math with fixtures; the live suite checks the RPC against the raw tables.
+**Budgets math** ([src/lib/budgetsSnapshot.ts](src/lib/budgetsSnapshot.ts)): `buildSnapshot()` turns budgets + periods-with-spend into what the screen renders, and it is deliberately outside the view. Two paths feed it — the `get_budgets_data` RPC, which sums each period's spend in Postgres, and the client fallback, which sums it by hand. They must agree: if they drift, a broken RPC changes the numbers silently rather than failing. `tests/budgets-snapshot.test.mjs` pins the math with fixtures. The live suite builds a real budget (parent + child category, three months of expenses), asserts the RPC's per-period spend — subcategory rollup included, unrelated categories excluded — and deletes it again; that one is behind `SPENDLY_TEST_ALLOW_WRITES=1`, because the test account has no budgets of its own and without one the spend math is never checked against anything.
 
 `get_budgets_data` is the only `get_*` that writes — it materializes any missing budget periods before aggregating, because on the first day of a new month the current period doesn't exist yet and the budget would render empty. It's idempotent, and the live test calls it twice to prove it.
 
