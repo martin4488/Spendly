@@ -253,6 +253,9 @@ export default function RecurringView({ user }: { user: User }) {
 
   const freqLabels: Record<string, string> = { weekly: 'Semanal', monthly: 'Mensual', yearly: 'Anual' };
 
+  // Una sola vez por render, no una por fila: `todayStr()` construye un Date.
+  const today = todayStr();
+
   if (offline) return <OfflineState onRetry={loadData} />;
 
   return (
@@ -307,7 +310,7 @@ export default function RecurringView({ user }: { user: User }) {
                       {item.frequency !== 'weekly' && ` · Día ${item.day_of_month}`}
                       {cat && ` · ${cat.name}`}
                     </p>
-                    {(item as any).start_date && (item as any).start_date < todayStr() && (
+                    {(item as any).start_date && (item as any).start_date < today && (
                       <p className="text-[10px] text-dark-500 mt-0.5">
                         Desde {format(parseISO((item as any).start_date), "d MMM yyyy", { locale: es })}
                       </p>
@@ -402,7 +405,7 @@ export default function RecurringView({ user }: { user: User }) {
                 onChange={(e) => setStartDate(e.target.value)}
                 className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-brand-500 transition-colors"
               />
-              {startDate && startDate < todayStr() && (
+              {startDate && startDate < today && (
                 <p className="text-[10px] text-brand-400 mt-1">⚡ Se generarán automáticamente los gastos desde esta fecha</p>
               )}
             </div>

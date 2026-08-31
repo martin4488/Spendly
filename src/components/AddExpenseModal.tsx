@@ -31,7 +31,7 @@ interface Props {
 }
 
 import { CatNode, buildTree, flattenTree } from '@/lib/categoryTree';
-import { getCategories, invalidateCategories } from '@/lib/categoryCache';
+import { getCategories, getCategoriesSync, invalidateCategories } from '@/lib/categoryCache';
 import { toast } from '@/lib/toast';
 import { enqueueExpense, newExpenseId } from '@/lib/offlineQueue';
 
@@ -96,10 +96,24 @@ function getTopFrequent(catsById: Map<string, Category>, limit = 10): Category[]
   return out;
 }
 
+/** Estado inicial de categorías desde el cache en memoria, si ya está. */
+function seedFromCache(userId: string) {
+  const map = getCategoriesSync(userId);
+  if (!map) return { map: new Map<string, Category>(), flat: [] as Category[], roots: [] as CatNode[] };
+  const flat: Category[] = [];
+  for (const c of map.values()) if (!c.hidden) flat.push(c);
+  return { map, flat, roots: buildTree(flat) };
+}
+
 export default function AddExpenseModal({ user, defaultCurrency, onClose, onSaved, editingExpense }: Props) {
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [categoriesById, setCategoriesById] = useState<Map<string, Category>>(new Map());
-  const [roots, setRoots] = useState<CatNode[]>([]);
+  // El cache de categorías ya está tibio desde el boot, pero `getCategories` es
+  // async aun cuando acierta: el picker (que se abre solo al agregar un gasto)
+  // pintaba vacío un frame antes de llenarse. Arrancamos del cache sincrónico y
+  // dejamos que el efecto refresque.
+  const seed = useMemo(() => seedFromCache(user.id), [user.id]);
+  const [categories, setCategories] = useState<Category[]>(seed.flat);
+  const [categoriesById, setCategoriesById] = useState<Map<string, Category>>(seed.map);
+  const [roots, setRoots] = useState<CatNode[]>(seed.roots);
   const [amountStr, setAmountStr] = useState(
     editingExpense ? String(editingExpense.original_amount || editingExpense.amount) : ''
   );
@@ -120,7 +134,9 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
   const [newCatColor, setNewCatColor] = useState(CATEGORY_COLORS[Math.floor(Math.random() * CATEGORY_COLORS.length)]);
   const [newCatParentId, setNewCatParentId] = useState<string | null>(null);
   const [savingCat, setSavingCat] = useState(false);
-  const [frequentCats, setFrequentCats] = useState<Category[]>([]);
+  const [frequentCats, setFrequentCats] = useState<Category[]>(
+    () => (seed.map.size > 0 ? getTopFrequent(seed.map) : []),
+  );
 
   useEffect(() => { loadCategories(); }, [user.id]);
 

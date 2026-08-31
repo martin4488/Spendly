@@ -421,18 +421,13 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
     });
   }, []);
 
-  function isRootFullySelected(root: CatNode) {
-    const ids = allDescendantIds(root);
-    for (const id of ids) if (!selectedCatIds.has(id)) return false;
-    return true;
-  }
-  function isRootPartiallySelected(root: CatNode) {
-    const ids = allDescendantIds(root);
+  /** Estado de selección de una raíz, a partir de sus ids ya calculados. */
+  function rootSelection(ids: string[]) {
     let some = false, all = true;
     for (const id of ids) {
       if (selectedCatIds.has(id)) some = true; else all = false;
     }
-    return some && !all;
+    return { full: all, partial: some && !all };
   }
 
   async function saveMonthlyBudget() {
@@ -452,6 +447,18 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
   // ── Memoized derived data ──
   const allEntries = useMemo(() => flattenTree(roots), [roots]);
 
+  // El picker se re-renderiza con cada tap en una categoría, y cada render
+  // recorría el subárbol de cada raíz tres veces (un flattenTree + dos
+  // allDescendantIds). Ahora se recorre una sola vez por árbol de categorías.
+  const rootGroups = useMemo(
+    () => roots.map(root => ({
+      root,
+      childEntries: flattenTree(root.children, [root]),
+      ids: allDescendantIds(root),
+    })),
+    [roots],
+  );
+
   const q = searchQuery.trim().toLowerCase();
   const searchResults = useMemo(
     () => q ? allEntries.filter(e => e.cat.name.toLowerCase().includes(q)) : [],
@@ -461,8 +468,7 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
   const selectedLabel = useMemo(() => {
     if (selectedCatIds.size === 0) return '';
     const parts: string[] = [];
-    for (const r of roots) {
-      const ids = allDescendantIds(r);
+    for (const { root: r, ids } of rootGroups) {
       const allSel = ids.every(id => selectedCatIds.has(id));
       if (allSel) {
         parts.push(`${getIconEmoji(r.icon)} ${r.name} (todo)`);
@@ -475,9 +481,11 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
       }
     }
     return parts.join(', ');
-  }, [selectedCatIds, roots, categoriesById]);
+  }, [selectedCatIds, rootGroups, categoriesById]);
 
   const recurrenceLabels: Record<string, string> = { monthly: 'Mensual', yearly: 'Anual' };
+  // Un Date por render en vez de uno por presupuesto.
+  const thisYear = new Date().getFullYear();
 
   if (offline) return <OfflineState onRetry={() => loadData()} />;
 
@@ -632,7 +640,7 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
                   <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-red-500/10">
                     <div className="w-1.5 h-1.5 rounded-full bg-red-400 flex-shrink-0" />
                     <span className="text-[11px] text-red-400">
-                      {formatCurrency(Math.abs((budget as any).prevAccumulated), undefined, true)} excedido acumulado en {new Date().getFullYear()}{(budget as any).prevAccumMonths ? ` (${(budget as any).prevAccumMonths})` : ''}
+                      {formatCurrency(Math.abs((budget as any).prevAccumulated), undefined, true)} excedido acumulado en {thisYear}{(budget as any).prevAccumMonths ? ` (${(budget as any).prevAccumMonths})` : ''}
                     </span>
                   </div>
                 )}
@@ -772,10 +780,8 @@ export default function BudgetsView({ user, onOpenBudget, onOpenGlobalBudget }: 
                 </div>
               )
             ) : (
-              roots.map(root => {
-                const childEntries = flattenTree(root.children, [root]);
-                const fullySelected = isRootFullySelected(root);
-                const partiallySelected = isRootPartiallySelected(root);
+              rootGroups.map(({ root, childEntries, ids }) => {
+                const { full: fullySelected, partial: partiallySelected } = rootSelection(ids);
                 return (
                   <div key={root.id} className="mb-6">
                     <button onClick={() => toggleRoot(root)}

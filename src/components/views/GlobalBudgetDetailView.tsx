@@ -379,14 +379,19 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
     return { histAccumulated: accumulated, histAccumMonths: accumMonths, availableYears: years };
   }, [historySummaries, periods]);
 
-  // Stacked bar data (top-level cats only)
-  const catStackedBar = useMemo(() => {
-    if (catSpending.length === 0) return [];
+  // Stacked bar data (top-level cats only). El total sale de acá y se reusa en
+  // la lista: antes se re-reducía el array entero una vez por cada categoría de
+  // primer nivel, en cada render.
+  const { catStackedBar, catSpendingTotal } = useMemo(() => {
+    if (catSpending.length === 0) return { catStackedBar: [], catSpendingTotal: 0 };
     const total = catSpending.reduce((s, c) => s + c.spent, 0);
-    return catSpending.map(c => ({
-      ...c,
-      pct: total > 0 ? (c.spent / total) * 100 : 0,
-    }));
+    return {
+      catStackedBar: catSpending.map(c => ({
+        ...c,
+        pct: total > 0 ? (c.spent / total) * 100 : 0,
+      })),
+      catSpendingTotal: total,
+    };
   }, [catSpending]);
 
   const { mStart, mEnd, isCurrentPeriod, pct, budgetColor, budgetTextColor, left, daysLeft, perDay, periodLabel, hasNext } = periodDerived;
@@ -556,7 +561,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
 
               {/* Category rows (collapsible) */}
               <div>
-                {catSpending.map(cat => renderCatRow(cat, 0, catSpending.reduce((s, c) => s + c.spent, 0)))}
+                {catSpending.map(cat => renderCatRow(cat, 0, catSpendingTotal))}
               </div>
             </div>
           )}

@@ -1,12 +1,11 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import type { User } from '@supabase/auth-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/utils';
 import Amount from '@/components/ui/Amount';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import CategoryIcon from '@/components/ui/CategoryIcon';
 import { getIconEmoji } from '@/lib/iconMap';
 import { getCategories } from '@/lib/categoryCache';
 import { CatNode, buildTree } from '@/lib/categoryTree';
@@ -506,51 +505,12 @@ export default function ReflectView({ user }: Props) {
     });
   }
 
-  // `avg` y `maxCat` son del año, no de la fila: se calculan una vez abajo
-  // (`avg`, `maxCat`) en vez de rehacer el filter/reduce/spread por cada
-  // categoría y subcategoría en cada render.
-  function renderCatRow(cat: CatData, depth: number): React.ReactNode {
-    const barPct = (cat.amount / maxCat) * 100;
-    const totalPct = avg > 0 ? Math.round((cat.amount / avg) * 100) : 0;
-    const activeChildren = cat.children;
-    const hasChildren = activeChildren.length > 0;
-    const isExp = expanded.has(cat.id);
-    const indent = depth * 20;
-
-    return (
-      <div key={cat.id}>
-        <div style={{ paddingLeft: indent }} className={`flex items-center gap-2.5 py-2.5 ${depth === 0 ? 'border-b border-dark-800/60' : ''}`}>
-          <CategoryIcon icon={cat.icon} color={cat.color} size={depth === 0 ? 32 : 26} rounded="xl" />
-          <div className="flex-1 min-w-0">
-            <div className="flex justify-between mb-1">
-              <span className={`font-semibold ${depth === 0 ? 'text-[12px] text-white' : 'text-[11px] text-dark-200'}`}>{cat.name}</span>
-              <Amount value={Math.round(cat.amount)} size="sm" color="text-dark-400" weight="medium" className={depth === 0 ? 'text-[12px]' : 'text-[11px]'} decimals={false} />
-            </div>
-            {depth === 0 && (
-              <div className="w-full bg-dark-700 rounded-full h-1 overflow-hidden">
-                <div className="h-full rounded-full" style={{ width: `${barPct}%`, backgroundColor: cat.color }} />
-              </div>
-            )}
-          </div>
-          <span className="text-[10px] text-dark-500 w-7 text-right flex-shrink-0">{totalPct > 0 ? `${totalPct}%` : ''}</span>
-          {hasChildren && depth === 0 ? (
-            <button onClick={() => toggleCat(cat.id)} className="text-dark-500 p-0.5 ml-0.5">
-              {isExp ? <span style={{ fontSize: 14 }}>˅</span> : <ChevronRight size={13} />}
-            </button>
-          ) : <div className="w-5" />}
-        </div>
-        {hasChildren && isExp && activeChildren.map(c => renderCatRow(c, depth + 1))}
-      </div>
-    );
-  }
-
   const d = year ? yearData[year] : null;
   const minYear = availableYears.length > 0 ? Math.min(...availableYears) : (year || 0);
   const maxYear = availableYears.length > 0 ? Math.max(...availableYears) : (year || 0);
   const closed = d?.months.filter(m => !m.isCurrent) || [];
   const avg = closed.length > 0 ? closed.reduce((s, m) => s + m.amount, 0) / closed.length : 0;
   const maxAmt = d ? Math.max(...d.months.map(m => m.amount), 1) : 1;
-  const maxCat = d && d.cats.length > 0 ? Math.max(d.cats[0].amount, 1) : 1;
   const first = d?.months[0]?.label;
   const last = d?.months[d.months.length - 1]?.label;
 
@@ -650,7 +610,8 @@ export default function ReflectView({ user }: Props) {
                 {/* Cat rows */}
                 {d.cats.map((cat, i) => {
                   const pct = catTotal > 0 ? Math.round((cat.amount / catTotal) * 100) : 0;
-                  const activeChildren = cat.children.filter(c => c.amount > 0).sort((a, b) => b.amount - a.amount);
+                  // Ya vienen filtradas (>0) y ordenadas desc de `buildCatData`.
+                  const activeChildren = cat.children;
                   const hasChildren = activeChildren.length > 0;
                   const isExp = expanded.has(cat.id);
                   return (

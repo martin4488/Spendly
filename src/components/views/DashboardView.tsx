@@ -130,6 +130,11 @@ const WalletChart = memo(function WalletChart({
 });
 
 // ─── Memoized expense row ───────────────────────────────────────────────────
+// `onEdit` / `onDelete` take the row's data instead of closing over it: the
+// parent can then pass the *same* function identity to every row on every
+// render, which is what lets this `memo` actually hold. With per-row arrow
+// props it never did, so a single keystroke in the search box (or any sync)
+// re-rendered every mounted row.
 const ExpenseRow = memo(function ExpenseRow({
   expense,
   categoriesMap,
@@ -142,8 +147,8 @@ const ExpenseRow = memo(function ExpenseRow({
   categoriesMap: Map<string, Category>;
   defaultCurrency: CurrencyCode;
   pending?: boolean;
-  onEdit: () => void;
-  onDelete: () => void;
+  onEdit: (expense: ExpenseListItem) => void;
+  onDelete: (id: string) => void;
 }) {
   const cat = expense.category_id ? categoriesMap.get(expense.category_id) : null;
   const parentCat = cat?.parent_id ? categoriesMap.get(cat.parent_id) : null;
@@ -154,8 +159,11 @@ const ExpenseRow = memo(function ExpenseRow({
   const catDisplayName = subLabel || cat?.name || '';
   const showDescription = !!expense.description && expense.description !== catDisplayName;
 
+  const handleEdit = useCallback(() => onEdit(expense), [onEdit, expense]);
+  const handleDelete = useCallback(() => onDelete(expense.id), [onDelete, expense.id]);
+
   return (
-    <SwipeableRow onTap={onEdit} onDelete={onDelete} className="border-b border-dark-800/40">
+    <SwipeableRow onTap={handleEdit} onDelete={handleDelete} className="border-b border-dark-800/40">
       <div className="flex items-center gap-2.5 px-3 py-2 bg-dark-900 active:bg-dark-800/60 transition-colors cursor-pointer select-none">
         <CategoryIcon icon={cat?.icon || 'banknote'} color={cat?.color ?? '#475569'} size={36} rounded="xl" />
         <div className="flex-1 min-w-0">
@@ -789,8 +797,8 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
                   categoriesMap={categoriesMap}
                   defaultCurrency={defaultCurrency}
                   pending={pendingIds.has(expense.id)}
-                  onEdit={() => openEdit(expense)}
-                  onDelete={() => handleDelete(expense.id)}
+                  onEdit={openEdit}
+                  onDelete={handleDelete}
                 />
               ))}
             </div>

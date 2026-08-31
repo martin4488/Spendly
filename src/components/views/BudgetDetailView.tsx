@@ -295,16 +295,34 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
         .gte('date', oldest)
         .lte('date', newest);
 
+      // Ordenados por fecha una vez para poder acotar cada período con dos
+      // búsquedas binarias. Antes cada período recorría *todos* los gastos del
+      // año (O(períodos × gastos)); ahora cada gasto se toca una sola vez.
       const expList = (allExp || []).map((e: any) => ({
         amount: Number(e.amount), date: e.date as string, category_id: e.category_id as string
-      }));
+        // Comparación cruda, la misma que usa el barrido de abajo: son
+        // 'yyyy-MM-dd', así que el orden lexicográfico es el cronológico.
+      })).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+
+      /** Índice del primer gasto con fecha >= `date`. */
+      const lowerBound = (date: string) => {
+        let lo = 0, hi = expList.length;
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1;
+          if (expList[mid].date < date) lo = mid + 1;
+          else hi = mid;
+        }
+        return lo;
+      };
 
       const summaries: PeriodSummary[] = periods.map(p => {
         const pCatIds = catSetByPeriod.get(p.id);
         if (!pCatIds) return { period: p, spent: 0, isCurrent: false };
         let spent = 0;
-        for (const e of expList) {
-          if (e.date >= p.period_start && e.date <= p.period_end && pCatIds.has(e.category_id)) spent += e.amount;
+        for (let i = lowerBound(p.period_start); i < expList.length; i++) {
+          const e = expList[i];
+          if (e.date > p.period_end) break;
+          if (pCatIds.has(e.category_id)) spent += e.amount;
         }
         const isCurrent = todayStr >= p.period_start && todayStr <= p.period_end;
         return { period: p, spent, isCurrent };
