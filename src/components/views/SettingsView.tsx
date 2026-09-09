@@ -4,7 +4,7 @@ import { useState, useRef, ReactNode } from 'react';
 import type { User } from '@supabase/auth-js';
 import { supabase } from '@/lib/supabase';
 import { exportToCSV } from '@/lib/utils';
-import { CURRENCIES, CurrencyCode } from '@/lib/currency';
+import { CURRENCIES, CurrencyCode, convertCurrency, ensureRates } from '@/lib/currency';
 import {
   LogOut, Download, Upload, Mail, DollarSign, Tag, ChevronRight,
   CheckCircle, AlertCircle, X, Check,
@@ -243,6 +243,10 @@ export default function SettingsView({ user, defaultCurrency, onCurrencyChange, 
 
       const toInsert: any[] = [];
 
+      // Rows may carry a foreign currency, so the rate table has to be warm
+      // before the loop converts anything.
+      await ensureRates();
+
       for (const row of previewRows) {
         const amount = parseFloat(row.amount);
         if (!row.date || isNaN(amount)) {
@@ -275,13 +279,29 @@ export default function SettingsView({ user, defaultCurrency, onCurrencyChange, 
           }
         }
 
-        const currency = row.currency?.toUpperCase() || defaultCurrency;
+        const currency = (row.currency?.toUpperCase() || defaultCurrency) as CurrencyCode;
         const isMainCurrency = currency === defaultCurrency;
+
+        // `amount` is expressed in `currency`; the table stores the default
+        // currency. This used to insert the raw number either way, so a row in
+        // ARS landed as the same figure in EUR.
+        let storedAmount = amount;
+        if (!isMainCurrency) {
+          const converted = CURRENCIES[currency]
+            ? convertCurrency(amount, currency, defaultCurrency)
+            : null;
+          if (converted === null) {
+            result.skipped++;
+            result.errors.push(`Sin cotización ${currency} → ${defaultCurrency}: "${row.description || row.date}"`);
+            continue;
+          }
+          storedAmount = converted;
+        }
 
         toInsert.push({
           user_id: user.id,
           description: row.description || 'Sin descripción',
-          amount: amount,
+          amount: storedAmount,
           date: row.date,
           category_id: categoryId,
           original_currency: isMainCurrency ? null : currency,

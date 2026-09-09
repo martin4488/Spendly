@@ -106,25 +106,19 @@ export default function Home() {
     // fired `get_boot_data` twice. Reset on sign-out so the next sign-in boots.
     let bootRunForUser: string | null = null;
 
+    // Everything a boot has to *do* (as opposed to paint) lives here, because
+    // this is the one path both cold starts share. It used to sit in
+    // `bootWithSession` below the `bootedRef` guard — but the layout effect
+    // above flips that ref for every returning user with a cached session, so
+    // on the common path none of it ran: exchange rates were never fetched
+    // (which made `convertCurrency` return null and every ARS/USD expense save
+    // as the same number in the default currency) and recurring expenses were
+    // never generated.
     function runUnifiedBootOnce(user: User) {
       if (bootRunForUser === user.id) return;
       bootRunForUser = user.id;
+
       runUnifiedBoot(user).catch(console.error);
-    }
-
-    async function bootWithSession(user: User) {
-      if (bootedRef.current) {
-        runUnifiedBootOnce(user);
-        return;
-      }
-      bootedRef.current = true;
-
-      const defaultCurr: CurrencyCode = initialCurrency();
-      setDefaultCurrency(defaultCurr);
-      setUnauthenticated(false);
-      setBootData({ user, currency: defaultCurr });
-
-      runUnifiedBootOnce(user);
 
       prefetchRates().catch(console.error);
 
@@ -133,6 +127,21 @@ export default function Home() {
           .then(({ error }) => { if (!error) markRecurringRun(user.id); })
           .catch(console.error);
       }
+    }
+
+    function bootWithSession(user: User) {
+      // Only the UI seeding is guarded: the layout effect may already have
+      // painted from the cached session.
+      if (!bootedRef.current) {
+        bootedRef.current = true;
+
+        const defaultCurr: CurrencyCode = initialCurrency();
+        setDefaultCurrency(defaultCurr);
+        setUnauthenticated(false);
+        setBootData({ user, currency: defaultCurr });
+      }
+
+      runUnifiedBootOnce(user);
     }
 
     async function runUnifiedBoot(user: User) {

@@ -19,17 +19,32 @@ interface CachedRates {
 // In-memory cache for instant access
 let memoryCache: CachedRates | null = null;
 
-function loadFromStorage(): CachedRates | null {
+function readStored(): CachedRates | null {
   try {
     const raw = localStorage.getItem(CACHE_KEY);
     if (!raw) return null;
     const cached: CachedRates = JSON.parse(raw);
-    if (Date.now() - cached.timestamp < CACHE_TTL) {
-      memoryCache = cached;
-      return cached;
-    }
-  } catch {}
-  return null;
+    return cached && cached.rates ? cached : null;
+  } catch {
+    return null;
+  }
+}
+
+function isFresh(cached: CachedRates | null): boolean {
+  return !!cached && Date.now() - cached.timestamp < CACHE_TTL;
+}
+
+/**
+ * Returns the stored rates only while they're fresh — but adopts them into
+ * memory either way. Expired rates are still the best answer available when the
+ * network is gone, and a yesterday-old rate beats no conversion at all, which
+ * is what silently wrote foreign amounts as default-currency ones.
+ */
+function loadFromStorage(): CachedRates | null {
+  const cached = readStored();
+  if (!cached) return null;
+  if (!memoryCache) memoryCache = cached;
+  return isFresh(cached) ? cached : null;
 }
 
 function saveToStorage(data: CachedRates) {
@@ -64,6 +79,21 @@ export async function prefetchRates(): Promise<void> {
   const stored = loadFromStorage();
   if (stored) return; // Cache still valid
   await fetchRates();
+}
+
+/**
+ * Guarantees a usable rate table, fetching one if the cache is cold or expired.
+ *
+ * `getRate` has to stay synchronous for the render path, so this is what the
+ * *save* path awaits before converting. Returns false only when there is
+ * nothing to convert with at all — callers must refuse the write in that case
+ * rather than fall back to the unconverted amount.
+ */
+export async function ensureRates(): Promise<boolean> {
+  if (isFresh(memoryCache)) return true;
+  if (loadFromStorage()) return true;
+  if (await fetchRates()) return true;
+  return memoryCache !== null;
 }
 
 // Get exchange rate between two currencies (instant from cache)

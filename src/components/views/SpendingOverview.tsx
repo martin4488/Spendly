@@ -14,6 +14,7 @@ import { es } from 'date-fns/locale';
 import { ArrowLeft, ChevronDown, ChevronRight } from 'lucide-react';
 import CategoryIcon from '@/components/ui/CategoryIcon';
 import { getCategories } from '@/lib/categoryCache';
+import type { CurrencyCode } from '@/lib/currency';
 import Amount from '@/components/ui/Amount';
 import { CatNode, buildTree } from '@/lib/categoryTree';
 import SwipeableRow from '@/components/SwipeableRow';
@@ -21,6 +22,7 @@ import { toast } from '@/lib/toast';
 import { confirmDialog } from '@/lib/confirm';
 import OfflineState from '@/components/ui/OfflineState';
 import { reportRpcFallback } from '@/lib/rpcFallback';
+import { getDefaultCurrency } from '@/lib/currencyState';
 const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
 
 type ViewMode = 'months' | 'years';
@@ -662,7 +664,7 @@ function DrillDownView({ user, drillDown, onBack, initialDate, initialMonth, now
         <Suspense fallback={null}>
           <AddExpenseModal
             user={user}
-            defaultCurrency={'EUR' as any}
+            defaultCurrency={getDefaultCurrency() as CurrencyCode}
             onClose={() => { setShowExpenseModal(false); setEditingExpense(null); }}
             onSaved={() => { setShowExpenseModal(false); setEditingExpense(null); loadData(); }}
             editingExpense={editingExpense}

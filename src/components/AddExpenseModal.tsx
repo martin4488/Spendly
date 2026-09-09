@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import type { User } from '@supabase/auth-js';
 import { supabase } from '@/lib/supabase';
 import { Category } from '@/types';
-import { CURRENCIES, convertCurrency, formatWithCurrency, CurrencyCode } from '@/lib/currency';
+import { CURRENCIES, convertCurrency, ensureRates, formatWithCurrency, CurrencyCode } from '@/lib/currency';
 import { CATEGORY_ICONS, CATEGORY_COLORS } from '@/lib/utils';
 import { X, Calendar, Delete, ChevronDown, Search, Settings, ArrowLeft, Check } from 'lucide-react';
 import CategoryIcon from '@/components/ui/CategoryIcon';
@@ -134,6 +134,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
   const [newCatColor, setNewCatColor] = useState(CATEGORY_COLORS[Math.floor(Math.random() * CATEGORY_COLORS.length)]);
   const [newCatParentId, setNewCatParentId] = useState<string | null>(null);
   const [savingCat, setSavingCat] = useState(false);
+  const [rateMissing, setRateMissing] = useState(false);
   const [frequentCats, setFrequentCats] = useState<Category[]>(
     () => (seed.map.size > 0 ? getTopFrequent(seed.map) : []),
   );
@@ -167,6 +168,18 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
   const amt = parseFloat(amountStr) || 0;
   const isOtherCurrency = currency !== defaultCurrency;
   const convertedAmount = isOtherCurrency ? convertCurrency(amt, currency, defaultCurrency) : null;
+
+  // Boot pre-fetches the rates, but the cache can still be cold here (expired,
+  // wiped, or a boot that ran offline). Warm it as soon as a foreign currency is
+  // picked so the "≈" preview is real and `handleSave` has something to convert
+  // with; resolving flips this state, which re-renders and recomputes the line
+  // above.
+  useEffect(() => {
+    if (!isOtherCurrency) { setRateMissing(false); return; }
+    let alive = true;
+    ensureRates().then((ok) => { if (alive) setRateMissing(!ok); });
+    return () => { alive = false; };
+  }, [isOtherCurrency, currency]);
   const currencyInfo = CURRENCIES[currency];
   const canSave = !saving && !!amountStr && parseFloat(amountStr) > 0 && !!categoryId;
 
@@ -261,8 +274,19 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
     setSaving(true);
     let finalAmount = amtLocal, originalCurrency: string | null = null, originalAmount: number | null = null;
     if (isOtherCurrency) {
+      // A missing rate used to fall through with `finalAmount = amtLocal` and no
+      // `original_currency`, so 1000 ARS was stored as 1000 EUR and nothing on
+      // screen said so. Refuse the save instead — the amount is unrecoverable
+      // once it's in the table.
+      await ensureRates();
       const converted = convertCurrency(amtLocal, currency, defaultCurrency);
-      if (converted !== null) { finalAmount = converted; originalCurrency = currency; originalAmount = amtLocal; }
+      if (converted === null) {
+        setRateMissing(true);
+        setSaving(false);
+        toast(`Sin cotización ${currency} → ${defaultCurrency}. Revisá tu conexión y reintentá.`);
+        return;
+      }
+      finalAmount = converted; originalCurrency = currency; originalAmount = amtLocal;
     }
     const data = { user_id: user.id, amount: finalAmount, description: description || null, notes: null, category_id: categoryId, date, original_currency: originalCurrency, original_amount: originalAmount };
 
@@ -357,9 +381,15 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
           </span>
         </div>
 
-        {isOtherCurrency && convertedAmount !== null && amt > 0 && (
+        {isOtherCurrency && amt > 0 && convertedAmount !== null && (
           <p className="text-white/35 text-sm mb-3">
             ≈ {formatWithCurrency(convertedAmount, defaultCurrency)}
+          </p>
+        )}
+
+        {isOtherCurrency && amt > 0 && convertedAmount === null && rateMissing && (
+          <p className="text-amber-400/80 text-sm mb-3">
+            Sin cotización {currency} → {defaultCurrency}
           </p>
         )}
 
