@@ -17,7 +17,8 @@ import { getPendingExpenses, onQueueChange, flushQueue, startAutoFlush, dequeueE
 import { reportRpcFallback } from '@/lib/rpcFallback';
 import Amount from '@/components/ui/Amount';
 import DashboardSkeleton from '@/components/ui/DashboardSkeleton';
-import { toDateStr, todayStr as localToday, yesterdayStr } from '@/lib/dateUtils';
+import { toDateStr, addDaysStr } from '@/lib/dateUtils';
+import { useLocalToday } from '@/lib/useLocalToday';
 
 const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
 
@@ -224,8 +225,13 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
 
   const [selectedBarIndex, setSelectedBarIndex] = useState<number>(5);
 
-  const currentMonth = useMemo(() => new Date().getMonth(), []);
-  const currentYear = useMemo(() => new Date().getFullYear(), []);
+  // El día local, que se recalcula solo al cambiar de día — antes esto era
+  // `useMemo(..., [])` y una PWA abierta pasada la medianoche seguía tratando a
+  // ayer como hoy (ver useLocalToday).
+  const todayStr = useLocalToday();
+  const yesterdayLabelStr = useMemo(() => addDaysStr(todayStr, -1), [todayStr]);
+  const currentYear = useMemo(() => Number(todayStr.slice(0, 4)), [todayStr]);
+  const currentMonth = useMemo(() => Number(todayStr.slice(5, 7)) - 1, [todayStr]);
 
   // Last known rows for the live period, in each view mode. Tapping back onto the
   // current bar restores these instantly instead of waiting on a refetch.
@@ -240,7 +246,16 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     setCategoriesMap(prev => (prev === map ? prev : map));
   }, []);
 
-  const loadDashboard = useCallback(async () => {
+  /**
+   * Refresca el período vivo: los últimos 30 días de gastos + los totales del
+   * gráfico + el cache.
+   *
+   * `applyToList` en false actualiza todo menos la lista en pantalla. Sirve para
+   * refrescar el gráfico cuando el usuario está mirando un mes pasado — llamarla
+   * a secas ahí le reemplazaba la lista por la de los últimos 30 días dejando el
+   * encabezado en el mes viejo.
+   */
+  const loadDashboard = useCallback(async (applyToList = true) => {
     try {
       const now = new Date();
       const start31 = new Date(now);
@@ -266,7 +281,10 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
         reportRpcFallback('get_dashboard_data', rpcError, 'DashboardView');
         const [expRes, chartRes] = await Promise.all([
           supabase.from('expenses').select(EXPENSE_COLUMNS).eq('user_id', user.id).gte('date', startStr).order('date', { ascending: false }).limit(500),
-          supabase.from('expenses').select('date, amount').eq('user_id', user.id).gte('date', chartStart).limit(10000),
+          // Con `limit` y sin `order`, un recorte se queda con filas arbitrarias y
+          // los totales del gráfico salen mal sin avisar (mismo problema que la
+          // migración 002 arregló adentro de `get_boot_data`).
+          supabase.from('expenses').select('date, amount').eq('user_id', user.id).gte('date', chartStart).order('date', { ascending: false }).limit(10000),
         ]);
         // Offline / fetch failed: Supabase resolves with { error } instead of
         // throwing. Bail without clobbering the current list or the cache — otherwise
@@ -285,7 +303,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       }
 
       livePeriodRef.current.months = freshExpenses;
-      setExpenses(freshExpenses);
+      if (applyToList) setExpenses(freshExpenses);
       setChartTotals(freshTotals);
       adoptCategories(map);
       writeDashboardCache(user.id, freshExpenses, freshTotals, map);
@@ -373,7 +391,8 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     }
   }, [user.id, currentYear]);
 
-  const loadExtended = useCallback(async () => {
+  /** Igual que `loadDashboard` pero para la vista por año. Ver `applyToList` allá. */
+  const loadExtended = useCallback(async (applyToList = true) => {
     try {
       const yr = currentYear;
       const yearStart = `${yr}-01-01`;
@@ -407,7 +426,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       });
       setYearTotals(totals);
       livePeriodRef.current.years = currentYearExpData || [];
-      setExpenses(currentYearExpData || []);
+      if (applyToList) setExpenses(currentYearExpData || []);
       setExtendedLoaded(true);
     } catch (err) {
       console.error(err);
@@ -473,6 +492,26 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
 
   useSyncOnForeground(user.id, syncNow);
 
+  /**
+   * Refresco después de crear, editar o borrar un gasto.
+   *
+   * Hay que actualizar dos cosas: la lista del período que el usuario está
+   * mirando y los totales del gráfico. Acá se llamaba a `loadDashboard()` a
+   * secas, que sólo sabe del período vivo: borrar un gasto mientras se miraba un
+   * mes pasado (o la vista por año) reemplazaba la lista por la de los últimos
+   * 30 días, con el encabezado todavía en el período viejo.
+   */
+  const reloadAfterMutation = useCallback(() => {
+    if (viewMode === 'years') {
+      if (selectedPeriod.isCurrentPeriod) loadExtended();
+      // El gráfico de años se refresca sin tocar la lista del año que se mira.
+      else { loadYearExpenses(selectedPeriod.year); loadExtended(false); }
+      return;
+    }
+    if (selectedPeriod.isCurrentPeriod) loadDashboard();
+    else { loadMonthExpenses(selectedPeriod.year, selectedPeriod.month); loadDashboard(false); }
+  }, [viewMode, selectedPeriod, loadDashboard, loadExtended, loadMonthExpenses, loadYearExpenses]);
+
   // Whether to overlay queued (offline) expenses — only on the live current month.
   const showPending = selectedPeriod.isCurrentPeriod && viewMode === 'months';
 
@@ -514,9 +553,6 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     }
     return data;
   }, [viewMode, chartTotals, yearTotals, currentMonth, currentYear]);
-
-  const todayStr = useMemo(() => localToday(), []);
-  const yesterdayLabelStr = useMemo(() => yesterdayStr(), []);
 
   // Merge queued (offline) expenses into the live current-month view. Historical
   // months/years keep only their fetched rows. Dedup by id against server rows so
@@ -608,8 +644,8 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     }
     // Refresh either way: on success to update chart totals, on failure to
     // restore the row we optimistically removed.
-    loadDashboard();
-  }, [loadDashboard, pendingIds]);
+    reloadAfterMutation();
+  }, [reloadAfterMutation, pendingIds]);
 
   // ── Header subtitle from selected period ─────────────────────────────────
   const headerSubtitle = useMemo(() => {
@@ -824,7 +860,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
             user={user}
             defaultCurrency={defaultCurrency}
             onClose={() => { setShowAddExpense(false); setEditingExpense(null); }}
-            onSaved={() => loadDashboard()}
+            onSaved={() => reloadAfterMutation()}
             editingExpense={editingExpense}
           />
         </Suspense>

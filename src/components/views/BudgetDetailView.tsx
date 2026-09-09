@@ -126,7 +126,10 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
   const [showEditForm, setShowEditForm] = useState(false);
   const [editAmount, setEditAmount] = useState('');
   const [editName, setEditName] = useState('');
-  const [editCatIds, setEditCatIds] = useState<string[]>([]);
+  // Un Set, no un array: el picker consultaba la selección con `.includes()`
+  // adentro de un loop por categoría, o sea O(categorías × seleccionadas) en cada
+  // tap. BudgetsView ya usaba Set para lo mismo.
+  const [editCatIds, setEditCatIds] = useState<Set<string>>(new Set());
   const [showEditCatPicker, setShowEditCatPicker] = useState(false);
   const [editCatSearch, setEditCatSearch] = useState('');
   const [allRoots, setAllRoots] = useState<CatNode[]>([]);
@@ -382,9 +385,9 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
         .eq('budget_id', budget.id)
         .is('valid_to', null);
 
-      if (editCatIds.length > 0) {
+      if (editCatIds.size > 0) {
         await supabase.from('budget_category_periods').insert(
-          editCatIds.map(cid => ({
+          Array.from(editCatIds).map(cid => ({
             budget_id: budget.id,
             category_id: cid,
             valid_from: periodStart,
@@ -512,11 +515,31 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
 
   // Current active top-level cat ids for the edit form
   const currentActiveCatIds = useMemo(() => {
-    if (!period) return [];
-    return bcpRows
-      .filter(r => r.valid_from <= period.period_start && (r.valid_to === null || r.valid_to > period.period_start))
-      .map(r => r.category_id);
+    if (!period) return new Set<string>();
+    return new Set(
+      bcpRows
+        .filter(r => r.valid_from <= period.period_start && (r.valid_to === null || r.valid_to > period.period_start))
+        .map(r => r.category_id),
+    );
   }, [bcpRows, period]);
+
+  // El picker se re-renderiza con cada tap y con cada tecla del buscador, y
+  // recorría el subárbol de cada raíz tres veces por render (un `flattenTree`
+  // global, uno por raíz y un `allDescendantIds` por raíz). Ahora una sola vez
+  // por cambio del árbol de categorías.
+  const pickerAllEntries = useMemo(() => flattenTree(allRoots), [allRoots]);
+  const pickerGroups = useMemo(
+    () => allRoots.map(root => ({
+      root,
+      childEntries: flattenTree(root.children, [root]),
+      ids: allDescendantIds(root),
+    })),
+    [allRoots],
+  );
+  const editCatResults = useMemo(() => {
+    const q = editCatSearch.trim().toLowerCase();
+    return q ? pickerAllEntries.filter(e => e.cat.name.toLowerCase().includes(q)) : null;
+  }, [pickerAllEntries, editCatSearch]);
 
   if (periods.length === 0 && !loading) return <div className="text-center py-10 text-dark-400">No hay períodos disponibles</div>;
   if (!period || !periodDerived) return null;
@@ -527,13 +550,22 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
 
   // Cat picker helpers
   function toggleEditLeaf(id: string) {
-    setEditCatIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+    setEditCatIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   }
-  function toggleEditRoot(root: CatNode) {
-    const ids = allDescendantIds(root);
-    const allSel = ids.every(id => editCatIds.includes(id));
-    if (allSel) setEditCatIds(prev => prev.filter(id => !ids.includes(id)));
-    else setEditCatIds(prev => Array.from(new Set([...prev, ...ids])));
+  /** `ids` viene ya calculado de `pickerGroups`. */
+  function toggleEditRoot(ids: string[]) {
+    setEditCatIds(prev => {
+      const next = new Set(prev);
+      const allSel = ids.every(id => next.has(id));
+      if (allSel) for (const id of ids) next.delete(id);
+      else for (const id of ids) next.add(id);
+      return next;
+    });
   }
 
   return (
@@ -795,13 +827,13 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
             </div>
             <div>
               <label className="text-xs text-dark-400 font-medium mb-1.5 block uppercase tracking-wider">
-                Categorías {editCatIds.length > 0 && `(${editCatIds.length})`}
+                Categorías {editCatIds.size > 0 && `(${editCatIds.size})`}
               </label>
               <button onClick={() => setShowEditCatPicker(true)}
                 className="w-full bg-dark-800 border border-dark-700 rounded-xl py-3 px-4 text-sm text-left flex items-center justify-between">
-                <span className={`flex-1 min-w-0 truncate ${editCatIds.length > 0 ? 'text-white' : 'text-dark-500'}`}>
-                  {editCatIds.length > 0
-                    ? allCats.filter(c => editCatIds.includes(c.id)).map(c => c.name).join(', ')
+                <span className={`flex-1 min-w-0 truncate ${editCatIds.size > 0 ? 'text-white' : 'text-dark-500'}`}>
+                  {editCatIds.size > 0
+                    ? allCats.filter(c => editCatIds.has(c.id)).map(c => c.name).join(', ')
                     : 'Seleccionar categorías...'}
                 </span>
                 <ChevronRight size={16} className="text-dark-500 flex-shrink-0 ml-2" />
@@ -851,36 +883,34 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
             </div>
           </div>
           <div className="flex-1 overflow-y-auto pb-8">
-            {(() => {
-              const q = editCatSearch.trim().toLowerCase();
-              const allEntries = flattenTree(allRoots);
-              if (q) {
-                const results = allEntries.filter(e => e.cat.name.toLowerCase().includes(q));
-                return results.length === 0
-                  ? <div className="text-center py-10 text-dark-500 text-sm">Sin resultados</div>
-                  : results.map(({ cat, ancestors }) => {
-                      const isSel = editCatIds.includes(cat.id);
-                      return (
-                        <button key={cat.id} onClick={() => toggleEditLeaf(cat.id)}
-                          className={`w-full flex items-center gap-3 px-5 py-3.5 border-b border-dark-800/60 ${isSel ? 'bg-dark-800' : 'active:bg-dark-800/60'}`}>
-                          <CategoryIcon icon={cat.icon} color={cat.color} size={36} rounded="full" />
-                          <div className="flex-1 text-left">
-                            <p className="text-sm font-medium">{cat.name}</p>
-                            {ancestors.length > 0 && <p className="text-xs text-dark-400">{ancestors.map(a => a.name).join(' › ')}</p>}
-                          </div>
-                          {isSel && <Check size={18} className="text-brand-400 flex-shrink-0" />}
-                        </button>
-                      );
-                    });
-              }
-              return allRoots.map(root => {
-                const childEntries = flattenTree(root.children, [root]);
-                const ids = allDescendantIds(root);
-                const fullySel = ids.every(id => editCatIds.includes(id));
-                const partiallySel = ids.some(id => editCatIds.includes(id)) && !fullySel;
+            {editCatResults ? (
+              editCatResults.length === 0
+                ? <div className="text-center py-10 text-dark-500 text-sm">Sin resultados</div>
+                : editCatResults.map(({ cat, ancestors }) => {
+                    const isSel = editCatIds.has(cat.id);
+                    return (
+                      <button key={cat.id} onClick={() => toggleEditLeaf(cat.id)}
+                        className={`w-full flex items-center gap-3 px-5 py-3.5 border-b border-dark-800/60 ${isSel ? 'bg-dark-800' : 'active:bg-dark-800/60'}`}>
+                        <CategoryIcon icon={cat.icon} color={cat.color} size={36} rounded="full" />
+                        <div className="flex-1 text-left">
+                          <p className="text-sm font-medium">{cat.name}</p>
+                          {ancestors.length > 0 && <p className="text-xs text-dark-400">{ancestors.map(a => a.name).join(' › ')}</p>}
+                        </div>
+                        {isSel && <Check size={18} className="text-brand-400 flex-shrink-0" />}
+                      </button>
+                    );
+                  })
+            ) : (
+              pickerGroups.map(({ root, childEntries, ids }) => {
+                let someSel = false, allSel = true;
+                for (const id of ids) {
+                  if (editCatIds.has(id)) someSel = true; else allSel = false;
+                }
+                const fullySel = allSel;
+                const partiallySel = someSel && !allSel;
                 return (
                   <div key={root.id} className="mb-6">
-                    <button onClick={() => toggleEditRoot(root)}
+                    <button onClick={() => toggleEditRoot(ids)}
                       className="w-full flex items-center justify-between px-4 pt-4 pb-2 active:opacity-70">
                       <span className="text-xs font-bold text-dark-400 uppercase tracking-wider">{root.name}</span>
                       <div className={`w-5 h-5 rounded flex items-center justify-center border transition-all ${fullySel ? 'bg-brand-500 border-brand-500' : partiallySel ? 'bg-brand-500/30 border-brand-500/50' : 'border-dark-600'}`}>
@@ -891,7 +921,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
                     {childEntries.length > 0 && (
                       <div className="grid grid-cols-4 gap-x-2 gap-y-4 px-4">
                         {childEntries.map(({ cat }) => {
-                          const isSel = editCatIds.includes(cat.id);
+                          const isSel = editCatIds.has(cat.id);
                           return (
                             <button key={cat.id} onClick={() => toggleEditLeaf(cat.id)} className="flex flex-col items-center gap-1.5 active:opacity-70">
                               <div className="relative">
@@ -913,8 +943,8 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
                     )}
                   </div>
                 );
-              });
-            })()}
+              })
+            )}
           </div>
         </div>
       )}

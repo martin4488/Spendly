@@ -5,68 +5,40 @@
 // que importa `formatCurrency`.
 import { ICON_KEYS } from '@/lib/iconMap';
 import { getDefaultCurrency } from '@/lib/currencyState';
+import { formatWithCurrency } from '@/lib/currency';
+import { toCsv } from '@/lib/csv';
 
 // The currency global lives in `currencyState.ts` — importing it from here would
 // pull date-fns + the icon registry into the boot chunk. Re-exported for the few
 // call sites that still reach for it via utils.
 export { setDefaultCurrency, getDefaultCurrency } from '@/lib/currencyState';
 
-// Cache Intl.NumberFormat instances — avoids re-instantiation on every render
-const _fmtCache = new Map<string, Intl.NumberFormat>();
-const _fmtIntCache = new Map<string, Intl.NumberFormat>();
-
-function getCurrencyFormatter(code: string, round?: boolean): Intl.NumberFormat {
-  if (round) {
-    let fmt = _fmtIntCache.get(code);
-    if (!fmt) {
-      fmt = new Intl.NumberFormat('en-US', {
-        style: 'currency',
-        currency: code,
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 0,
-      });
-      _fmtIntCache.set(code, fmt);
-    }
-    return fmt;
-  }
-  let fmt = _fmtCache.get(code);
-  if (!fmt) {
-    fmt = new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: code,
-      minimumFractionDigits: 2,
-    });
-    _fmtCache.set(code, fmt);
-  }
-  return fmt;
-}
-
+/**
+ * Monto con símbolo, en el formato de la app (`€1.234.567,89`).
+ *
+ * Delega en `formatWithCurrency` para que esto y `<Amount>` no puedan volver a
+ * divergir: esta función usaba `Intl` con locale en-US y estilo `currency`, así
+ * que las vistas que mezclan las dos (Budgets, Reflect, Overview y los dos
+ * detalles de presupuesto) mostraban `€1,234,567.89` al lado de `€1.234.567,89`.
+ */
 export function formatCurrency(amount: number, currency?: string, round?: boolean): string {
-  const code = currency || getDefaultCurrency();
-  return getCurrencyFormatter(code, round).format(round ? Math.round(amount) : amount);
+  return formatWithCurrency(amount, currency || getDefaultCurrency(), round);
 }
 
 export function exportToCSV(data: any[], filename: string) {
   if (data.length === 0) return;
-  
-  const headers = Object.keys(data[0]);
-  const csvContent = [
-    headers.join(','),
-    ...data.map(row =>
-      headers.map(h => {
-        const val = row[h];
-        if (typeof val === 'string' && val.includes(',')) return `"${val}"`;
-        return val ?? '';
-      }).join(',')
-    )
-  ].join('\n');
 
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  // BOM para que Excel abra los acentos bien. `trim()` se lo lleva al importar.
+  const blob = new Blob(['\ufeff' + toCsv(data)], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
-  link.href = URL.createObjectURL(blob);
+  link.href = url;
   link.download = `${filename}.csv`;
+  document.body.appendChild(link);
   link.click();
-  URL.revokeObjectURL(link.href);
+  link.remove();
+  // Revocar en el mismo tick cancela la descarga en Safari.
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 // Re-export icon keys as CATEGORY_ICONS for backward compat

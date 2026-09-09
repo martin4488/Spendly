@@ -88,6 +88,7 @@ export default function AppShell({ user, initialCurrency }: AppShellProps) {
         recurring: 'prefetchRecurring',
         reflect: 'prefetchReflect',
         budgets: 'prefetchBudgets',
+        overview: 'prefetchOverview',
       };
       Object.entries(imports).forEach(([name, load]) => {
         load().then((m: Record<string, unknown>) => {

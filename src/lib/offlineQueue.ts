@@ -88,11 +88,26 @@ export function newExpenseId(): string {
 export async function flushQueue(): Promise<void> {
   if (flushing) return;
   if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
-  const queued = read();
-  if (queued.length === 0) return;
+  if (read().length === 0) return;
 
   flushing = true;
   try {
+    // Sólo se mandan los gastos del usuario que está firmado ahora.
+    //
+    // Sin este filtro, si otra persona entra en el mismo dispositivo con gastos
+    // ajenos todavía en la cola, sus inserts salen con el JWT nuevo y RLS los
+    // rechaza por `user_id` ajeno. Y un rechazo del servidor acá cuenta como
+    // permanente: el bucle de abajo los descartaba, o sea que le borraba a la
+    // primera persona gastos que nunca llegaron a guardarse. Quedan en la cola
+    // hasta que vuelva a entrar.
+    const { data: sessionData } = await supabase.auth.getSession();
+    const userId = sessionData.session?.user?.id;
+    if (!userId) return;
+
+    const mine = (items: PendingExpense[]) => items.filter(e => e.user_id === userId);
+    const queued = mine(read());
+    if (queued.length === 0) return;
+
     // Camino feliz: un solo INSERT con todo. Volver de un vuelo con varios gastos
     // encolados hacía un viaje por gasto (y una reescritura de localStorage por
     // cada uno). Si el lote falla por lo que sea, se cae al bucle de a uno, que
@@ -112,7 +127,7 @@ export async function flushQueue(): Promise<void> {
       }
     }
 
-    for (const item of read()) {
+    for (const item of mine(read())) {
       const { queued_at, ...row } = item;
       try {
         const { error } = await supabase.from('expenses').insert(row);

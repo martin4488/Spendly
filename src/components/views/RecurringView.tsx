@@ -196,6 +196,19 @@ export default function RecurringView({ user }: { user: User }) {
 
   const parentCats = useMemo(() => grouped.map(g => g.parent), [grouped]);
 
+  // El picker de categorías se re-renderiza con cada tecla del buscador, y
+  // armaba el árbol entero adentro del JSX en cada uno: un `buildTree` sobre
+  // todas las categorías más un `flattenTree` por raíz. Ahora se recorre una vez
+  // por cambio de categorías, como ya hacía BudgetsView.
+  const pickerRoots = useMemo(() => buildTree(categories), [categories]);
+  const pickerAllEntries = useMemo(() => flattenTree(pickerRoots), [pickerRoots]);
+  const pickerGroups = useMemo(
+    () => pickerRoots
+      .map(root => ({ root, entries: flattenTree(root.children, [root]) }))
+      .filter(g => g.entries.length > 0),
+    [pickerRoots],
+  );
+
   const q = searchQuery.trim().toLowerCase();
   const searchResults: Array<{ cat: Category; parent?: Category }> = useMemo(
     () => q
@@ -205,6 +218,11 @@ export default function RecurringView({ user }: { user: User }) {
         }))
       : [],
     [q, categories, categoriesMap],
+  );
+
+  const pickerResults = useMemo(
+    () => (q ? pickerAllEntries.filter(e => e.cat.name.toLowerCase().includes(q)) : []),
+    [q, pickerAllEntries],
   );
 
   function handleSelectCategory(id: string) {
@@ -475,100 +493,92 @@ export default function RecurringView({ user }: { user: User }) {
       )}
 
       {/* ── Category Picker ── */}
-      {showForm && showCategoryPicker && !showCreateCategory && (() => {
-        const pickerRoots = buildTree(categories);
-        const allPickerEntries = flattenTree(pickerRoots);
-        const pq = searchQuery.trim().toLowerCase();
-        const pickerResults = pq ? allPickerEntries.filter(e => e.cat.name.toLowerCase().includes(pq)) : [];
-        return (
-          <div className="fixed inset-0 bg-dark-900 z-[70] flex flex-col slide-up">
-            <div className="flex items-center justify-between px-4 pt-5 pb-3 flex-shrink-0">
-              <button onClick={() => { setShowCategoryPicker(false); setSearchQuery(''); }} className="p-1 text-dark-400 hover:text-white">
-                <ArrowLeft size={24} />
-              </button>
-              <h2 className="text-base font-bold">Categoría</h2>
-              <button onClick={() => openCreateCategory(null)}
-                className="w-8 h-8 rounded-full bg-dark-700 flex items-center justify-center text-dark-400 hover:text-white transition-colors">
-                <Settings size={16} />
-              </button>
+      {showForm && showCategoryPicker && !showCreateCategory && (
+        <div className="fixed inset-0 bg-dark-900 z-[70] flex flex-col slide-up">
+          <div className="flex items-center justify-between px-4 pt-5 pb-3 flex-shrink-0">
+            <button onClick={() => { setShowCategoryPicker(false); setSearchQuery(''); }} className="p-1 text-dark-400 hover:text-white">
+              <ArrowLeft size={24} />
+            </button>
+            <h2 className="text-base font-bold">Categoría</h2>
+            <button onClick={() => openCreateCategory(null)}
+              className="w-8 h-8 rounded-full bg-dark-700 flex items-center justify-center text-dark-400 hover:text-white transition-colors">
+              <Settings size={16} />
+            </button>
+          </div>
+          <div className="px-4 pb-3 flex-shrink-0">
+            <div className="flex items-center gap-2 bg-dark-800 rounded-2xl px-4 py-3">
+              <Search size={16} className="text-dark-400 flex-shrink-0" />
+              <input type="text" placeholder="Buscar categorías" value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="flex-1 bg-transparent text-sm placeholder:text-dark-500 focus:outline-none" />
+              {searchQuery && <button onClick={() => setSearchQuery('')} className="text-dark-400"><X size={14} /></button>}
             </div>
-            <div className="px-4 pb-3 flex-shrink-0">
-              <div className="flex items-center gap-2 bg-dark-800 rounded-2xl px-4 py-3">
-                <Search size={16} className="text-dark-400 flex-shrink-0" />
-                <input type="text" placeholder="Buscar categorías" value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="flex-1 bg-transparent text-sm placeholder:text-dark-500 focus:outline-none" />
-                {searchQuery && <button onClick={() => setSearchQuery('')} className="text-dark-400"><X size={14} /></button>}
-              </div>
-            </div>
-            <div className="flex-1 overflow-y-auto">
-              {pq ? (
-                pickerResults.length === 0 ? (
-                  <div className="text-center py-10 text-dark-500 text-sm">Sin resultados</div>
-                ) : (
-                  <div>
-                    {pickerResults.map(({ cat, ancestors }) => {
-                      const isActive = categoryId === cat.id;
-                      return (
-                        <button key={cat.id} onClick={() => handleSelectCategory(cat.id)}
-                          className={`w-full flex items-center gap-3 px-5 py-3.5 border-b border-dark-800/60 transition-colors ${isActive ? 'bg-dark-800' : 'active:bg-dark-800/60'}`}>
-                          <CategoryIcon icon={cat.icon} color={cat.color} size={36} rounded="full" />
-                          <div className="flex-1 text-left">
-                            <p className="text-sm font-medium">{cat.name}</p>
-                            {ancestors.length > 0 && <p className="text-xs text-dark-400">{ancestors.map((a: any) => a.name).join(' › ')}</p>}
-                          </div>
-                          {isActive && <Check size={18} className="text-brand-400 flex-shrink-0" />}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            {q ? (
+              pickerResults.length === 0 ? (
+                <div className="text-center py-10 text-dark-500 text-sm">Sin resultados</div>
               ) : (
-                <div className="pb-8">
-                  {pickerRoots.map((root: any) => {
-                    const entries = flattenTree(root.children, [root]);
-                    if (entries.length === 0) return null;
+                <div>
+                  {pickerResults.map(({ cat, ancestors }) => {
+                    const isActive = categoryId === cat.id;
                     return (
-                      <div key={root.id} className="mb-6">
-                        <div className="px-4 pt-4 pb-2">
-                          <span className="text-xs font-bold text-dark-400 uppercase tracking-wider">{root.name}</span>
+                      <button key={cat.id} onClick={() => handleSelectCategory(cat.id)}
+                        className={`w-full flex items-center gap-3 px-5 py-3.5 border-b border-dark-800/60 transition-colors ${isActive ? 'bg-dark-800' : 'active:bg-dark-800/60'}`}>
+                        <CategoryIcon icon={cat.icon} color={cat.color} size={36} rounded="full" />
+                        <div className="flex-1 text-left">
+                          <p className="text-sm font-medium">{cat.name}</p>
+                          {ancestors.length > 0 && <p className="text-xs text-dark-400">{ancestors.map((a: any) => a.name).join(' › ')}</p>}
                         </div>
-                        <div className="grid grid-cols-4 gap-x-2 gap-y-4 px-4">
-                          {entries.map(({ cat, ancestors }) => {
-                            const isActive = categoryId === cat.id;
-                            const depth = ancestors.length - 1;
-                            const iconSize = depth === 0 ? 52 : depth === 1 ? 46 : 40;
-                            return (
-                              <button key={cat.id} onClick={() => handleSelectCategory(cat.id)}
-                                className="flex flex-col items-center gap-1.5 active:opacity-70 transition-opacity">
-                                <div className="rounded-full flex items-center justify-center relative flex-shrink-0 overflow-hidden"
-                                  style={{ width: iconSize, height: iconSize,
-                                    boxShadow: isActive ? `0 0 0 3px white, 0 0 0 5px ${cat.color}` : undefined }}>
-                                  <CategoryIcon icon={cat.icon} color={cat.color} size={iconSize} rounded="full" />
-                                  {isActive && (
-                                    <div className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-brand-500 flex items-center justify-center">
-                                      <Check size={9} className="text-white" strokeWidth={3} />
-                                    </div>
-                                  )}
-                                </div>
-                                <span className="text-center leading-tight text-dark-200 w-full"
-                                  style={{ fontSize: 11, display: '-webkit-box', WebkitLineClamp: 2,
-                                    WebkitBoxOrient: 'vertical' as any, overflow: 'hidden', wordBreak: 'break-word' }}>
-                                  {cat.name}
-                                </span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
+                        {isActive && <Check size={18} className="text-brand-400 flex-shrink-0" />}
+                      </button>
                     );
                   })}
                 </div>
-              )}
-            </div>
+              )
+            ) : (
+              <div className="pb-8">
+                {pickerGroups.map(({ root, entries }) => {
+                  return (
+                    <div key={root.id} className="mb-6">
+                      <div className="px-4 pt-4 pb-2">
+                        <span className="text-xs font-bold text-dark-400 uppercase tracking-wider">{root.name}</span>
+                      </div>
+                      <div className="grid grid-cols-4 gap-x-2 gap-y-4 px-4">
+                        {entries.map(({ cat, ancestors }) => {
+                          const isActive = categoryId === cat.id;
+                          const depth = ancestors.length - 1;
+                          const iconSize = depth === 0 ? 52 : depth === 1 ? 46 : 40;
+                          return (
+                            <button key={cat.id} onClick={() => handleSelectCategory(cat.id)}
+                              className="flex flex-col items-center gap-1.5 active:opacity-70 transition-opacity">
+                              <div className="rounded-full flex items-center justify-center relative flex-shrink-0 overflow-hidden"
+                                style={{ width: iconSize, height: iconSize,
+                                  boxShadow: isActive ? `0 0 0 3px white, 0 0 0 5px ${cat.color}` : undefined }}>
+                                <CategoryIcon icon={cat.icon} color={cat.color} size={iconSize} rounded="full" />
+                                {isActive && (
+                                  <div className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-brand-500 flex items-center justify-center">
+                                    <Check size={9} className="text-white" strokeWidth={3} />
+                                  </div>
+                                )}
+                              </div>
+                              <span className="text-center leading-tight text-dark-200 w-full"
+                                style={{ fontSize: 11, display: '-webkit-box', WebkitLineClamp: 2,
+                                  WebkitBoxOrient: 'vertical' as any, overflow: 'hidden', wordBreak: 'break-word' }}>
+                                {cat.name}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
-        );
-      })()}
+        </div>
+      )}
 
       {/* ── Create Category ── */}
       {showForm && showCreateCategory && (

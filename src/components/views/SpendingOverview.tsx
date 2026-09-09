@@ -22,6 +22,7 @@ import { toast } from '@/lib/toast';
 import { confirmDialog } from '@/lib/confirm';
 import OfflineState from '@/components/ui/OfflineState';
 import { reportRpcFallback } from '@/lib/rpcFallback';
+import { readViewCache, writeViewCache } from '@/lib/viewCache';
 import { getDefaultCurrency } from '@/lib/currencyState';
 const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
 
@@ -222,6 +223,110 @@ function getRange(date: Date, mode: ViewMode) {
   return { start: format(startOfYear(date), 'yyyy-MM-dd'), end: format(endOfYear(date), 'yyyy-MM-dd') };
 }
 
+// ── Snapshot cacheado ─────────────────────────────────────────────────────────
+// Ésta era la única vista que no cacheaba nada: Budgets, Reflect y Recurring
+// hidratan de `viewCache` y se precalientan en el idle del arranque, y ésta
+// mostraba spinner cada vez — colgada de un botón bien visible del dashboard.
+//
+// Se guarda un solo período (el último mirado) con su rango adentro: alcanza
+// para el camino común —entrar, salir, volver al mismo mes— sin llenar
+// localStorage con un snapshot por mes navegado.
+const OVERVIEW_CACHE = 'overview';
+
+interface OverviewSnapshot {
+  /** Modo + inicio del rango. Si no coincide con lo que se va a pedir, se ignora. */
+  key: string;
+  total: number;
+  catSpending: CatSpend[];
+}
+
+const overviewKey = (mode: ViewMode, start: string) => `${mode}:${start}`;
+
+/**
+ * Trae y calcula el desglose por categoría de un período. Sin estado de React,
+ * así lo comparten la vista y el precalentamiento del arranque. Devuelve null
+ * si no hay red o la consulta falló.
+ */
+async function fetchOverviewSnapshot(
+  userId: string,
+  date: Date,
+  mode: ViewMode,
+): Promise<OverviewSnapshot | null> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return null;
+
+  const range = getRange(date, mode);
+  const [{ data: rpcResult, error: rpcError }, catsMap] = await Promise.all([
+    supabase.rpc('get_spending_overview', { p_user_id: userId, p_start_date: range.start, p_end_date: range.end }),
+    getCategories(userId),
+  ]);
+  const allCats = Array.from(catsMap.values());
+  const activeCats = allCats.filter((c: any) => c.deleted !== true);
+  const tree = buildTree(activeCats);
+  let total = 0;
+  const spendMap: Record<string, number> = {};
+  const txMap: Record<string, number> = {};
+  // Gasto sin categoría (o con una categoría borrada). El camino de respaldo
+  // no lo contabilizaba: el gasto entraba en el total pero no aparecía en la
+  // lista ni en la dona, así que los porcentajes no cerraban en 100%.
+  let uncatSpent = 0, uncatTx = 0;
+  const knownCatIds = new Set(activeCats.map((c: any) => c.id));
+
+  if (!rpcError && rpcResult) {
+    total = Number(rpcResult.total) || 0;
+    for (const row of (rpcResult.category_totals || [])) {
+      if (row.category_id && knownCatIds.has(row.category_id)) {
+        spendMap[row.category_id] = Number(row.total);
+        txMap[row.category_id] = Number(row.tx_count);
+      } else {
+        uncatSpent += Number(row.total);
+        uncatTx += Number(row.tx_count);
+      }
+    }
+  } else {
+    reportRpcFallback('get_spending_overview', rpcError, 'SpendingOverview');
+    // `order` + `limit` juntos: sin el orden, un recorte de 10.000 filas se
+    // queda con un conjunto arbitrario y el total sale mal en silencio (es el
+    // mismo problema que la migración 002 arregló adentro de `get_boot_data`).
+    const { data: expenses, error: expErr } = await supabase
+      .from('expenses').select('id, amount, category_id, description, date')
+      .eq('user_id', userId).gte('date', range.start).lte('date', range.end)
+      .order('date', { ascending: false }).limit(10000);
+    if (expErr) return null;
+    for (const e of (expenses || []) as any[]) {
+      total += Number(e.amount);
+      if (e.category_id && knownCatIds.has(e.category_id)) {
+        spendMap[e.category_id] = (spendMap[e.category_id] || 0) + Number(e.amount);
+        txMap[e.category_id] = (txMap[e.category_id] || 0) + 1;
+      } else {
+        uncatSpent += Number(e.amount);
+        uncatTx += 1;
+      }
+    }
+  }
+
+  const catSpending: CatSpend[] = tree
+    .map(node => buildSpend(node, spendMap, txMap, total))
+    .filter(c => c.spent > 0)
+    .sort((a, b) => b.spent - a.spent);
+  if (uncatSpent > 0) {
+    catSpending.push({
+      id: 'uncategorized', name: 'Sin categoría', icon: 'package', color: '#95A5A6',
+      spent: uncatSpent, percentage: total > 0 ? (uncatSpent / total) * 100 : 0,
+      transactions: uncatTx, children: [], allIds: ['uncategorized'],
+    });
+  }
+
+  return { key: overviewKey(mode, range.start), total, catSpending };
+}
+
+/** Precalienta el mes corriente durante el idle del arranque (lo llama AppShell). */
+export async function prefetchOverview(userId: string): Promise<void> {
+  try {
+    const snap = await fetchOverviewSnapshot(userId, new Date(), 'months');
+    if (snap) writeViewCache<OverviewSnapshot>(OVERVIEW_CACHE, userId, snap);
+  } catch { /* offline o error — se deja el snapshot que hubiera */ }
+}
+
 // ── Main ──
 export default function SpendingOverview({ user, onBack, initialDate, initialViewMode }: {
   user: User;
@@ -232,9 +337,25 @@ export default function SpendingOverview({ user, onBack, initialDate, initialVie
   const now = new Date();
   const [viewMode, setViewMode] = useState<ViewMode>(initialViewMode || 'months');
   const [currentDate, setCurrentDate] = useState(initialDate || now);
-  const [catSpending, setCatSpending] = useState<CatSpend[]>([]);
-  const [totalSpent, setTotalSpent] = useState(0);
-  const [loading, setLoading] = useState(true);
+
+  // Stale-while-revalidate: si el snapshot guardado es del mismo período que se
+  // está por pedir, se pinta ya y el refresco corre por detrás sin spinner.
+  const cached = useMemo(() => {
+    const snap = readViewCache<OverviewSnapshot>(OVERVIEW_CACHE, user.id);
+    const mode = initialViewMode || 'months';
+    const wanted = overviewKey(mode, getRange(initialDate || new Date(), mode).start);
+    return snap && snap.key === wanted ? snap : null;
+    // Sólo al montar: después el propio `loadData` mantiene el estado.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user.id]);
+
+  const [catSpending, setCatSpending] = useState<CatSpend[]>(cached?.catSpending || []);
+  const [totalSpent, setTotalSpent] = useState(cached?.total || 0);
+  const [loading, setLoading] = useState(!cached);
+  // Qué período es el que está pintado. Sólo se refresca en silencio cuando lo
+  // que se va a pedir es exactamente eso: al navegar a otro mes hay que mostrar
+  // el spinner, si no se ven los números del mes anterior como si fueran del nuevo.
+  const displayedKeyRef = useRef<string | null>(cached?.key ?? null);
   const [offline, setOffline] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [drillDown, setDrillDown] = useState<DrillDown | null>(null);
@@ -256,60 +377,28 @@ export default function SpendingOverview({ user, onBack, initialDate, initialVie
   useEffect(() => { setSelectedCatId(null); }, [viewMode, currentDate]);
 
   async function loadData() {
+    const wanted = overviewKey(viewMode, getRange(currentDate, viewMode).start);
+    const silent = displayedKeyRef.current === wanted;
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      setOffline(true); setLoading(false); return;
+      if (!silent) { setOffline(true); setLoading(false); }
+      return;
     }
     setOffline(false);
-    setLoading(true);
+    if (!silent) setLoading(true);
     try {
-      const range = getRange(currentDate, viewMode);
-      const [{ data: rpcResult, error: rpcError }, catsMap] = await Promise.all([
-        supabase.rpc('get_spending_overview', { p_user_id: user.id, p_start_date: range.start, p_end_date: range.end }),
-        getCategories(user.id),
-      ]);
-      const allCats = Array.from(catsMap.values());
-      const activeCats = allCats.filter((c: any) => c.deleted !== true);
-      const tree = buildTree(activeCats);
-      let total = 0;
-      const spendMap: Record<string, number> = {};
-      const txMap: Record<string, number> = {};
-      // Gasto sin categoría (o con una categoría borrada). El camino de respaldo
-      // no lo contabilizaba: el gasto entraba en el total pero no aparecía en la
-      // lista ni en la dona, así que los porcentajes no cerraban en 100%.
-      let uncatSpent = 0, uncatTx = 0;
-      const knownCatIds = new Set(activeCats.map((c: any) => c.id));
-      if (!rpcError && rpcResult) {
-        total = Number(rpcResult.total) || 0;
-        for (const row of (rpcResult.category_totals || [])) {
-          if (row.category_id && knownCatIds.has(row.category_id)) {
-            spendMap[row.category_id] = Number(row.total);
-            txMap[row.category_id] = Number(row.tx_count);
-          } else {
-            uncatSpent += Number(row.total);
-            uncatTx += Number(row.tx_count);
-          }
-        }
-      } else {
-        reportRpcFallback('get_spending_overview', rpcError, 'SpendingOverview');
-        const { data: expenses, error: expErr } = await supabase.from('expenses').select('id, amount, category_id, description, date').eq('user_id', user.id).gte('date', range.start).lte('date', range.end).order('date', { ascending: false }).limit(10000);
-        if (expErr) { setOffline(true); setLoading(false); return; }
-        const allExp = expenses || [];
-        for (const e of allExp as any[]) {
-          total += Number(e.amount);
-          if (e.category_id && knownCatIds.has(e.category_id)) {
-            spendMap[e.category_id] = (spendMap[e.category_id] || 0) + Number(e.amount);
-            txMap[e.category_id] = (txMap[e.category_id] || 0) + 1;
-          } else {
-            uncatSpent += Number(e.amount);
-            uncatTx += 1;
-          }
-        }
+      const snap = await fetchOverviewSnapshot(user.id, currentDate, viewMode);
+      if (!snap) {
+        if (!silent) setOffline(true);
+        return;
       }
-      setTotalSpent(total);
-      const spending: CatSpend[] = tree.map(node => buildSpend(node, spendMap, txMap, total)).filter(c => c.spent > 0).sort((a, b) => b.spent - a.spent);
-      if (uncatSpent > 0) spending.push({ id: 'uncategorized', name: 'Sin categoría', icon: 'package', color: '#95A5A6', spent: uncatSpent, percentage: total > 0 ? (uncatSpent / total) * 100 : 0, transactions: uncatTx, children: [], allIds: ['uncategorized'] });
-      setCatSpending(spending);
-    } catch (err) { console.error(err); setOffline(true); }
+      setTotalSpent(snap.total);
+      setCatSpending(snap.catSpending);
+      displayedKeyRef.current = snap.key;
+      writeViewCache<OverviewSnapshot>(OVERVIEW_CACHE, user.id, snap);
+    } catch (err) {
+      console.error(err);
+      if (!silent) setOffline(true);
+    }
     finally { setLoading(false); }
   }
 

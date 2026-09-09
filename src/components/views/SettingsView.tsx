@@ -4,6 +4,7 @@ import { useState, useRef, ReactNode } from 'react';
 import type { User } from '@supabase/auth-js';
 import { supabase } from '@/lib/supabase';
 import { exportToCSV } from '@/lib/utils';
+import { parseCsvRows } from '@/lib/csv';
 import { CURRENCIES, CurrencyCode, convertCurrency, ensureRates } from '@/lib/currency';
 import {
   LogOut, Download, Upload, Mail, DollarSign, Tag, ChevronRight,
@@ -12,6 +13,7 @@ import {
 import { clearDashboardCache } from '@/lib/dashboardCache';
 import { clearViewCaches } from '@/lib/viewCache';
 import { invalidateCategories } from '@/lib/categoryCache';
+import { clearCachedCurrency } from '@/lib/currencyState';
 import { confirmDialog } from '@/lib/confirm';
 
 interface Props {
@@ -138,33 +140,21 @@ export default function SettingsView({ user, defaultCurrency, onCurrencyChange, 
 
   /* ── CSV parsing ── */
   function parseCSV(text: string): ImportRow[] {
-    const lines = text.trim().split('\n');
-    if (lines.length < 2) return [];
-    const header = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/[^a-z]/g, ''));
-    const rows: ImportRow[] = [];
-    for (let i = 1; i < lines.length; i++) {
-      const line = lines[i];
-      if (!line.trim()) continue;
-      const cols: string[] = [];
-      let current = '';
-      let inQuotes = false;
-      for (let c = 0; c < line.length; c++) {
-        if (line[c] === '"') { inQuotes = !inQuotes; }
-        else if (line[c] === ',' && !inQuotes) { cols.push(current); current = ''; }
-        else { current += line[c]; }
-      }
-      cols.push(current);
-      const row: any = {};
+    // `trim()` también se lleva el BOM que escribe la exportación.
+    const table = parseCsvRows(text.trim());
+    if (table.length < 2) return [];
+    const header = table[0].map(h => h.trim().toLowerCase().replace(/[^a-z]/g, ''));
+    return table.slice(1).map(cols => {
+      const row: Record<string, string> = {};
       header.forEach((h, idx) => { row[h] = (cols[idx] || '').trim(); });
-      rows.push({
+      return {
         date: row['date'] || row['fecha'] || '',
         description: row['description'] || row['descripcin'] || row['descripcion'] || '',
         amount: row['amount'] || row['monto'] || '0',
         currency: row['currency'] || row['moneda'] || defaultCurrency,
         category: row['category'] || row['categora'] || row['categoria'] || '',
-      });
-    }
-    return rows;
+      };
+    });
   }
 
   function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
@@ -338,6 +328,12 @@ export default function SettingsView({ user, defaultCurrency, onCurrencyChange, 
     clearDashboardCache();
     clearViewCaches();
     invalidateCategories();
+    // La moneda espejada también: si no, el arranque de la próxima sesión pinta
+    // todos los montos en la moneda de ésta hasta que responde la RPC de boot.
+    clearCachedCurrency();
+    // Ojo: la cola de gastos offline NO se borra a propósito — son gastos que
+    // todavía no llegaron al servidor. `flushQueue` filtra por el usuario
+    // firmado, así que esperan a que esta persona vuelva a entrar.
     await supabase.auth.signOut();
   }
 

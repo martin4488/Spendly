@@ -135,12 +135,43 @@ export async function refreshRates(): Promise<boolean> {
   return result !== null;
 }
 
-// Format with currency symbol
-export function formatWithCurrency(amount: number, currency: CurrencyCode): string {
-  const c = CURRENCIES[currency];
-  const formatted = new Intl.NumberFormat('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(amount);
-  return `${c.symbol}${formatted}`;
+// ── Formato de montos ────────────────────────────────────────────────────────
+// Una sola implementación para toda la app. Antes había dos: ésta armaba
+// `€1,234,567.89` (en-US) y `<Amount>` pintaba `€1.234.567,89` (es-AR), y cinco
+// vistas usan las dos a la vez — se veían los dos formatos en la misma pantalla.
+// Manda el de `Amount`, que es el que ocupa el total del encabezado.
+//
+// Una sola instancia: construir un NumberFormat no es gratis y esto corre una
+// vez por fila de gasto (y en cada tecla del numpad del modal).
+const groupFmt = new Intl.NumberFormat('es-AR', { maximumFractionDigits: 0 });
+
+/** Símbolo de una moneda conocida; `$` para cualquier otra cosa. */
+export function currencySymbol(currency: string): string {
+  return CURRENCIES[currency as CurrencyCode]?.symbol || '$';
+}
+
+/**
+ * Las piezas de un monto, para que `<Amount>` pueda pintar los decimales en otro
+ * tamaño y `formatWithCurrency` arme el mismo string a partir de lo mismo.
+ *
+ * Redondea a dos decimales *antes* de separar parte entera y decimal: con
+ * `Math.floor(abs)` sobre el crudo, un 1,999 (sale de los promedios de Reflect)
+ * daba `1` y `,00`.
+ */
+export function amountParts(value: number, decimals = true): {
+  negative: boolean; int: string; dec: string | null;
+} {
+  const abs = Math.abs(value);
+  const rounded = Math.round(abs * 100) / 100;
+  return {
+    negative: value < 0,
+    int: groupFmt.format(decimals ? Math.floor(rounded) : Math.round(abs)),
+    dec: decimals ? rounded.toFixed(2).split('.')[1] : null,
+  };
+}
+
+/** `€1.234.567,89`. Con `round`, sin decimales. */
+export function formatWithCurrency(amount: number, currency: string, round?: boolean): string {
+  const { negative, int, dec } = amountParts(amount, !round);
+  return `${negative ? '-' : ''}${currencySymbol(currency)}${int}${dec ? `,${dec}` : ''}`;
 }

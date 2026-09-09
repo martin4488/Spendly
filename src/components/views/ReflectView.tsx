@@ -115,9 +115,12 @@ async function fetchPrevYearData(userId: string, prevYr: number): Promise<{
     // Note: an empty previous year is a legitimate reason to land here, so only
     // report when the RPC actually errored.
     if (rpcError) reportRpcFallback('get_reflect_data', rpcError, 'ReflectView (año anterior)');
+    // `order` antes de `limit`: sin él el recorte agarra filas arbitrarias y los
+    // totales salen mal en silencio.
     const { data: expData } = await supabase.from('expenses')
       .select('date, amount, category_id').eq('user_id', userId)
-      .gte('date', pStart).lte('date', pEnd).limit(10000);
+      .gte('date', pStart).lte('date', pEnd)
+      .order('date', { ascending: false }).limit(10000);
 
     (expData || []).forEach((e: any) => {
       const mo = e.date.slice(0, 7);
@@ -163,7 +166,8 @@ async function fetchYearData(userId: string, yr: number, prevYr: number | null, 
     reportRpcFallback('get_reflect_data', rpcError, 'ReflectView');
     const { data: expData } = await supabase.from('expenses')
       .select('date, amount, category_id').eq('user_id', userId)
-      .gte('date', yearStart).lte('date', yearEnd).limit(10000);
+      .gte('date', yearStart).lte('date', yearEnd)
+      .order('date', { ascending: false }).limit(10000);
     (expData || []).forEach((e: any) => {
       const mo = e.date.slice(0, 7);
       monthMap[mo] = (monthMap[mo] || 0) + Number(e.amount);

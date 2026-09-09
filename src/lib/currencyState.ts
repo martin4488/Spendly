@@ -14,7 +14,16 @@
 
 const STORAGE_KEY = 'spendly-currency';
 
-let _defaultCurrency: string = 'USD';
+/**
+ * La moneda con la que se pinta antes de saber la del usuario.
+ *
+ * Vivía duplicada en tres lugares que no coincidían: `page.tsx` caía en EUR (dos
+ * veces), este módulo arrancaba en USD y `<Amount>` caía en USD. Manda EUR, que
+ * es la que efectivamente decidía el arranque.
+ */
+export const DEFAULT_CURRENCY = 'EUR';
+
+let _defaultCurrency: string = DEFAULT_CURRENCY;
 
 export function setDefaultCurrency(code: string) {
   _defaultCurrency = code;
@@ -27,6 +36,14 @@ export function setDefaultCurrency(code: string) {
 
 export function getDefaultCurrency(): string {
   return _defaultCurrency;
+}
+
+/** Borra la moneda espejada (al cerrar sesión: la próxima no es la misma). */
+export function clearCachedCurrency(): void {
+  _defaultCurrency = DEFAULT_CURRENCY;
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+  } catch {}
 }
 
 /** Last known currency from a previous session, if any. Safe to call at boot. */

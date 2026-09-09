@@ -3,7 +3,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, lazy, Suspense } from 'react';
 import { supabase } from '@/lib/supabase';
 import { prefetchRates } from '@/lib/currency';
-import { setDefaultCurrency, readCachedCurrency } from '@/lib/currencyState';
+import { setDefaultCurrency, readCachedCurrency, DEFAULT_CURRENCY } from '@/lib/currencyState';
 import { getCategories, seedCategories } from '@/lib/categoryCache';
 import type { User } from '@supabase/auth-js';
 import AppShell from '@/components/AppShell';
@@ -78,7 +78,7 @@ function markRecurringRun(userId: string): void {
  */
 function initialCurrency(): CurrencyCode {
   const cached = readCachedCurrency();
-  return (cached as CurrencyCode) || 'EUR';
+  return (cached as CurrencyCode) || DEFAULT_CURRENCY;
 }
 
 export default function Home() {
@@ -160,7 +160,7 @@ export default function Home() {
       });
 
       if (!error && boot) {
-        const currency = (boot.currency || 'EUR') as CurrencyCode;
+        const currency = (boot.currency || DEFAULT_CURRENCY) as CurrencyCode;
         setDefaultCurrency(currency);
         setBootData(prev => prev ? { ...prev, currency } : null);
 

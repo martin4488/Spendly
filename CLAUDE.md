@@ -14,7 +14,7 @@ npm test           # node:test — see below
 
 ## Tests
 
-`npm test` runs four suites out of `tests/`:
+`npm test` runs six suites out of `tests/`:
 
 - **`supabase-contract.test.mjs`** — always runs, no network or credentials
   needed. The app does *not* use `createClient()` from `@supabase/supabase-js`
@@ -41,6 +41,13 @@ npm test           # node:test — see below
 - **`date-utils.test.mjs`** — always runs, no network. Re-runs the timezone-
   sensitive assertions in subprocesses under four timezones, because every bug
   it covers was invisible in UTC. See "Dates are local, never UTC" below.
+- **`currency.test.mjs`** — always runs, `fetch` and `localStorage` stubbed.
+  Pins the *failure* contract of conversion (no rates → `null`, never the input
+  amount — that's what silently wrote 1000 ARS as 1000 EUR) and the single
+  money format. See "Money formatting" below.
+- **`csv.test.mjs`** — always runs, no network. The export and the import are
+  two halves of one format, so this drives a round trip through both. See
+  [src/lib/csv.ts](src/lib/csv.ts).
 
 ## Environment
 
@@ -107,4 +114,26 @@ and touches no `Date` at all. `date-fns`' `parseISO` is fine — it parses
 date-only strings as local — but `new Date(str)` is not.
 `tests/date-utils.test.mjs` pins this by re-running under four timezones.
 
-**Supported currencies:** EUR, USD, ARS (see `CURRENCIES` in [src/lib/currency.ts](src/lib/currency.ts)).
+**Supported currencies:** EUR, USD, ARS (see `CURRENCIES` in [src/lib/currency.ts](src/lib/currency.ts)). `DEFAULT_CURRENCY` in [src/lib/currencyState.ts](src/lib/currencyState.ts) is the one fallback for "we don't know this user's currency yet" — it used to be spelled out in three places that disagreed (EUR in `page.tsx`, USD everywhere else).
+
+**Money formatting** ([src/lib/currency.ts](src/lib/currency.ts)): one
+implementation, `amountParts()`, feeds both `formatWithCurrency()` (a plain
+string; `formatCurrency` in `utils.ts` delegates to it) and
+[`<Amount>`](src/components/ui/Amount.tsx), which renders the same pieces with
+the decimals in a smaller span. They were two separate implementations on
+different locales, and five views use both — so the same screen showed
+`€1,234,567.89` next to `€1.234.567,89`. Format is es-AR: `€1.234.567,89`.
+
+**"Today" is not a constant** ([src/lib/useLocalToday.ts](src/lib/useLocalToday.ts)):
+this is an installed PWA that stays open for days, so anything deriving the
+current day, month or year at mount goes stale. The Dashboard used to do exactly
+that, which labelled today's expenses "Ayer" after midnight and left the chart on
+last month's six-month window. The hook re-checks on a timer to local midnight
+and on visibility/focus, and only changes identity when the day actually changed.
+
+**Caches are only written on success.** `getCategories()` gets `{ data: null,
+error }` from PostgREST on any failure — not an exception — and caching that
+left an empty category map marked valid for the whole session: every expense row
+read "Sin categoría" and the add-expense modal offered nothing, even after
+reconnecting. Same shape of bug to watch for anywhere a `.then(({ data }) => …)`
+ignores `error`.

@@ -1,5 +1,5 @@
-import { CURRENCIES, CurrencyCode } from '@/lib/currency';
-import { getDefaultCurrency } from '@/lib/currencyState';
+import { amountParts, currencySymbol, type CurrencyCode } from '@/lib/currency';
+import { getDefaultCurrency, DEFAULT_CURRENCY } from '@/lib/currencyState';
 
 type Props = {
   /** The numeric value to display */
@@ -32,11 +32,6 @@ const weightMap = {
   extrabold: 'font-extrabold',
 };
 
-// `toLocaleString` builds a fresh Intl.NumberFormat on every call, and this
-// component renders once per expense row (plus once per day header). Two cached
-// instances cover every call site.
-const groupFmt = new Intl.NumberFormat('es-AR', { maximumFractionDigits: 0 });
-
 export default function Amount({
   value,
   currency,
@@ -47,16 +42,13 @@ export default function Amount({
   decimals = true,
   className = '',
 }: Props) {
-  const resolvedCurrency = (currency || getDefaultCurrency() || 'USD') as CurrencyCode;
-  const abs = Math.abs(value);
+  // El formateo vive en `currency.ts` para que esto y `formatCurrency` no puedan
+  // divergir — durante un tiempo pintaron `€1.234.567,89` y `€1,234,567.89`.
+  const { negative, int: intFmt, dec } = amountParts(value, decimals);
 
-  const intFmt = groupFmt.format(decimals ? Math.floor(abs) : Math.round(abs));
+  const finalSign = sign !== undefined ? sign : (negative ? '-' : '');
 
-  const dec = decimals ? abs.toFixed(2).split('.')[1] : null;
-
-  const finalSign = sign !== undefined ? sign : (value < 0 ? '-' : '');
-
-  const sym = CURRENCIES[resolvedCurrency]?.symbol || '$';
+  const sym = currencySymbol(currency || getDefaultCurrency() || DEFAULT_CURRENCY);
   const { n, d } = sizeMap[size];
 
   return (

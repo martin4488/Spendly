@@ -32,7 +32,7 @@ export async function getCategories(userId: string): Promise<Map<string, Categor
     return cache.promise;
   }
 
-  // Miss or different user: start fresh fetch
+  // Miss or different user: start fresh fetch.
   const fetchPromise: Promise<Map<string, Category>> = Promise.resolve(
     supabase
       .from('categories')
@@ -41,12 +41,26 @@ export async function getCategories(userId: string): Promise<Map<string, Categor
       .neq('deleted', true)
       .order('position')
       .order('created_at')
-  ).then(({ data }) => {
-      const list: Category[] = data || [];
+  ).then(({ data, error }) => {
+      // Ojo: un error (offline, timeout, 500) llega como `{ data: null, error }`,
+      // no como excepción. `data || []` lo guardaba como un mapa vacío marcado
+      // como válido para toda la sesión: el dashboard mostraba "Sin categoría"
+      // en cada fila y el modal de gastos no ofrecía ninguna, aun después de
+      // reconectar. Sólo se cachea el éxito — el fallo deja el cache vacío para
+      // que el próximo llamado reintente.
+      if (error || !data) {
+        cache = null;
+        return new Map<string, Category>();
+      }
+      const list: Category[] = data;
       const map = new Map<string, Category>();
       list.forEach(c => map.set(c.id, c));
       cache = { userId, map, list, promise: null };
       return map;
+    })
+    .catch(() => {
+      cache = null;
+      return new Map<string, Category>();
     });
 
   cache = { userId, map: new Map(), list: [], promise: fetchPromise };

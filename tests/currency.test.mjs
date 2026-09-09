@@ -41,7 +41,8 @@ const okRates = () => Promise.resolve({
   }),
 });
 
-const { convertCurrency, getRate, ensureRates } = await import('../src/lib/currency.ts');
+const { convertCurrency, getRate, ensureRates, formatWithCurrency, amountParts } =
+  await import('../src/lib/currency.ts');
 
 test('sin cotizaciones la conversión es null, nunca el monto de entrada', () => {
   // El caché arranca frío: es exactamente el estado en el que el modal guardaba
@@ -106,4 +107,36 @@ test('cotizaciones vencidas se siguen usando antes que no convertir', async () =
   } finally { restore(); }
 
   assert.equal(convert(1000, 'ARS', 'EUR'), 0.5);
+});
+
+// ── Formato ───────────────────────────────────────────────────────────────────
+// `formatWithCurrency` y `<Amount>` salen de las mismas piezas (`amountParts`) a
+// propósito: durante un tiempo hubo dos implementaciones con locales distintos y
+// cinco vistas usan las dos, así que se veía `€1,234,567.89` al lado de
+// `€1.234.567,89` en la misma pantalla. `formatCurrency` (utils.ts) delega acá.
+
+test('el formato de montos es uno solo: es-AR con el símbolo pegado', () => {
+  assert.equal(formatWithCurrency(1234567.89, 'EUR'), '€1.234.567,89');
+  assert.equal(formatWithCurrency(1234.5, 'EUR'), '€1.234,50');
+  assert.equal(formatWithCurrency(0, 'ARS'), '$0,00');
+});
+
+test('el signo va antes del símbolo, no entre el símbolo y el número', () => {
+  assert.equal(formatWithCurrency(-1234.5, 'USD'), '-$1.234,50');
+});
+
+test('`round` saca los decimales', () => {
+  assert.equal(formatWithCurrency(1234.5, 'EUR', true), '€1.235');
+  assert.equal(formatWithCurrency(1234567.89, 'EUR', true), '€1.234.568');
+});
+
+test('una moneda desconocida no rompe: cae en $', () => {
+  assert.equal(formatWithCurrency(10, 'JPY'), '$10,00');
+});
+
+test('redondea antes de partir entero y decimales', () => {
+  // Con `Math.floor` sobre el crudo, 1,999 daba "1" y ",00" — o sea €1,00.
+  // Sale de los promedios de Reflect, que no vienen con dos decimales.
+  assert.deepEqual(amountParts(1.999), { negative: false, int: '2', dec: '00' });
+  assert.equal(formatWithCurrency(1.999, 'EUR'), '€2,00');
 });
