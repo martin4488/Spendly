@@ -4,6 +4,8 @@ import { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
 import type { User } from '@supabase/auth-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/utils';
+import { getDefaultCurrency } from '@/lib/currencyState';
+import type { CurrencyCode } from '@/lib/currency';
 import { Budget, Category } from '@/types';
 import { ArrowLeft, ChevronLeft, ChevronRight, Edit3, Trash2, X, Delete, History, Search, Check } from 'lucide-react';
 import { format, parseISO, differenceInDays, isWithinInterval } from 'date-fns';
@@ -953,7 +955,10 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
         <Suspense fallback={null}>
           <AddExpenseModal
             user={user}
-            defaultCurrency={budget.currency as any}
+            // Not `budget.currency`: nothing ever sets it, so every budget carries
+            // the column's default ('USD') and the modal converted into dollars —
+            // which then got stored as the user's own currency.
+            defaultCurrency={getDefaultCurrency() as CurrencyCode}
             onClose={() => { setShowExpenseModal(false); setEditingExpense(null); }}
             onSaved={() => { periodCache.current.clear(); loadPeriodData(currentPeriodIndex); onRefresh(); }}
             editingExpense={editingExpense}

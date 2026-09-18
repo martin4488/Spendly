@@ -68,6 +68,11 @@ export default function AppShell({ user, initialCurrency }: AppShellProps) {
   // Bumped to force a fresh BudgetDetailView mount after a save (replaces the old setTimeout hack)
   const [budgetDetailKey, setBudgetDetailKey] = useState(0);
 
+  // `initialCurrency` starts as the cached guess and changes once `get_boot_data`
+  // answers with the real one; `useState` alone ignored that, so with no (or a
+  // stale) cached value the add-expense modal converted into the wrong currency.
+  useEffect(() => { _setDefaultCurrency(initialCurrency); }, [initialCurrency]);
+
   const updateCurrency = useCallback((c: CurrencyCode) => {
     _setDefaultCurrency(c);
     setDefaultCurrency(c);
