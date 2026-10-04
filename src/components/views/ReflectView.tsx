@@ -28,10 +28,23 @@ interface YearData {
   cats: CatData[];
   /** Árbol completo de categorías (para resolver nombres/íconos en insights) */
   tree: CatNode[];
-  /** Promedio mensual por categoría (padres + hijas) del año anterior — total/12 */
+  /** Promedio mensual por categoría (padres + hijas) del año anterior — total / meses con gasto */
   prevYearCats: Record<string, number> | null;
-  /** Promedio mensual total del año anterior — sum(monthly)/12 */
+  /** Promedio mensual total del año anterior — total / meses con gasto */
   prevYearAvg: number | null;
+}
+
+/**
+ * Un mes cerrado entra al análisis (promedio, tendencia, insights) sólo si tuvo
+ * gasto: un mes vacío —antes de empezar a usar la app, o sin cargar— no es un
+ * mes en que gastaste 0, y tiraba el promedio para abajo.
+ */
+const MIN_MONTH_SPEND = 1;
+function hasSpend(amount: number | undefined): boolean {
+  return (amount || 0) >= MIN_MONTH_SPEND;
+}
+function isAnalyzedMonth(m: MonthData): boolean {
+  return !m.isCurrent && hasSpend(m.amount);
 }
 
 function sumNode(node: CatNode, spendMap: Record<string, number>): number {
@@ -188,14 +201,14 @@ async function fetchYearData(userId: string, yr: number, prevYr: number | null, 
     months.push({ label: cap(label), amount: monthMap[mo] || 0, isCurrent: mo === activeMonth });
   }
 
-  const closedMonths = months.filter(m => !m.isCurrent);
+  const closedMonths = months.filter(isAnalyzedMonth);
   const numClosed = Math.max(closedMonths.length, 1);
 
-  // Build spend map from closed months only
+  // Build spend map from closed months with spend only
   const closedKeys = new Set<string>();
   for (let m = 0; m < 12; m++) {
     const mo = format(new Date(yr, m, 1), 'yyyy-MM');
-    if (mo < activeMonth) closedKeys.add(mo);
+    if (mo < activeMonth && hasSpend(monthMap[mo])) closedKeys.add(mo);
   }
 
   const spendMap: Record<string, number> = {};
@@ -214,24 +227,31 @@ async function fetchYearData(userId: string, yr: number, prevYr: number | null, 
     .filter(c => c.amount > 0)
     .sort((a, b) => b.amount - a.amount);
 
-  // Previous year — load separately with fallback, always divide by 12
+  // Previous year — divided by its months with spend, same rule as this year:
+  // dividir por 12 un año en que la app se empezó a usar en septiembre daba un
+  // "promedio" de un tercio del real.
   let prevYearCats: Record<string, number> | null = null;
   let prevYearAvg: number | null = null;
 
   if (prev) {
     let prevTotal = 0;
-    Object.values(prev.monthMap).forEach(v => { prevTotal += v; });
+    let prevMonths = 0;
+    Object.values(prev.monthMap).forEach(v => {
+      if (!hasSpend(v)) return;
+      prevTotal += v;
+      prevMonths++;
+    });
 
-    if (prevTotal > 0) {
-      prevYearAvg = prevTotal / 12;
+    if (prevMonths > 0) {
+      prevYearAvg = prevTotal / prevMonths;
       prevYearCats = {};
 
       tree.forEach(node => {
         const parentTotal = sumNode(node, prev.catMap);
-        if (parentTotal > 0) prevYearCats![node.id] = parentTotal / 12;
+        if (parentTotal > 0) prevYearCats![node.id] = parentTotal / prevMonths;
         node.children.forEach(child => {
           const childTotal = sumNode(child, prev.catMap);
-          if (childTotal > 0) prevYearCats![child.id] = childTotal / 12;
+          if (childTotal > 0) prevYearCats![child.id] = childTotal / prevMonths;
         });
       });
     }
@@ -339,7 +359,7 @@ export default function ReflectView({ user }: Props) {
   }
 
   function computeInsights(d: YearData, yr: number): Insight[] {
-    const closed = d.months.filter(m => !m.isCurrent);
+    const closed = d.months.filter(isAnalyzedMonth);
     const avg = closed.length > 0 ? closed.reduce((s, m) => s + m.amount, 0) / closed.length : 0;
     const insights: Insight[] = [];
 
@@ -353,7 +373,7 @@ export default function ReflectView({ user }: Props) {
       }
     }
 
-    // Insight 2: promedio meses cerrados del año actual vs promedio mensual año anterior (total/12)
+    // Insight 2: promedio meses cerrados del año actual vs promedio mensual año anterior (total / meses con gasto)
     if (d.prevYearAvg != null && d.prevYearAvg > 0 && closed.length > 0) {
       const diff = avg - d.prevYearAvg;
       const pct = Math.round(Math.abs(diff / d.prevYearAvg) * 100);
@@ -512,7 +532,7 @@ export default function ReflectView({ user }: Props) {
   const d = year ? yearData[year] : null;
   const minYear = availableYears.length > 0 ? Math.min(...availableYears) : (year || 0);
   const maxYear = availableYears.length > 0 ? Math.max(...availableYears) : (year || 0);
-  const closed = d?.months.filter(m => !m.isCurrent) || [];
+  const closed = d?.months.filter(isAnalyzedMonth) || [];
   const avg = closed.length > 0 ? closed.reduce((s, m) => s + m.amount, 0) / closed.length : 0;
   const maxAmt = d ? Math.max(...d.months.map(m => m.amount), 1) : 1;
   const first = d?.months[0]?.label;
