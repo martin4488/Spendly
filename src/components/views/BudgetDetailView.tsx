@@ -166,7 +166,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
     periodCache.current.clear();
     try {
       // Single parallel fetch: periods + all cats + all bcp rows for this budget
-      const [{ data: periodsData }, catsMap, { data: bcpData }] = await Promise.all([
+      const [{ data: periodsData, error: periodsError }, catsMap, { data: bcpData, error: bcpError }] = await Promise.all([
         supabase.from('budget_periods').select('*').eq('budget_id', budget.id).order('period_start', { ascending: false }),
         getCategories(user.id),
         supabase.from('budget_category_periods')
@@ -174,6 +174,10 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
           .eq('budget_id', budget.id)
           .order('valid_from', { ascending: true }),
       ]);
+
+      // PostgREST failures come back as `{ error }`, not a throw: this used to
+      // render the budget as empty — no periods, $0 spent — instead of an error.
+      if (periodsError || bcpError) throw periodsError || bcpError;
 
       const cats = Array.from(catsMap.values());
       const rows: BcPeriodRow[] = (bcpData || []).map((r: any) => ({
@@ -223,7 +227,7 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
 
     setLoading(true);
     try {
-      const { data: expData } = await supabase
+      const { data: expData, error: expError } = await supabase
         .from('expenses')
         .select('id, amount, description, date, category_id')
         .eq('user_id', user.id)
@@ -231,6 +235,8 @@ export default function BudgetDetailView({ user, budget, initialPeriodId, onBack
         .gte('date', period.period_start)
         .lte('date', period.period_end)
         .order('date', { ascending: false });
+      // Same as above — and caching an empty result would pin it for the session.
+      if (expError) throw expError;
 
       const exps: ExpenseRow[] = (expData || []).map((e: any) => ({
         id: e.id, date: e.date, description: e.description,

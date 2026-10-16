@@ -13,7 +13,7 @@ import { readDashboardCache, writeDashboardCache, buildCategoriesMapFromCache, o
 import { useSyncOnForeground } from '@/lib/useSyncOnForeground';
 import { toast } from '@/lib/toast';
 import { confirmDialog } from '@/lib/confirm';
-import { getPendingExpenses, onQueueChange, flushQueue, startAutoFlush, dequeueExpense, type PendingExpense } from '@/lib/offlineQueue';
+import { getPendingExpenses, onQueueChange, onExpensesSynced, flushQueue, startAutoFlush, dequeueExpense, type PendingExpense } from '@/lib/offlineQueue';
 import { reportRpcFallback } from '@/lib/rpcFallback';
 import Amount from '@/components/ui/Amount';
 import DashboardSkeleton from '@/components/ui/DashboardSkeleton';
@@ -23,6 +23,8 @@ import { useLocalToday } from '@/lib/useLocalToday';
 const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
 
 type ViewMode = 'months' | 'years';
+
+const PENDING_LABEL_DELAY_MS = 3000;
 
 const MONTHS_ES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
 const MONTHS_SHORT_ES = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
@@ -233,6 +235,10 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
   const currentYear = useMemo(() => Number(todayStr.slice(0, 4)), [todayStr]);
   const currentMonth = useMemo(() => Number(todayStr.slice(5, 7)) - 1, [todayStr]);
 
+  // The list on screen is the live 30-day window (search only filters it).
+  const liveListShownRef = useRef(true);
+  liveListShownRef.current = viewMode === 'months' && selectedBarIndex === 5;
+
   // Last known rows for the live period, in each view mode. Tapping back onto the
   // current bar restores these instantly instead of waiting on a refetch.
   const livePeriodRef = useRef<{ months: ExpenseListItem[] | null; years: ExpenseListItem[] | null }>({
@@ -303,7 +309,9 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       }
 
       livePeriodRef.current.months = freshExpenses;
-      if (applyToList) setExpenses(freshExpenses);
+      // Checked on arrival, not on call: if the user tapped a past month while
+      // this was in flight, the 30-day list must not land on top of it.
+      if (applyToList && liveListShownRef.current) setExpenses(freshExpenses);
       setChartTotals(freshTotals);
       adoptCategories(map);
       writeDashboardCache(user.id, freshExpenses, freshTotals, map);
@@ -353,43 +361,90 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     });
   }, [user.id, adoptCategories]);
 
-  // ── Load expenses for a specific past month ───────────────────────────────
-  const loadMonthExpenses = useCallback(async (year: number, month: number) => {
+  // ── Queued expenses that just reached the server ─────────────────────────
+  // Every new expense goes through the offline queue (see AddExpenseModal), and
+  // the moment it syncs it leaves the queue. Fold it into the server rows right
+  // then, or it would blink out until the reload that follows brings it back.
+  useEffect(() => {
+    return onExpensesSynced(rows => {
+      const mine = rows.filter(r => r.user_id === user.id);
+      if (mine.length === 0) return;
+      const windowStart = addDaysStr(todayStr, -30);
+      const merge = (list: ExpenseListItem[]) => {
+        const have = new Set(list.map(e => e.id));
+        const added: ExpenseListItem[] = mine
+          .filter(r => !have.has(r.id) && r.date >= windowStart)
+          .map(r => ({
+            id: r.id, amount: r.amount, description: r.description ?? '',
+            date: r.date, category_id: r.category_id, is_recurring: false,
+          }));
+        if (added.length === 0) return list;
+        return [...added, ...list].sort((a, b) => b.date.localeCompare(a.date));
+      };
+      const live = livePeriodRef.current.months;
+      if (live) {
+        const before = new Set(live.map(e => e.id));
+        livePeriodRef.current.months = merge(live);
+        // The pending overlay counted them in the headline until now; the next
+        // reload replaces these with the server's totals.
+        setChartTotals(prev => {
+          const next = { ...prev };
+          for (const r of mine) {
+            if (before.has(r.id)) continue;
+            const key = r.date.slice(0, 7);
+            next[key] = (next[key] || 0) + Number(r.amount);
+          }
+          return next;
+        });
+      }
+      if (liveListShownRef.current) setExpenses(merge);
+    });
+  }, [user.id, todayStr]);
+
+  // ── Past periods ──────────────────────────────────────────────────────────
+  // Rows of past months/years already fetched this session, so flipping between
+  // bars paints at once (and refreshes behind). `periodSeqRef` drops responses
+  // for a bar the user already tapped away from — with quick taps, a slow answer
+  // for March used to land on top of April. Cleared on any mutation.
+  const periodRowsRef = useRef(new Map<string, ExpenseListItem[]>());
+  const periodSeqRef = useRef(0);
+
+  const loadPeriodRows = useCallback(async (key: string, start: string, end: string, limit: number) => {
+    const seq = ++periodSeqRef.current;
+    const known = periodRowsRef.current.get(key);
+    if (known) setExpenses(known);
     try {
-      const start = `${year}-${String(month + 1).padStart(2, '0')}-01`;
-      const lastDay = new Date(year, month + 1, 0).getDate();
-      const end = `${year}-${String(month + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('expenses')
         .select(EXPENSE_COLUMNS)
         .eq('user_id', user.id)
         .gte('date', start)
         .lte('date', end)
         .order('date', { ascending: false })
-        .limit(500);
-      setExpenses(data || []);
+        .limit(limit);
+      // Offline: keep whatever is on screen instead of an empty list.
+      if (error || !data) return null;
+      periodRowsRef.current.set(key, data);
+      if (seq === periodSeqRef.current) setExpenses(data);
+      return data;
     } catch (err) {
       console.error(err);
+      return null;
     }
   }, [user.id]);
 
+  // ── Load expenses for a specific past month ───────────────────────────────
+  const loadMonthExpenses = useCallback((year: number, month: number) => {
+    const mm = String(month + 1).padStart(2, '0');
+    const lastDay = new Date(year, month + 1, 0).getDate();
+    return loadPeriodRows(`${year}-${mm}`, `${year}-${mm}-01`, `${year}-${mm}-${String(lastDay).padStart(2, '0')}`, 500);
+  }, [loadPeriodRows]);
+
   // ── Load expenses for a specific past year ────────────────────────────────
   const loadYearExpenses = useCallback(async (year: number) => {
-    try {
-      const { data } = await supabase
-        .from('expenses')
-        .select(EXPENSE_COLUMNS)
-        .eq('user_id', user.id)
-        .gte('date', `${year}-01-01`)
-        .lte('date', `${year}-12-31`)
-        .order('date', { ascending: false })
-        .limit(2000);
-      if (year === currentYear) livePeriodRef.current.years = data || [];
-      setExpenses(data || []);
-    } catch (err) {
-      console.error(err);
-    }
-  }, [user.id, currentYear]);
+    const data = await loadPeriodRows(String(year), `${year}-01-01`, `${year}-12-31`, 2000);
+    if (data && year === currentYear) livePeriodRef.current.years = data;
+  }, [loadPeriodRows, currentYear]);
 
   /** Igual que `loadDashboard` pero para la vista por año. Ver `applyToList` allá. */
   const loadExtended = useCallback(async (applyToList = true) => {
@@ -448,6 +503,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
   const handleBarSelect = useCallback(async (index: number) => {
     setSelectedBarIndex(index);
     if (index === 5) {
+      periodSeqRef.current++;
       // Back to the live period: paint the rows we already have, then refresh in
       // the background. Waiting on a round-trip here made the most common tap on
       // the chart the slowest one.
@@ -502,6 +558,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
    * 30 días, con el encabezado todavía en el período viejo.
    */
   const reloadAfterMutation = useCallback(() => {
+    periodRowsRef.current.clear();
     if (viewMode === 'years') {
       if (selectedPeriod.isCurrentPeriod) loadExtended();
       // El gráfico de años se refresca sin tocar la lista del año que se mira.
@@ -558,6 +615,25 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
   // months/years keep only their fetched rows. Dedup by id against server rows so
   // a just-synced expense never shows twice.
   const pendingIds = useMemo(() => new Set(pending.map(p => p.id)), [pending]);
+
+  // Online, a new expense sits in the queue for one insert round-trip; a pulsing
+  // "pendiente" for that instant on every save would read as a problem. Label
+  // only rows that have been waiting a while (or any, when offline).
+  const [labelClock, setLabelClock] = useState(0);
+  const pendingLabelIds = useMemo(() => {
+    const now = Date.now();
+    const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+    const ids = new Set<string>();
+    for (const p of pending) if (offline || now - p.queued_at >= PENDING_LABEL_DELAY_MS) ids.add(p.id);
+    return ids;
+    // `labelClock` is the re-check tick: it's what makes `Date.now()` re-read.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending, labelClock]);
+  useEffect(() => {
+    if (pendingLabelIds.size === pending.length) return;
+    const t = setTimeout(() => setLabelClock(n => n + 1), PENDING_LABEL_DELAY_MS);
+    return () => clearTimeout(t);
+  }, [pending, pendingLabelIds]);
   const displayExpenses = useMemo(() => {
     if (!showPending || pending.length === 0) return expenses;
     const serverIds = new Set(expenses.map(e => e.id));
@@ -832,7 +908,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
                   expense={expense}
                   categoriesMap={categoriesMap}
                   defaultCurrency={defaultCurrency}
-                  pending={pendingIds.has(expense.id)}
+                  pending={pendingLabelIds.has(expense.id)}
                   onEdit={openEdit}
                   onDelete={handleDelete}
                 />

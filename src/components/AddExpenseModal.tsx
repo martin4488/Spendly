@@ -33,7 +33,7 @@ interface Props {
 import { CatNode, buildTree, flattenTree } from '@/lib/categoryTree';
 import { getCategories, getCategoriesSync, invalidateCategories, onCategoriesChanged } from '@/lib/categoryCache';
 import { toast } from '@/lib/toast';
-import { enqueueExpense, newExpenseId } from '@/lib/offlineQueue';
+import { enqueueExpense, flushQueue, newExpenseId } from '@/lib/offlineQueue';
 
 // ── Frecuentes: exponential decay scoring in localStorage ────────────────────
 const FREQ_KEY = 'spendly_cat_freq';
@@ -312,35 +312,20 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
       return;
     }
 
-    // New expense: client-generated id so it can be queued offline and dedup on sync.
-    const row = { id: newExpenseId(), ...data };
-    const queueOffline = () => {
-      enqueueExpense({ ...row, queued_at: Date.now() });
-      toast('Sin conexión: el gasto se guardó y se sincronizará al reconectar.', 'info');
-      onSaved(); onClose();
-    };
-
+    // New expense: always through the offline queue, online or not. The modal
+    // used to sit on "Guardando..." for the insert round-trip and the list then
+    // waited for another one; now the row shows up at once as pending (the
+    // Dashboard renders the queue) and the insert happens behind it. The
+    // client-generated id is what dedups it against the server row afterwards.
+    // `onSaved` waits for the flush so views that reload from the server (and
+    // don't render the queue) see the new row.
+    const row = { id: newExpenseId(), ...data, queued_at: Date.now() };
+    enqueueExpense(row);
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-      queueOffline();
-      setSaving(false);
-      return;
+      toast('Sin conexión: el gasto se guardó y se sincronizará al reconectar.', 'info');
     }
-
-    try {
-      // { error } means the request reached the server and was rejected (permanent);
-      // a rejected promise means the network failed (transient → queue it).
-      const { error } = await supabase.from('expenses').insert(row);
-      if (error) throw error;
-      onSaved(); onClose();
-    } catch (err) {
-      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-        queueOffline();
-      } else {
-        console.error(err);
-        toast('No se pudo guardar el gasto. Revisá tu conexión y reintentá.');
-      }
-    }
-    finally { setSaving(false); }
+    onClose();
+    flushQueue().then(onSaved);
   }
 
   return (

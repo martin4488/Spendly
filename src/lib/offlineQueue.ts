@@ -38,9 +38,11 @@ export interface PendingExpense {
 }
 
 type Listener = () => void;
+type SyncedListener = (rows: PendingExpense[]) => void;
 
 const listeners = new Set<Listener>();
-let flushing = false;
+const syncedListeners = new Set<SyncedListener>();
+let flushChain: Promise<void> = Promise.resolve();
 let autoFlushStarted = false;
 
 function read(): PendingExpense[] {
@@ -74,6 +76,21 @@ export function enqueueExpense(item: PendingExpense): void {
   write([...read(), item]);
 }
 
+/**
+ * Rows the server just accepted, notified *before* they leave the queue. Without
+ * it a synced expense vanished from the Dashboard — its pending copy was removed
+ * — until the reload that follows brought it back as a server row.
+ */
+export function onExpensesSynced(fn: SyncedListener): () => void {
+  syncedListeners.add(fn);
+  return () => { syncedListeners.delete(fn); };
+}
+
+function notifySynced(rows: PendingExpense[]): void {
+  if (rows.length === 0) return;
+  syncedListeners.forEach((fn) => { try { fn(rows); } catch { /* ignore */ } });
+}
+
 /** Remove a still-unsynced expense from the queue (e.g. user deletes it). */
 export function dequeueExpense(id: string): void {
   write(read().filter((e) => e.id !== id));
@@ -85,66 +102,74 @@ export function newExpenseId(): string {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-export async function flushQueue(): Promise<void> {
-  if (flushing) return;
+/**
+ * Send everything queued. Calls are serialized rather than dropped: the
+ * add-expense modal awaits this to know its row landed, and returning early
+ * because another flush was mid-flight (which read the queue before the new row
+ * was added) resolved before the row was sent.
+ */
+export function flushQueue(): Promise<void> {
+  flushChain = flushChain.then(flushOnce).catch(console.error);
+  return flushChain;
+}
+
+async function flushOnce(): Promise<void> {
   if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
   if (read().length === 0) return;
 
-  flushing = true;
-  try {
-    // Sólo se mandan los gastos del usuario que está firmado ahora.
-    //
-    // Sin este filtro, si otra persona entra en el mismo dispositivo con gastos
-    // ajenos todavía en la cola, sus inserts salen con el JWT nuevo y RLS los
-    // rechaza por `user_id` ajeno. Y un rechazo del servidor acá cuenta como
-    // permanente: el bucle de abajo los descartaba, o sea que le borraba a la
-    // primera persona gastos que nunca llegaron a guardarse. Quedan en la cola
-    // hasta que vuelva a entrar.
-    const { data: sessionData } = await supabase.auth.getSession();
-    const userId = sessionData.session?.user?.id;
-    if (!userId) return;
+  // Sólo se mandan los gastos del usuario que está firmado ahora.
+  //
+  // Sin este filtro, si otra persona entra en el mismo dispositivo con gastos
+  // ajenos todavía en la cola, sus inserts salen con el JWT nuevo y RLS los
+  // rechaza por `user_id` ajeno. Y un rechazo del servidor acá cuenta como
+  // permanente: el bucle de abajo los descartaba, o sea que le borraba a la
+  // primera persona gastos que nunca llegaron a guardarse. Quedan en la cola
+  // hasta que vuelva a entrar.
+  const { data: sessionData } = await supabase.auth.getSession();
+  const userId = sessionData.session?.user?.id;
+  if (!userId) return;
 
-    const mine = (items: PendingExpense[]) => items.filter(e => e.user_id === userId);
-    const queued = mine(read());
-    if (queued.length === 0) return;
+  const mine = (items: PendingExpense[]) => items.filter(e => e.user_id === userId);
+  const queued = mine(read());
+  if (queued.length === 0) return;
 
-    // Camino feliz: un solo INSERT con todo. Volver de un vuelo con varios gastos
-    // encolados hacía un viaje por gasto (y una reescritura de localStorage por
-    // cada uno). Si el lote falla por lo que sea, se cae al bucle de a uno, que
-    // es el que sabe distinguir duplicado de rechazo real.
-    if (queued.length > 1) {
-      try {
-        const rows = queued.map(({ queued_at, ...row }) => row);
-        const { error } = await supabase.from('expenses').insert(rows);
-        if (!error) {
-          const done = new Set(queued.map(e => e.id));
-          write(read().filter(e => !done.has(e.id)));
-          return;
-        }
-      } catch {
-        // Red caída: sigue todo encolado, se reintenta después.
+  // Camino feliz: un solo INSERT con todo. Volver de un vuelo con varios gastos
+  // encolados hacía un viaje por gasto (y una reescritura de localStorage por
+  // cada uno). Si el lote falla por lo que sea, se cae al bucle de a uno, que
+  // es el que sabe distinguir duplicado de rechazo real.
+  if (queued.length > 1) {
+    try {
+      const rows = queued.map(({ queued_at, ...row }) => row);
+      const { error } = await supabase.from('expenses').insert(rows);
+      if (!error) {
+        notifySynced(queued);
+        const done = new Set(queued.map(e => e.id));
+        write(read().filter(e => !done.has(e.id)));
         return;
       }
+    } catch {
+      // Red caída: sigue todo encolado, se reintenta después.
+      return;
     }
+  }
 
-    for (const item of mine(read())) {
-      const { queued_at, ...row } = item;
-      try {
-        const { error } = await supabase.from('expenses').insert(row);
-        if (error && (error as { code?: string }).code !== '23505') {
-          // Server responded with a real rejection (not a duplicate) → permanent.
-          console.error('Pending expense rejected, dropping:', error);
-          toast('Un gasto pendiente no se pudo sincronizar y fue descartado.');
-        }
-        // success OR duplicate (already synced) OR permanent rejection → remove it
-        write(read().filter((e) => e.id !== item.id));
-      } catch {
-        // fetch rejected → still offline. Keep this item and the rest; retry later.
-        break;
+  for (const item of mine(read())) {
+    const { queued_at, ...row } = item;
+    try {
+      const { error } = await supabase.from('expenses').insert(row);
+      if (error && (error as { code?: string }).code !== '23505') {
+        // Server responded with a real rejection (not a duplicate) → permanent.
+        console.error('Pending expense rejected, dropping:', error);
+        toast('Un gasto pendiente no se pudo sincronizar y fue descartado.');
+      } else {
+        notifySynced([item]);
       }
+      // success OR duplicate (already synced) OR permanent rejection → remove it
+      write(read().filter((e) => e.id !== item.id));
+    } catch {
+      // fetch rejected → still offline. Keep this item and the rest; retry later.
+      break;
     }
-  } finally {
-    flushing = false;
   }
 }
 
