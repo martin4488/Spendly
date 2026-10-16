@@ -20,6 +20,32 @@ interface CacheEntry {
 
 let cache: CacheEntry | null = null;
 
+// Last known-good list, kept across `invalidateCategories()` and primed from the
+// localStorage snapshot at boot. Only `getCategoriesSync` reads it: the
+// add-expense picker used to open empty and wait on the network whenever the
+// in-memory cache was cold — on every cold start until `get_boot_data`
+// answered, and after any edit in Categorías. Showing the previous list and
+// swapping in the fresh one is always better than an empty picker.
+let stale: { userId: string; map: Map<string, Category> } | null = null;
+
+type Listener = (userId: string, map: Map<string, Category>) => void;
+const listeners = new Set<Listener>();
+
+/** Notified whenever fresh categories land (fetch or seed). Returns unsubscribe. */
+export function onCategoriesChanged(fn: Listener): () => void {
+  listeners.add(fn);
+  return () => { listeners.delete(fn); };
+}
+
+function store(userId: string, list: Category[]): Map<string, Category> {
+  const map = new Map<string, Category>();
+  list.forEach(c => map.set(c.id, c));
+  cache = { userId, map, list, promise: null };
+  stale = null;
+  listeners.forEach(fn => { try { fn(userId, map); } catch { /* ignore */ } });
+  return map;
+}
+
 /** Fetch and cache categories for a user. Returns Map<id, Category>. */
 export async function getCategories(userId: string): Promise<Map<string, Category>> {
   // Hit: same user, data already loaded
@@ -52,11 +78,7 @@ export async function getCategories(userId: string): Promise<Map<string, Categor
         cache = null;
         return new Map<string, Category>();
       }
-      const list: Category[] = data;
-      const map = new Map<string, Category>();
-      list.forEach(c => map.set(c.id, c));
-      cache = { userId, map, list, promise: null };
-      return map;
+      return store(userId, data as Category[]);
     })
     .catch(() => {
       cache = null;
@@ -73,12 +95,29 @@ export async function getCategoriesList(userId: string): Promise<Category[]> {
   return cache?.list || [];
 }
 
-/** Returns the map synchronously if already cached, null otherwise. */
+/**
+ * Returns the map synchronously if cached — or, failing that, the last
+ * known-good list for this user (see `stale`) — null otherwise.
+ */
 export function getCategoriesSync(userId: string): Map<string, Category> | null {
   if (cache && cache.userId === userId && !cache.promise) {
     return cache.map;
   }
+  if (stale && stale.userId === userId) return stale.map;
   return null;
+}
+
+/**
+ * Prime the sync read with a possibly-old list (the localStorage snapshot) so
+ * the UI has something to paint before the network answers. Unlike
+ * `seedCategories` it does *not* mark the cache valid: `getCategories` still
+ * fetches. No-op if real data is already there.
+ */
+export function primeCategories(userId: string, list: Category[]): void {
+  if (getCategoriesSync(userId) || list.length === 0) return;
+  const map = new Map<string, Category>();
+  list.forEach(c => map.set(c.id, c));
+  stale = { userId, map };
 }
 
 /**
@@ -86,12 +125,20 @@ export function getCategoriesSync(userId: string): Map<string, Category> | null 
  * Avoids a separate fetch when categories are already available.
  */
 export function seedCategories(userId: string, list: Category[]): void {
-  const map = new Map<string, Category>();
-  list.forEach(c => map.set(c.id, c));
-  cache = { userId, map, list, promise: null };
+  store(userId, list);
 }
 
-/** Call this after any create/edit/delete on categories. */
+/**
+ * Call this after any create/edit/delete on categories. The previous list stays
+ * readable through `getCategoriesSync` until the refetch lands.
+ */
 export function invalidateCategories() {
+  if (cache && !cache.promise) stale = { userId: cache.userId, map: cache.map };
   cache = null;
+}
+
+/** Drop everything, stale copy included (sign-out). */
+export function clearCategories() {
+  cache = null;
+  stale = null;
 }

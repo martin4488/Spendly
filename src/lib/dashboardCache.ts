@@ -20,7 +20,8 @@ const CACHE_KEY = 'spendly_dashboard_cache';
 export interface DashboardSnapshot {
   expenses: ExpenseListItem[];
   chartTotals: Record<string, number>;
-  categories: Array<{ id: string; name: string; icon: string; color: string; parent_id: string | null }>;
+  // `hidden` is optional: snapshots written before it was added lack it.
+  categories: Array<{ id: string; name: string; icon: string; color: string; parent_id: string | null; hidden?: boolean }>;
   timestamp: number;
   userId: string;
 }
@@ -53,6 +54,7 @@ export function writeDashboardCache(
       icon: c.icon,
       color: c.color,
       parent_id: c.parent_id,
+      hidden: c.hidden,
     }));
 
     const snapshot: DashboardSnapshot = {
@@ -123,7 +125,7 @@ export function buildCategoriesMapFromCache(
       color: c.color,
       parent_id: c.parent_id,
       user_id: '',
-      hidden: false,
+      hidden: !!c.hidden,
       created_at: '',
       updated_at: '',
     } as Category);

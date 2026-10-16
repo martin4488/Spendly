@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { clearDashboardCache } from '@/lib/dashboardCache';
 import { clearViewCaches } from '@/lib/viewCache';
-import { invalidateCategories } from '@/lib/categoryCache';
+import { clearCategories } from '@/lib/categoryCache';
 import { clearCachedCurrency } from '@/lib/currencyState';
 import { confirmDialog } from '@/lib/confirm';
 
@@ -327,7 +327,7 @@ export default function SettingsView({ user, defaultCurrency, onCurrencyChange, 
     // Wipe local caches before sign-out so the next user can't see any leaked snapshot
     clearDashboardCache();
     clearViewCaches();
-    invalidateCategories();
+    clearCategories();
     // La moneda espejada también: si no, el arranque de la próxima sesión pinta
     // todos los montos en la moneda de ésta hasta que responde la RPC de boot.
     clearCachedCurrency();

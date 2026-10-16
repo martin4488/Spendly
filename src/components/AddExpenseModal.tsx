@@ -31,7 +31,7 @@ interface Props {
 }
 
 import { CatNode, buildTree, flattenTree } from '@/lib/categoryTree';
-import { getCategories, getCategoriesSync, invalidateCategories } from '@/lib/categoryCache';
+import { getCategories, getCategoriesSync, invalidateCategories, onCategoriesChanged } from '@/lib/categoryCache';
 import { toast } from '@/lib/toast';
 import { enqueueExpense, newExpenseId } from '@/lib/offlineQueue';
 
@@ -96,24 +96,25 @@ function getTopFrequent(catsById: Map<string, Category>, limit = 10): Category[]
   return out;
 }
 
-/** Estado inicial de categorías desde el cache en memoria, si ya está. */
-function seedFromCache(userId: string) {
-  const map = getCategoriesSync(userId);
-  if (!map) return { map: new Map<string, Category>(), flat: [] as Category[], roots: [] as CatNode[] };
+type CatState = { map: Map<string, Category>; flat: Category[]; roots: CatNode[] };
+
+function catStateFrom(map: Map<string, Category>): CatState {
   const flat: Category[] = [];
   for (const c of map.values()) if (!c.hidden) flat.push(c);
   return { map, flat, roots: buildTree(flat) };
 }
 
+const EMPTY_CATS: CatState = { map: new Map(), flat: [], roots: [] };
+
 export default function AddExpenseModal({ user, defaultCurrency, onClose, onSaved, editingExpense }: Props) {
-  // El cache de categorías ya está tibio desde el boot, pero `getCategories` es
-  // async aun cuando acierta: el picker (que se abre solo al agregar un gasto)
-  // pintaba vacío un frame antes de llenarse. Arrancamos del cache sincrónico y
-  // dejamos que el efecto refresque.
-  const seed = useMemo(() => seedFromCache(user.id), [user.id]);
-  const [categories, setCategories] = useState<Category[]>(seed.flat);
-  const [categoriesById, setCategoriesById] = useState<Map<string, Category>>(seed.map);
-  const [roots, setRoots] = useState<CatNode[]>(seed.roots);
+  // Arrancamos del cache sincrónico (o de la última lista conocida, ver
+  // `getCategoriesSync`) para que el picker — que se abre solo al agregar un
+  // gasto — pinte lleno desde el primer frame, y refrescamos en segundo plano.
+  const [cats, setCats] = useState<CatState>(() => {
+    const map = getCategoriesSync(user.id);
+    return map ? catStateFrom(map) : EMPTY_CATS;
+  });
+  const { flat: categories, map: categoriesById, roots } = cats;
   const [amountStr, setAmountStr] = useState(
     editingExpense ? String(editingExpense.original_amount || editingExpense.amount) : ''
   );
@@ -135,20 +136,28 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
   const [newCatParentId, setNewCatParentId] = useState<string | null>(null);
   const [savingCat, setSavingCat] = useState(false);
   const [rateMissing, setRateMissing] = useState(false);
-  const [frequentCats, setFrequentCats] = useState<Category[]>(
-    () => (seed.map.size > 0 ? getTopFrequent(seed.map) : []),
+  const frequentCats = useMemo(
+    () => (categoriesById.size > 0 ? getTopFrequent(categoriesById) : []),
+    [categoriesById],
   );
 
-  useEffect(() => { loadCategories(); }, [user.id]);
+  // Same map back (the usual cache hit) → keep the state object, so the picker
+  // doesn't rebuild the tree and re-render every tile right after opening.
+  const adopt = (map: Map<string, Category>) =>
+    setCats(prev => (prev.map === map ? prev : catStateFrom(map)));
+
+  useEffect(() => {
+    // Picks up the fresh list when it lands while the modal is open (boot RPC
+    // answering after a cold start, or the refetch after an edit).
+    const off = onCategoriesChanged((uid, map) => { if (uid === user.id) adopt(map); });
+    loadCategories();
+    return off;
+  }, [user.id]);
 
   async function loadCategories() {
     const catsMap = await getCategories(user.id);
-    const flat: Category[] = [];
-    for (const c of catsMap.values()) if (!c.hidden) flat.push(c);
-    setCategories(flat);
-    setCategoriesById(catsMap);
-    setRoots(buildTree(flat));
-    setFrequentCats(getTopFrequent(catsMap));
+    // A failed fetch resolves to an empty map — don't wipe the list we're showing.
+    if (catsMap.size > 0) adopt(catsMap);
   }
 
   // O(1) lookup instead of categories.find()

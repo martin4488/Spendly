@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState, lazy, Suspense } from 're
 import { supabase } from '@/lib/supabase';
 import { prefetchRates } from '@/lib/currency';
 import { setDefaultCurrency, readCachedCurrency, DEFAULT_CURRENCY } from '@/lib/currencyState';
-import { getCategories, seedCategories } from '@/lib/categoryCache';
+import { getCategories, seedCategories, primeCategories } from '@/lib/categoryCache';
 import type { User } from '@supabase/auth-js';
 import AppShell from '@/components/AppShell';
 import type { CurrencyCode } from '@/lib/currency';
@@ -117,6 +117,12 @@ export default function Home() {
     function runUnifiedBootOnce(user: User) {
       if (bootRunForUser === user.id) return;
       bootRunForUser = user.id;
+
+      // The in-memory category cache is empty until `get_boot_data` answers, and
+      // opening the app to add an expense is the most common launch — so the
+      // picker sat empty on the network. Paint last session's list meanwhile.
+      const snap = readDashboardCache(user.id);
+      if (snap) primeCategories(user.id, Array.from(buildCategoriesMapFromCache(snap.categories).values()));
 
       runUnifiedBoot(user).catch(console.error);
 
