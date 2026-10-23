@@ -12,6 +12,7 @@ import ChunkErrorBoundary from '@/components/ChunkErrorBoundary';
 // critical path before the first paint.
 import DashboardView from '@/components/views/DashboardView';
 import DashboardSkeleton from '@/components/ui/DashboardSkeleton';
+import { preloadAddExpenseModal } from '@/components/LazyAddExpenseModal';
 
 // Shared import factories so we can both lazy-render and prefetch the same chunks.
 const imports = {
@@ -23,7 +24,7 @@ const imports = {
   reflect: () => import('@/components/views/ReflectView'),
   settings: () => import('@/components/views/SettingsView'),
   overview: () => import('@/components/views/SpendingOverview'),
-  addExpense: () => import('@/components/AddExpenseModal'),
+  addExpense: preloadAddExpenseModal,
 };
 
 const CategoriesView = lazy(imports.categories);
@@ -82,6 +83,10 @@ export default function AppShell({ user, initialCurrency }: AppShellProps) {
   // add-expense modal — is cached by the service worker and works offline.
   // Without this, opening a not-yet-visited view offline fails the dynamic
   // import and crashes with a client-side error.
+  // Adding an expense is the first thing most launches do, so its chunk can't
+  // wait for idle like the rest: fetch it right after first paint.
+  useEffect(() => { preloadAddExpenseModal().catch(() => {}); }, []);
+
   useEffect(() => {
     let done = false;
     const warm = () => {

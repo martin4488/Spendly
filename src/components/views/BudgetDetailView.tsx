@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, useMemo, Suspense } from 'react';
 import type { User } from '@supabase/auth-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/utils';
@@ -19,7 +19,7 @@ import { toast } from '@/lib/toast';
 import { confirmDialog } from '@/lib/confirm';
 import { todayStr as localToday, yesterdayStr } from '@/lib/dateUtils';
 
-const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
+import AddExpenseModal from '@/components/LazyAddExpenseModal';
 
 interface Props {
   user: User;

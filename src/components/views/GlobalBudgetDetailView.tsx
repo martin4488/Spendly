@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, Suspense } from 'react';
 import type { User } from '@supabase/auth-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/utils';
@@ -14,7 +14,7 @@ import { getCategories } from '@/lib/categoryCache';
 import { CatNode, buildTree } from '@/lib/categoryTree';
 import Amount from '@/components/ui/Amount';
 
-const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
+import AddExpenseModal from '@/components/LazyAddExpenseModal';
 
 interface Props {
   user: User;

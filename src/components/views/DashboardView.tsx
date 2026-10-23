@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense, memo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, Suspense, memo } from 'react';
 import type { User } from '@supabase/auth-js';
 import { supabase } from '@/lib/supabase';
 import { ExpenseListItem, Category } from '@/types';
@@ -20,7 +20,7 @@ import DashboardSkeleton from '@/components/ui/DashboardSkeleton';
 import { toDateStr, addDaysStr } from '@/lib/dateUtils';
 import { useLocalToday } from '@/lib/useLocalToday';
 
-const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
+import AddExpenseModal from '@/components/LazyAddExpenseModal';
 
 type ViewMode = 'months' | 'years';
 

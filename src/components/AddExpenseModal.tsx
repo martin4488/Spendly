@@ -126,6 +126,10 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
   const [currency, setCurrency] = useState<CurrencyCode>((editingExpense?.original_currency as CurrencyCode) || defaultCurrency);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showCategoryPicker, setShowCategoryPicker] = useState(!editingExpense);
+  // A new expense opens straight onto the picker, and sliding it up from
+  // transparent there hid the categories for 300 ms on every add. It only
+  // animates when reopened from the header, over a modal that's already showing.
+  const [pickerSlides, setPickerSlides] = useState(false);
   const [showCurrencyPicker, setShowCurrencyPicker] = useState(false);
   const [saving, setSaving] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -347,7 +351,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
         </button>
 
         <button
-          onClick={() => setShowCategoryPicker(true)}
+          onClick={() => { setPickerSlides(true); setShowCategoryPicker(true); }}
           className="inline-flex items-center gap-2.5 bg-white/15 rounded-full px-4 py-2 mb-6 active:bg-white/25 transition-colors"
         >
           <CategoryIcon icon={headerIcon} color={headerColor} size={28} rounded="full" />
@@ -506,7 +510,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
 
       {/* ── CATEGORY PICKER ── */}
       {showCategoryPicker && !showCreateCategory && (
-        <div className="fixed inset-0 bg-dark-900 z-[60] flex flex-col slide-up">
+        <div className={`fixed inset-0 bg-dark-900 z-[60] flex flex-col ${pickerSlides ? 'slide-up' : ''}`}>
           <div className="flex items-center justify-between px-4 pt-5 pb-3 flex-shrink-0">
             <button onClick={() => { setShowCategoryPicker(false); setSearchQuery(''); }} className="p-1 text-dark-400 hover:text-white">
               <ArrowLeft size={24} />

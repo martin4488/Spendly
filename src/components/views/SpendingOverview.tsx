@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, lazy, Suspense, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, Suspense, useCallback, useMemo } from 'react';
 import type { User } from '@supabase/auth-js';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/utils';
@@ -24,7 +24,7 @@ import OfflineState from '@/components/ui/OfflineState';
 import { reportRpcFallback } from '@/lib/rpcFallback';
 import { readViewCache, writeViewCache } from '@/lib/viewCache';
 import { getDefaultCurrency } from '@/lib/currencyState';
-const AddExpenseModal = lazy(() => import('@/components/AddExpenseModal'));
+import AddExpenseModal from '@/components/LazyAddExpenseModal';
 
 type ViewMode = 'months' | 'years';
 
