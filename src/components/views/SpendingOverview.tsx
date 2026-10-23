@@ -319,6 +319,12 @@ async function fetchOverviewSnapshot(
   return { key: overviewKey(mode, range.start), total, catSpending };
 }
 
+// Períodos ya pedidos en esta sesión (por usuario + período). Navegar entre
+// meses pinta al toque desde acá y refresca por detrás; el snapshot de
+// localStorage de arriba guarda uno solo, el último.
+const sessionSnaps = new Map<string, OverviewSnapshot>();
+const sessionKey = (userId: string, key: string) => `${userId}|${key}`;
+
 /** Precalienta el mes corriente durante el idle del arranque (lo llama AppShell). */
 export async function prefetchOverview(userId: string): Promise<void> {
   try {
@@ -376,17 +382,31 @@ export default function SpendingOverview({ user, onBack, initialDate, initialVie
   useEffect(() => { loadData(); }, [viewMode, currentDate]);
   useEffect(() => { setSelectedCatId(null); }, [viewMode, currentDate]);
 
+  // Sólo la última navegación puede pintar: deslizando rápido, la respuesta
+  // lenta de un mes anterior llegaba después y dejaba sus números bajo el
+  // encabezado del mes nuevo.
+  const loadSeqRef = useRef(0);
+
   async function loadData() {
+    const seq = ++loadSeqRef.current;
     const wanted = overviewKey(viewMode, getRange(currentDate, viewMode).start);
+    const known = sessionSnaps.get(sessionKey(user.id, wanted));
+    if (known && displayedKeyRef.current !== wanted) {
+      setTotalSpent(known.total);
+      setCatSpending(known.catSpending);
+      displayedKeyRef.current = wanted;
+    }
     const silent = displayedKeyRef.current === wanted;
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      if (!silent) { setOffline(true); setLoading(false); }
+      if (!silent) { setOffline(true); }
+      setLoading(false);
       return;
     }
     setOffline(false);
-    if (!silent) setLoading(true);
+    setLoading(!silent);
     try {
       const snap = await fetchOverviewSnapshot(user.id, currentDate, viewMode);
+      if (seq !== loadSeqRef.current) return;
       if (!snap) {
         if (!silent) setOffline(true);
         return;
@@ -394,12 +414,24 @@ export default function SpendingOverview({ user, onBack, initialDate, initialVie
       setTotalSpent(snap.total);
       setCatSpending(snap.catSpending);
       displayedKeyRef.current = snap.key;
+      sessionSnaps.set(sessionKey(user.id, snap.key), snap);
       writeViewCache<OverviewSnapshot>(OVERVIEW_CACHE, user.id, snap);
+      prefetchPrevious();
     } catch (err) {
       console.error(err);
-      if (!silent) setOffline(true);
+      if (seq === loadSeqRef.current && !silent) setOffline(true);
     }
-    finally { setLoading(false); }
+    finally { if (seq === loadSeqRef.current) setLoading(false); }
+  }
+
+  /** El período anterior es casi siempre el próximo que se mira (swipe atrás). */
+  function prefetchPrevious() {
+    const prev = viewMode === 'months' ? subMonths(currentDate, 1) : subYears(currentDate, 1);
+    const key = overviewKey(viewMode, getRange(prev, viewMode).start);
+    if (sessionSnaps.has(sessionKey(user.id, key))) return;
+    fetchOverviewSnapshot(user.id, prev, viewMode)
+      .then(snap => { if (snap) sessionSnaps.set(sessionKey(user.id, snap.key), snap); })
+      .catch(() => {});
   }
 
   function openDrillDown(cat: CatSpend) {

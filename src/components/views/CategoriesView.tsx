@@ -11,7 +11,7 @@ import CategoryIcon from '@/components/ui/CategoryIcon';
 import { getIconComponent } from '@/lib/iconComponents';
 
 import { CatNode, buildTree } from '@/lib/categoryTree';
-import { invalidateCategories } from '@/lib/categoryCache';
+import { invalidateCategories, getCategoriesSync } from '@/lib/categoryCache';
 import { deriveChildColor } from '@/lib/colorUtils';
 import { toast } from '@/lib/toast';
 import { confirmDialog } from '@/lib/confirm';
@@ -25,10 +25,27 @@ interface DragState {
   itemHeight: number;
 }
 
+/**
+ * What this screen shows (no hidden ones), from the shared category cache, so it
+ * paints at once instead of behind a spinner. Rows primed from the localStorage
+ * snapshot carry no `user_id` — and reordering upserts it — so those don't count.
+ */
+function seedFromCache(userId: string) {
+  const map = getCategoriesSync(userId);
+  if (!map || map.size === 0) return null;
+  const flat: Category[] = [];
+  for (const c of map.values()) {
+    if (!c.user_id) return null;
+    if (!c.hidden) flat.push(c);
+  }
+  return { flat, roots: buildTree(flat) };
+}
+
 export default function CategoriesView({ user, onBack }: { user: User; onBack?: () => void }) {
-  const [flatCats, setFlatCats] = useState<Category[]>([]);
-  const [roots, setRoots] = useState<CatNode[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [seed] = useState(() => seedFromCache(user.id));
+  const [flatCats, setFlatCats] = useState<Category[]>(seed?.flat ?? []);
+  const [roots, setRoots] = useState<CatNode[]>(seed?.roots ?? []);
+  const [loading, setLoading] = useState(!seed);
   const [offline, setOffline] = useState(false);
 
   // Form
@@ -52,7 +69,8 @@ export default function CategoriesView({ user, onBack }: { user: User; onBack?: 
       setOffline(true); setLoading(false); return;
     }
     setOffline(false);
-    setLoading(true);
+    // Con lo cacheado en pantalla el refresco va por detrás, sin spinner.
+    if (flatCats.length === 0) setLoading(true);
     // Antes esto traía además *todos* los gastos del mes para armar un mapa de
     // gasto por categoría que no se mostraba en ningún lado: el único lector era
     // `totalSpend()`, que no tenía llamadores. Una consulta entera por apertura.

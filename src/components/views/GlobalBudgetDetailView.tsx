@@ -82,6 +82,7 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const earlyMonth = useRef<{ month: string; rows: Promise<ExpenseRow[]> } | null>(null);
   const monthCache = useRef<Map<string, { expenses: ExpenseRow[]; total: number; catSpending: CatSpend[] }>>(new Map());
 
   const [expenses, setExpenses] = useState<ExpenseRow[]>([]);
@@ -125,11 +126,18 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
     setLoading(true);
     setError(null);
     monthCache.current.clear();
+    // The month's expenses don't depend on the categories (only the grouping
+    // does), so they go out with this batch instead of after it — opening the
+    // view used to take two round-trips in series.
+    earlyMonth.current = { month: currentMonth, rows: fetchMonthExpenses(currentMonth) };
+    earlyMonth.current.rows.catch(() => {});
     try {
-      const [{ data: periodsData }, catsMap] = await Promise.all([
+      const [{ data: periodsData, error: periodsError }, catsMap] = await Promise.all([
         supabase.from('global_budget_periods').select('month, amount').eq('user_id', user.id),
         getCategories(user.id),
       ]);
+      // `{ error }` is not a throw: without this the view showed no budget at all.
+      if (periodsError) throw periodsError;
       setPeriods((periodsData || []).map((p: any) => ({ month: p.month, amount: Number(p.amount) })));
       setCategories(Array.from(catsMap.values()));
     } catch (err) {
@@ -138,6 +146,22 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
     } finally {
       setLoading(false);
     }
+  }
+
+  async function fetchMonthExpenses(month: string): Promise<ExpenseRow[]> {
+    const { data, error } = await supabase
+      .from('expenses')
+      .select('id, amount, description, date, category_id')
+      .eq('user_id', user.id)
+      .gte('date', `${month}-01`)
+      .lte('date', monthEndStr(month))
+      .order('date', { ascending: false });
+    // Thrown, not returned empty: an empty month would be cached for the session.
+    if (error) throw error;
+    return (data || []).map((e: any) => ({
+      id: e.id, date: e.date, description: e.description,
+      amount: Number(e.amount), category_id: e.category_id,
+    }));
   }
 
   async function loadMonthData(month: string) {
@@ -151,21 +175,9 @@ export default function GlobalBudgetDetailView({ user, onBack, defaultCurrency }
 
     setLoading(true);
     try {
-      const mStart = `${month}-01`;
-      const mEnd = monthEndStr(month);
-
-      const { data: expData } = await supabase
-        .from('expenses')
-        .select('id, amount, description, date, category_id')
-        .eq('user_id', user.id)
-        .gte('date', mStart)
-        .lte('date', mEnd)
-        .order('date', { ascending: false });
-
-      const exps: ExpenseRow[] = (expData || []).map((e: any) => ({
-        id: e.id, date: e.date, description: e.description,
-        amount: Number(e.amount), category_id: e.category_id,
-      }));
+      const early = earlyMonth.current;
+      earlyMonth.current = null;
+      const exps = await (early && early.month === month ? early.rows : fetchMonthExpenses(month));
       const total = exps.reduce((s, e) => s + e.amount, 0);
 
       const spendByCat: Record<string, number> = {};
