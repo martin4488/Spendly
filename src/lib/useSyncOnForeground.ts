@@ -23,6 +23,7 @@
 
 import { useEffect, useRef } from 'react';
 import { SUPABASE_ANON_KEY, SUPABASE_REALTIME_URL, getAccessToken, auth } from '@/lib/supabase';
+import { isLocalWrite } from '@/lib/localWrites';
 
 const THROTTLE_MS = 1500;
 
@@ -90,7 +91,11 @@ export function useSyncOnForeground(userId: string, onSync: () => void) {
           .on(
             'postgres_changes',
             { event: '*', schema: 'public', table: 'expenses', filter: `user_id=eq.${userId}` },
-            () => sync(),
+            (payload: { new?: { id?: unknown }; old?: { id?: unknown } }) => {
+              // Our own write: whoever made it already reloaded (see localWrites).
+              if (isLocalWrite(payload.new?.id ?? payload.old?.id)) return;
+              sync();
+            },
           )
           .subscribe();
         return { client, channel };

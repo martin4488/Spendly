@@ -13,6 +13,12 @@ import ChunkErrorBoundary from '@/components/ChunkErrorBoundary';
 import DashboardView from '@/components/views/DashboardView';
 import DashboardSkeleton from '@/components/ui/DashboardSkeleton';
 import { preloadAddExpenseModal } from '@/components/LazyAddExpenseModal';
+import { bootSettled } from '@/lib/bootSignal';
+import { isViewCacheFresh } from '@/lib/viewCache';
+
+// Below this age a tab's snapshot is good enough to paint from; the view
+// revalidates on open regardless.
+const PREFETCH_MAX_AGE_MS = 10 * 60_000;
 
 // Shared import factories so we can both lazy-render and prefetch the same chunks.
 const imports = {
@@ -88,31 +94,46 @@ export default function AppShell({ user, initialCurrency }: AppShellProps) {
   useEffect(() => { preloadAddExpenseModal().catch(() => {}); }, []);
 
   useEffect(() => {
-    let done = false;
-    const warm = () => {
-      if (done) return;
-      done = true;
-      // Warm every chunk (so all views work offline) and, for the heaviest tabs,
-      // prime their data snapshot too so even the first visit is instant.
-      const prefetchers: Record<string, string> = {
-        recurring: 'prefetchRecurring',
-        reflect: 'prefetchReflect',
-        budgets: 'prefetchBudgets',
-        overview: 'prefetchOverview',
-      };
-      Object.entries(imports).forEach(([name, load]) => {
-        load().then((m: Record<string, unknown>) => {
-          const fn = prefetchers[name];
-          if (fn && typeof m[fn] === 'function') (m[fn] as (id: string) => void)(user.id);
-        }).catch(() => {});
-      });
-    };
+    let cancelled = false;
     const w = window as unknown as {
       requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
     };
-    if (typeof w.requestIdleCallback === 'function') w.requestIdleCallback(warm, { timeout: 4000 });
-    else setTimeout(warm, 2000);
-  }, []);
+    const onIdle = (fn: () => void) => {
+      if (typeof w.requestIdleCallback === 'function') w.requestIdleCallback(fn, { timeout: 4000 });
+      else setTimeout(fn, 2000);
+    };
+
+    // Warm every chunk so all views work offline. After the first visit these
+    // come out of the service worker cache, so this costs no network.
+    onIdle(() => {
+      if (cancelled) return;
+      Object.values(imports).forEach(load => { load().catch(() => {}); });
+    });
+
+    // Prime the heaviest tabs' data snapshots so even a first visit is instant.
+    // This used to fire with the chunk warm-up — half a dozen queries (one of
+    // them the budgets RPC, which writes) racing `get_boot_data` on every
+    // launch, including the ones that only add an expense. Now it waits for the
+    // boot to answer and skips snapshots that are recent anyway: each view
+    // still refreshes itself in the background when opened.
+    const prefetchers: Array<[keyof typeof imports, string, string]> = [
+      ['recurring', 'prefetchRecurring', 'recurring'],
+      ['reflect', 'prefetchReflect', 'reflect'],
+      ['budgets', 'prefetchBudgets', 'budgets'],
+      ['overview', 'prefetchOverview', 'overview'],
+    ];
+    bootSettled.then(() => onIdle(() => {
+      if (cancelled) return;
+      for (const [name, fn, cacheKey] of prefetchers) {
+        if (isViewCacheFresh(cacheKey, user.id, PREFETCH_MAX_AGE_MS)) continue;
+        imports[name]().then((m: Record<string, unknown>) => {
+          if (!cancelled && typeof m[fn] === 'function') (m[fn] as (id: string) => void)(user.id);
+        }).catch(() => {});
+      }
+    }));
+
+    return () => { cancelled = true; };
+  }, [user.id]);
 
   const openBudget = useCallback((budget: Budget, periodId: string = '') => {
     setSelectedBudget(budget);

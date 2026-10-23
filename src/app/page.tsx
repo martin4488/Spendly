@@ -12,6 +12,7 @@ import { publishDashboardCache, readDashboardCache, buildCategoriesMapFromCache 
 import { reportRpcFallback } from '@/lib/rpcFallback';
 import type { Category } from '@/types';
 import { toDateStr } from '@/lib/dateUtils';
+import { markBootSettled } from '@/lib/bootSignal';
 
 // Lazy-load AuthPage — it's only shown when not logged in, which is rare.
 // Keeps ~7 lucide icons + auth UI out of the critical bundle.
@@ -36,7 +37,13 @@ interface BootData {
   currency: CurrencyCode;
 }
 
-// Read cached session synchronously from localStorage — zero latency
+// Read cached session synchronously from localStorage — zero latency.
+//
+// An expired access token is fine: it only lives an hour, so rejecting it here
+// meant almost every real launch (more than an hour after the last one) sat on
+// the splash until auth-js finished refreshing it over the network. auth-js
+// refreshes it before any query goes out; if the refresh token turns out to be
+// revoked it drops the session and emits SIGNED_OUT, which sends us to AuthPage.
 function getCachedSession(): User | null {
   try {
     const raw = localStorage.getItem('spendly-auth');
@@ -44,7 +51,7 @@ function getCachedSession(): User | null {
     const parsed = JSON.parse(raw);
     const session = parsed?.currentSession ?? parsed;
     if (!session?.user || !session?.access_token) return null;
-    if (session.expires_at && session.expires_at * 1000 < Date.now()) return null;
+    if (session.expires_at && session.expires_at * 1000 < Date.now() && !session.refresh_token) return null;
     return session.user as User;
   } catch {
     return null;
@@ -124,7 +131,7 @@ export default function Home() {
       const snap = readDashboardCache(user.id);
       if (snap) primeCategories(user.id, Array.from(buildCategoriesMapFromCache(snap.categories).values()));
 
-      runUnifiedBoot(user).catch(console.error);
+      runUnifiedBoot(user).catch(console.error).finally(markBootSettled);
 
       prefetchRates().catch(console.error);
 
@@ -211,6 +218,12 @@ export default function Home() {
         if (session?.user) {
           bootWithSession(session.user);
         } else if (event === 'INITIAL_SESSION') {
+          // We may have painted from a cached session that auth-js has since
+          // discarded (revoked refresh token): forget it, so a later sign-in
+          // boots from scratch instead of keeping the stale user.
+          bootedRef.current = false;
+          bootRunForUser = null;
+          setBootData(null);
           setUnauthenticated(true);
         }
       } else if (event === 'SIGNED_OUT') {

@@ -267,9 +267,10 @@ export async function prefetchReflect(userId: string): Promise<void> {
     const now = new Date();
     const cy = now.getFullYear();
     const cm = format(now, 'yyyy-MM');
-    const years = await fetchAvailableYears(userId, cy);
-    const prevYr = years.includes(cy - 1) ? cy - 1 : null;
-    const yd = await fetchYearData(userId, cy, prevYr, cm);
+    const [years, yd] = await Promise.all([
+      fetchAvailableYears(userId, cy),
+      fetchYearData(userId, cy, cy - 1, cm),
+    ]);
     writeViewCache<ReflectSnapshot>(REFLECT_CACHE, userId, {
       year: cy, currentMonth: cm, availableYears: years, yearData: { [cy]: yd },
     });
@@ -317,10 +318,14 @@ export default function ReflectView({ user }: Props) {
     setOffline(false);
     if (!silent) setLoading(true);
     try {
-      const years = await fetchAvailableYears(user.id, cy);
+      // Both at once: the years list only decided whether to ask for last year,
+      // and a year without spend yields no comparison anyway (see fetchYearData),
+      // so waiting on it first was a round-trip in series for nothing.
+      const [years, yd] = await Promise.all([
+        fetchAvailableYears(user.id, cy),
+        fetchYearData(user.id, cy, cy - 1, cm),
+      ]);
       setAvailableYears(years);
-      const prevYr = years.includes(cy - 1) ? cy - 1 : null;
-      const yd = await fetchYearData(user.id, cy, prevYr, cm);
       setYearData(prev => {
         const next = { ...prev, [cy]: yd };
         yearDataRef.current = next;

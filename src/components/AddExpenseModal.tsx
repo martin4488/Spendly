@@ -9,8 +9,6 @@ import { CATEGORY_ICONS, CATEGORY_COLORS } from '@/lib/utils';
 import { X, Calendar, Delete, ChevronDown, Search, Settings, ArrowLeft, Check } from 'lucide-react';
 import CategoryIcon from '@/components/ui/CategoryIcon';
 import { getIconComponent } from '@/lib/iconComponents';
-import { format, parseISO } from 'date-fns';
-import { es } from 'date-fns/locale';
 import { deriveChildColor } from '@/lib/colorUtils';
 import { todayStr, yesterdayStr } from '@/lib/dateUtils';
 
@@ -34,6 +32,9 @@ import { CatNode, buildTree, flattenTree } from '@/lib/categoryTree';
 import { getCategories, getCategoriesSync, invalidateCategories, onCategoriesChanged } from '@/lib/categoryCache';
 import { toast } from '@/lib/toast';
 import { enqueueExpense, flushQueue, newExpenseId } from '@/lib/offlineQueue';
+import { noteLocalWrite } from '@/lib/localWrites';
+
+const MONTHS_SHORT_ES = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
 
 // ── Frecuentes: exponential decay scoring in localStorage ────────────────────
 const FREQ_KEY = 'spendly_cat_freq';
@@ -174,8 +175,11 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
   const dateLabel = (() => {
     if (date === today) return 'Hoy';
     if (date === yesterdayStr()) return 'Ayer';
-    try { return format(parseISO(date), "d MMM", { locale: es }); }
-    catch { return date; }
+    // Plain string slicing: date-fns + its `es` locale were a whole extra chunk
+    // on the path of the most-used screen, just for this label.
+    const [, m, d] = date.split('-');
+    const month = MONTHS_SHORT_ES[parseInt(m, 10) - 1];
+    return month ? `${parseInt(d, 10)} ${month}` : date;
   })();
 
   const amt = parseFloat(amountStr) || 0;
@@ -306,6 +310,7 @@ export default function AddExpenseModal({ user, defaultCurrency, onClose, onSave
     // Editing stays online-only (offline scope covers new expenses only).
     if (editingExpense) {
       try {
+        noteLocalWrite(editingExpense.id);
         const { error } = await supabase.from('expenses').update(data).eq('id', editingExpense.id);
         if (error) throw error;
         onSaved(); onClose();

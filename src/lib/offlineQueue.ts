@@ -21,6 +21,7 @@
 
 import { supabase } from './supabase';
 import { toast } from './toast';
+import { noteLocalWrite } from './localWrites';
 
 const KEY = 'spendly_pending_expenses';
 
@@ -132,6 +133,7 @@ async function flushOnce(): Promise<void> {
   const mine = (items: PendingExpense[]) => items.filter(e => e.user_id === userId);
   const queued = mine(read());
   if (queued.length === 0) return;
+  noteLocalWrite(queued.map(e => e.id));
 
   // Camino feliz: un solo INSERT con todo. Volver de un vuelo con varios gastos
   // encolados hacía un viaje por gasto (y una reescritura de localStorage por

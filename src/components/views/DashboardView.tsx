@@ -19,6 +19,7 @@ import Amount from '@/components/ui/Amount';
 import DashboardSkeleton from '@/components/ui/DashboardSkeleton';
 import { toDateStr, addDaysStr } from '@/lib/dateUtils';
 import { useLocalToday } from '@/lib/useLocalToday';
+import { noteLocalWrite } from '@/lib/localWrites';
 
 import AddExpenseModal from '@/components/LazyAddExpenseModal';
 
@@ -132,6 +133,36 @@ const WalletChart = memo(function WalletChart({
   );
 });
 
+/**
+ * `next`, but reusing the object from `prev` for every row that didn't change —
+ * and `prev` itself when nothing did. Refreshes mostly return exactly what's on
+ * screen (the boot RPC landing over last session's snapshot, every sync), and
+ * fresh objects for identical rows made every memoized row render again.
+ */
+function reuseRows(prev: ExpenseListItem[], next: ExpenseListItem[]): ExpenseListItem[] {
+  if (prev.length === 0 || next.length === 0) return next;
+  const byId = new Map(prev.map(e => [e.id, e]));
+  let unchanged = prev.length === next.length;
+  const out = next.map((e, i) => {
+    const old = byId.get(e.id);
+    const row = old
+      && Number(old.amount) === Number(e.amount)
+      && old.description === e.description
+      && old.date === e.date
+      && old.category_id === e.category_id
+      && old.is_recurring === e.is_recurring
+      ? old : e;
+    if (row !== prev[i]) unchanged = false;
+    return row;
+  });
+  return unchanged ? prev : out;
+}
+
+function sameCat(a: Category | null | undefined, b: Category | null | undefined): boolean {
+  return a === b || (!!a && !!b
+    && a.name === b.name && a.icon === b.icon && a.color === b.color && a.parent_id === b.parent_id);
+}
+
 // ─── Memoized expense row ───────────────────────────────────────────────────
 // `onEdit` / `onDelete` take the row's data instead of closing over it: the
 // parent can then pass the *same* function identity to every row on every
@@ -191,6 +222,18 @@ const ExpenseRow = memo(function ExpenseRow({
       </div>
     </SwipeableRow>
   );
+}, (a, b) => {
+  if (a.expense !== b.expense || a.defaultCurrency !== b.defaultCurrency || a.pending !== b.pending
+    || a.onEdit !== b.onEdit || a.onDelete !== b.onDelete) return false;
+  if (a.categoriesMap === b.categoriesMap) return true;
+  // A new map (every category refresh) only matters if *this* row's category or
+  // its parent actually changed.
+  const id = a.expense.category_id;
+  const ca = id ? a.categoriesMap.get(id) : null;
+  const cb = id ? b.categoriesMap.get(id) : null;
+  if (!sameCat(ca, cb)) return false;
+  const pid = ca?.parent_id;
+  return !pid || sameCat(a.categoriesMap.get(pid), b.categoriesMap.get(pid));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -311,7 +354,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       livePeriodRef.current.months = freshExpenses;
       // Checked on arrival, not on call: if the user tapped a past month while
       // this was in flight, the 30-day list must not land on top of it.
-      if (applyToList && liveListShownRef.current) setExpenses(freshExpenses);
+      if (applyToList && liveListShownRef.current) setExpenses(prev => reuseRows(prev, freshExpenses));
       setChartTotals(freshTotals);
       adoptCategories(map);
       writeDashboardCache(user.id, freshExpenses, freshTotals, map);
@@ -354,7 +397,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       if (snapshot.userId !== user.id) return;
       livePeriodRef.current.months = snapshot.expenses;
       if (!canAdoptRef.current) return;
-      setExpenses(snapshot.expenses);
+      setExpenses(prev => reuseRows(prev, snapshot.expenses));
       setChartTotals(snapshot.chartTotals);
       adoptCategories(getCategoriesSync(user.id) || buildCategoriesMapFromCache(snapshot.categories));
       setLoading(false);
@@ -569,6 +612,9 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
     else { loadMonthExpenses(selectedPeriod.year, selectedPeriod.month); loadDashboard(false); }
   }, [viewMode, selectedPeriod, loadDashboard, loadExtended, loadMonthExpenses, loadYearExpenses]);
 
+  const reloadAfterMutationRef = useRef(reloadAfterMutation);
+  reloadAfterMutationRef.current = reloadAfterMutation;
+
   // Whether to overlay queued (offline) expenses — only on the live current month.
   const showPending = selectedPeriod.isCurrentPeriod && viewMode === 'months';
 
@@ -615,6 +661,10 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
   // months/years keep only their fetched rows. Dedup by id against server rows so
   // a just-synced expense never shows twice.
   const pendingIds = useMemo(() => new Set(pending.map(p => p.id)), [pending]);
+  // Read through a ref by the row callbacks below, so they keep one identity:
+  // otherwise every save (the queue changes) re-rendered every row.
+  const pendingIdsRef = useRef(pendingIds);
+  pendingIdsRef.current = pendingIds;
 
   // Online, a new expense sits in the queue for one insert round-trip; a pulsing
   // "pendiente" for that instant on every save would read as a problem. Label
@@ -691,7 +741,7 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
   const openEdit = useCallback((expense: ExpenseListItem) => {
     // A still-unsynced (pending) expense can't be edited yet — editing hits the DB
     // by id and the row doesn't exist there. Let it sync first.
-    if (pendingIds.has(expense.id)) {
+    if (pendingIdsRef.current.has(expense.id)) {
       toast('Este gasto todavía se está sincronizando. Esperá un momento.', 'info');
       return;
     }
@@ -703,25 +753,26 @@ export default function DashboardView({ user, onNavigate, defaultCurrency }: { u
       date: expense.date,
     });
     setShowAddExpense(true);
-  }, [pendingIds]);
+  }, []);
 
   const handleDelete = useCallback(async (id: string) => {
     if (!(await confirmDialog('¿Eliminar este gasto?'))) return;
     // Pending (offline) expense: just drop it from the queue — it's not in the DB.
-    if (pendingIds.has(id)) {
+    if (pendingIdsRef.current.has(id)) {
       dequeueExpense(id);
       return;
     }
     // Optimistic update — remove instantly, no round-trip wait
     setExpenses(prev => prev.filter(e => e.id !== id));
+    noteLocalWrite(id);
     const { error } = await supabase.from('expenses').delete().eq('id', id);
     if (error) {
       toast('No se pudo eliminar el gasto. Reintentá.');
     }
     // Refresh either way: on success to update chart totals, on failure to
     // restore the row we optimistically removed.
-    reloadAfterMutation();
-  }, [reloadAfterMutation, pendingIds]);
+    reloadAfterMutationRef.current();
+  }, []);
 
   // ── Header subtitle from selected period ─────────────────────────────────
   const headerSubtitle = useMemo(() => {
